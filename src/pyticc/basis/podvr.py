@@ -137,7 +137,7 @@ if __name__ == "__main__":
     import numpy as np
     from numpy.typing import NDArray
 
-    from pyticc.basis.dvr import sine_dvr_grids, sine_dvr_kinetic, sine_dvr_vib
+    from pyticc.basis.dvr import build_SineDVR
     from pyticc.constants import AMU2AU, ANG2AU, EV2AU
 
     def H2_morse(x: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -168,14 +168,11 @@ if __name__ == "__main__":
     a = -1.0  # au
     b = 6.0 * ANG2AU  # au
 
-    grids, _ = sine_dvr_grids(a, b, n_dvr)
-    T_mat = sine_dvr_kinetic(a, b, n_dvr, m_H2)
-    V_mat = H2_morse(grids)
-    E_vib, WF_vib = sine_dvr_vib(T_mat, V_mat, n_dvr)
+    H2_dvr = build_SineDVR(a, b, n_dvr, m_H2, H2_morse)
 
-    po_grids, dvr_to_c, po_to_c = podvr_grids(grids, WF_vib, n_podvr)
-    E_v, WF_v = podvr_vib(po_to_c, E_vib, v_max)
-    E_vr, WF_vr = podvr_vibrot(po_grids, po_to_c, E_vib, v_max, j_max, m_H2)
+    po_grids, dvr_to_c, po_to_c = podvr_grids(H2_dvr.grids, H2_dvr.eigen_vec, n_podvr)
+    E_v, WF_v = podvr_vib(po_to_c, H2_dvr.eigen_val, v_max)
+    E_vr, WF_vr = podvr_vibrot(po_grids, po_to_c, H2_dvr.eigen_val, v_max, j_max, m_H2)
 
     print("H2 PODVR v=0 rotational energies (in cm^-1, relative to E(v=0,j=0)):")
     E0 = E_vr[0, 0]

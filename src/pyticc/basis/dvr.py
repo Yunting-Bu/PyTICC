@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
@@ -80,23 +83,30 @@ def sine_dvr_kinetic(a: float, b: float, n: int, mass: float) -> NDArray[np.floa
     Returns:
         T: NDArray[np.float64] - sine dvr kinetic energy matrix
     """
-    T = np.zeros((n, n), dtype=np.float64)
+
     pre_factor = (np.pi**2) / (4.0 * mass * (b - a) ** 2)
+    m = n + 1
 
-    for i0 in range(n):
-        i = i0 + 1
+    idx = np.arange(1, n + 1, dtype=np.float64)  # i = 1, ..., n
+    i_grid, j_grid = np.meshgrid(idx, idx, indexing="ij")
 
-        diag_term = (2.0 * (n + 1) ** 2 + 1.0) / 3.0 - np.sin(np.pi * i / (n + 1)) ** (-2)
-        T[i0, i0] = pre_factor * diag_term
+    # diagonal
+    sin_i = np.sin(np.pi * idx / m)
+    diag = (2.0 * m**2 + 1.0) / 3.0 - 1.0 / sin_i**2
 
-        for j0 in range(i0):
-            j = j0 + 1
-            off_term = np.sin(np.pi * (i - j) / (2.0 * (n + 1))) ** (-2) - np.sin(np.pi * (i + j) / (2.0 * (n + 1))) ** (-2)
-            phase_factor = (-1.0) ** (i - j)
+    # off-diagonal only; mask out diagonal where sin(pi*(i-j)/2m) = 0
+    sin_diff = np.sin(np.pi * (i_grid - j_grid) / (2.0 * m))
+    sin_sum = np.sin(np.pi * (i_grid + j_grid) / (2.0 * m))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        off = 1.0 / sin_diff**2 - 1.0 / sin_sum**2
+    off[~np.isfinite(off)] = 0.0
+    np.fill_diagonal(off, 0.0)  # the diagonal contribution of the off-term is 0 by (1-delta_ij)
 
-            T[i0, j0] = pre_factor * off_term * phase_factor
-            T[j0, i0] = T[i0, j0]
+    phase = np.where((i_grid - j_grid) % 2 == 0, 1.0, -1.0)
+    np.fill_diagonal(phase, 1.0)
 
+    T = diag[:, None] * np.eye(n) + off * phase
+    T *= pre_factor
     return T
 
 
@@ -169,6 +179,58 @@ def sine_dvr_vib(T: NDArray[np.float64], V: NDArray[np.float64], n: int) -> tupl
 
 # --------------------------------------------------------------------------------
 
+
+# --------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class SineDVR:
+    n_dvr: int
+    interval: tuple[float, float]
+    grids: NDArray[np.float64]
+    weights: float
+    dvr_to_fbr: NDArray[np.float64]
+    eigen_val: NDArray[np.float64]
+    eigen_vec: NDArray[np.float64]
+
+
+# --------------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------------
+def build_SineDVR(a: float, b: float, n_dvr: int, mass: float, pot_func: Callable[[NDArray[np.float64]], NDArray[np.float64]]) -> SineDVR:
+    """
+    Build a SineDVR object with the given parameters.
+
+    Inputs:
+        a: float - left boundary of the interval
+        b: float - right boundary of the interval
+        n_dvr: int - number of points
+        mass: float - mass in atomic unit
+        pot_func: Callable[[NDArray[np.float64]], NDArray[np.float64]] - potential energy function
+
+    Returns:
+        SineDVR: SineDVR - SineDVR object with the given parameters
+    """
+    if n_dvr < 2:
+        logger.warning(f"n_dvr should be greater than 1, but got n_dvr = {n_dvr}")
+
+    if a >= b:
+        logger.error(f"Invalid interval: a ({a}) must be less than b ({b})")
+        raise ValueError(f"Invalid interval: a ({a}) must be less than b ({b})")
+
+    grids, weights = sine_dvr_grids(a, b, n_dvr)
+    dvr_to_fbr = sine_dvr_to_fbr(n_dvr)
+    pot = np.asarray(pot_func(grids), dtype=np.float64)
+    T_mat = sine_dvr_kinetic(a, b, n_dvr, mass)
+    eigen_val, eigen_vec = sine_dvr_vib(T_mat, pot, n_dvr)
+
+    return SineDVR(n_dvr=n_dvr, interval=(a, b), grids=grids, weights=weights, dvr_to_fbr=dvr_to_fbr, eigen_val=eigen_val, eigen_vec=eigen_vec)
+
+
+# --------------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------------
+
+
 if __name__ == "__main__":
     import numpy as np
     from numpy.typing import NDArray
@@ -200,9 +262,7 @@ if __name__ == "__main__":
     a = -1.0  # au
     b = 6.0 * ANG2AU  # au
 
-    grids, _ = sine_dvr_grids(a, b, n_dvr)
-    T_mat = sine_dvr_kinetic(a, b, n_dvr, m_H2)
-    V_mat = H2_morse(grids)
-    E_vib, _ = sine_dvr_vib(T_mat, V_mat, n_dvr)
+    H2_dvr = build_SineDVR(a, b, n_dvr, m_H2, H2_morse)
+
     print("H2 vibrational energies (in eV):")
-    print(f"n = 0, E_0 = {E_vib[0] / EV2AU:.6f} eV")
+    print(f"n = 0, E_0 = {H2_dvr.eigen_val[0] / EV2AU:.6f} eV")
