@@ -1,6 +1,8 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from loguru import logger
+
 from pyticc.basis.channel import Channel
 
 
@@ -52,6 +54,7 @@ def build_nncc_blocks(channels: Sequence[Channel], K_delta: int = 1) -> list[KBl
         blocks: list[KBlock] - NNCC propagation blocks
     """
     if K_delta < 1:
+        logger.error(f"NNCC requires K_delta >= 1, but got K_delta={K_delta}")
         raise ValueError("NNCC requires K_delta >= 1")
     if not channels:
         return []
