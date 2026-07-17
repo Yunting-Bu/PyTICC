@@ -1,9 +1,11 @@
+from dataclasses import dataclass
+
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 from scipy.linalg import eigh
 
-from pyticc.basis.dvr import phase_fix
+from pyticc.basis.dvr import SineDVR, phase_fix
 
 
 # --------------------------------------------------------------------------------
@@ -25,7 +27,8 @@ def podvr_grids(
         po_to_cfbr: NDArray[np.float64] - PODVR -> contracted-FBR transform, shape (n_podvr, n_podvr)
     """
     if n_podvr > dvr_wf.shape[1]:
-        logger.warning(f"n_podvr = {n_podvr} exceeds available dvr_wf columns ({dvr_wf.shape[1]}); truncated.")
+        message = f"n_podvr = {n_podvr} exceeds available dvr_wf columns ({dvr_wf.shape[1]}); truncated."
+        logger.warning(message)
 
     n_podvr = min(n_podvr, dvr_wf.shape[1])
     dvr_to_cfbr = dvr_wf[:, :n_podvr].copy()
@@ -133,6 +136,49 @@ def podvr_vibrot(
 
 
 # --------------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class RovibPODVR:
+    """
+    Contracted diatomic rovibrational basis on PODVR grids.
+
+    Members:
+        grids: NDArray[np.float64] - PODVR bond-length grids in atomic units
+        E_vj: NDArray[np.float64] - rovibrational energies indexed as E_vj[v, j]
+        WF_vj: NDArray[np.float64] - wavefunctions indexed as WF_vj[grid, v, j]
+    """
+
+    grids: NDArray[np.float64]
+    E_vj: NDArray[np.float64]
+    WF_vj: NDArray[np.float64]
+
+
+# --------------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------------
+def build_RovibPODVR(dvr: SineDVR, n_podvr: int, vmax: int, jmax: int, mass: float) -> RovibPODVR:
+    """
+    Build a contracted diatomic rovibrational basis from a sine-DVR calculation.
+
+    Inputs:
+        dvr: SineDVR - reference vibrational sine-DVR basis
+        n_podvr: int - number of PODVR grids to retain
+        vmax: int - highest vibrational quantum number
+        jmax: int - highest rotational quantum number
+        mass: float - diatomic reduced mass in atomic units
+
+    Returns:
+        rovib: RovibPODVR - PODVR grids, rovibrational energies, and wavefunctions
+    """
+    po_grids, _, po_to_cfbr = podvr_grids(dvr.grids, dvr.eigen_vec, n_podvr)
+    E_vj, WF_vj = podvr_vibrot(po_grids, po_to_cfbr, dvr.eigen_val, vmax, jmax, mass)
+    return RovibPODVR(grids=po_grids, E_vj=E_vj, WF_vj=WF_vj)
+
+
+# --------------------------------------------------------------------------------
 if __name__ == "__main__":
     import numpy as np
     from numpy.typing import NDArray
@@ -169,16 +215,17 @@ if __name__ == "__main__":
     b = 6.0 * ANG2AU  # au
 
     H2_dvr = build_SineDVR(a, b, n_dvr, m_H2, H2_morse)
+    H2_rovib = build_RovibPODVR(H2_dvr, n_podvr, v_max, j_max, m_H2)
 
-    po_grids, dvr_to_c, po_to_c = podvr_grids(H2_dvr.grids, H2_dvr.eigen_vec, n_podvr)
-    E_v, WF_v = podvr_vib(po_to_c, H2_dvr.eigen_val, v_max)
-    E_vr, WF_vr = podvr_vibrot(po_grids, po_to_c, H2_dvr.eigen_val, v_max, j_max, m_H2)
+    assert H2_rovib.grids.shape == (n_podvr,)
+    assert H2_rovib.E_vj.shape == (v_max + 1, j_max + 1)
+    assert H2_rovib.WF_vj.shape == (n_podvr, v_max + 1, j_max + 1)
 
     print("H2 PODVR v=0 rotational energies (in cm^-1, relative to E(v=0,j=0)):")
-    E0 = E_vr[0, 0]
+    E0 = H2_rovib.E_vj[0, 0]
     exp_E = {1: 118.495, 2: 354.376, 3: 705.524, 4: 1168.815, 5: 1741.119}  # cm^-1, v=0
     AU2CM = 219474.6313705
     print(f"{'j':>3} {'PODVR/cm^-1':>16} {'Exp/cm^-1':>16}")
     for j in range(1, j_max + 1):
-        E_rel = (E_vr[0, j] - E0) * AU2CM
+        E_rel = (H2_rovib.E_vj[0, j] - E0) * AU2CM
         print(f"{j:>3} {E_rel:>16.3f} {exp_E[j]:>16.3f}")

@@ -25,7 +25,8 @@ def sine_dvr_grids(a: float, b: float, n: int) -> tuple[NDArray[np.float64], flo
         w: float - weights
     """
     if n < 2:
-        logger.warning(f"n should be greater than 1, but got n = {n}")
+        message = f"n should be greater than 1, but got n = {n}"
+        logger.warning(message)
 
     i = np.arange(1, n + 1, dtype=np.float64)
     length = b - a
@@ -136,15 +137,17 @@ def phase_fix(A: NDArray[np.float64]) -> NDArray[np.float64]:
                 res *= -1.0
 
             return res
-        logger.error("All elements are below the threshold.")
-        raise ValueError("All elements are below the threshold.")
+        message = "All elements are below the threshold."
+        logger.error(message)
+        raise ValueError(message)
 
     if res.ndim == 2:
         for col in range(res.shape[1]):
             res[:, col] = phase_fix(res[:, col])
         return res
 
-    logger.warning("Input array must be 1D or 2D, returning the original array.")
+    message = "Input array must be 1D or 2D, returning the original array."
+    logger.warning(message)
     return res
 
 
@@ -211,11 +214,13 @@ def build_SineDVR(a: float, b: float, n_dvr: int, mass: float, pot_func: Callabl
         SineDVR: SineDVR - SineDVR object with the given parameters
     """
     if n_dvr < 2:
-        logger.warning(f"n_dvr should be greater than 1, but got n_dvr = {n_dvr}")
+        message = f"n_dvr should be greater than 1, but got n_dvr = {n_dvr}"
+        logger.warning(message)
 
     if a >= b:
-        logger.error(f"Invalid interval: a ({a}) must be less than b ({b})")
-        raise ValueError(f"Invalid interval: a ({a}) must be less than b ({b})")
+        message = f"Invalid interval: a ({a}) must be less than b ({b})"
+        logger.error(message)
+        raise ValueError(message)
 
     grids, weights = sine_dvr_grids(a, b, n_dvr)
     dvr_to_fbr = sine_dvr_to_fbr(n_dvr)

@@ -1,8 +1,14 @@
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import lru_cache
-from typing import Protocol
+from typing import Protocol, overload
 
+import numpy as np
+from loguru import logger
+from numpy.typing import NDArray
+
+from pyticc.energy import EnergyInput, get_Etot
 from pyticc.system import MolInnerState, ScattSystem
 
 
@@ -30,9 +36,13 @@ class TruncSpec:
 
     def __post_init__(self) -> None:
         if self.E_X_cut < 0.0 or self.E_Y_cut < 0.0:
-            raise ValueError("Energy cutoffs must be non-negative")
+            message = f"Energy cutoffs must be non-negative, but got E_X_cut={self.E_X_cut}, E_Y_cut={self.E_Y_cut}"
+            logger.error(message)
+            raise ValueError(message)
         if self.K_cut is not None and self.K_cut < 0:
-            raise ValueError("K_cut must be non-negative")
+            message = f"K_cut must be non-negative, but got K_cut={self.K_cut}"
+            logger.error(message)
+            raise ValueError(message)
 
 
 # ----------------------------------------------------------------------------------------
@@ -66,6 +76,87 @@ class Channel:
 
 
 # ----------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class OpenClosedChannels:
+    """
+    Open and closed channel information over a total-energy grid.
+
+    Members:
+        total_energies: NDArray[np.float64] - total energies in atomic units
+        open_mask: NDArray[np.bool_] - open-channel mask with shape (n_energy, n_channel)
+        n_open: NDArray[np.int64] - number of open channels at each energy
+        n_closed: NDArray[np.int64] - number of closed channels at each energy
+    """
+
+    total_energies: NDArray[np.float64]
+    open_mask: NDArray[np.bool_]
+    n_open: NDArray[np.int64]
+    n_closed: NDArray[np.int64]
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ChannelBasis(Sequence[Channel]):
+    """
+    Complete channel basis for one field-free scattering block.
+
+    Members:
+        channels: tuple[Channel, ...] - channels ordered by increasing internal energy
+        n_channel: int - total number of channels
+    """
+
+    channels: tuple[Channel, ...]
+
+    @property
+    def n_channel(self) -> int:
+        return len(self.channels)
+
+    @property
+    def E_int(self) -> NDArray[np.float64]:
+        return np.asarray([channel.E_int for channel in self.channels], dtype=np.float64)
+
+    def __len__(self) -> int:
+        return self.n_channel
+
+    @overload
+    def __getitem__(self, index: int) -> Channel: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[Channel, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> Channel | tuple[Channel, ...]:
+        return self.channels[index]
+
+    def open_closed(self, total_energies: EnergyInput) -> OpenClosedChannels:
+        """
+        Classify channels as open or closed at each total energy.
+
+        Inputs:
+            total_energies: EnergyInput - total-energy array or one-column text file in atomic units
+
+        Returns:
+            result: OpenClosedChannels - total energies, masks, and channel counts
+        """
+        energies = get_Etot(total_energies)
+        open_mask = self.E_int[np.newaxis, :] < energies[:, np.newaxis]
+        n_open = np.asarray(np.sum(open_mask, axis=1), dtype=np.int64)
+        n_closed = np.asarray(self.n_channel - n_open, dtype=np.int64)
+
+        return OpenClosedChannels(
+            total_energies=energies,
+            open_mask=open_mask,
+            n_open=n_open,
+            n_closed=n_closed,
+        )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 class ParityRule(Protocol):
     def allow_K0(self, mis_X: MolInnerState, mis_Y: MolInnerState, j_couple: int) -> bool: ...
 
@@ -89,9 +180,11 @@ class ChannelBuilder:
     sys: ScattSystem
     trunc: TruncSpec
 
-    def build(self) -> list[Channel]:
+    def build(self) -> ChannelBasis:
         if self.sys.Jtot is None or self.sys.system_parity is None:
-            raise ValueError("Field-free channel construction requires Jtot and system_parity")
+            message = "Field-free channel construction requires Jtot and system_parity"
+            logger.error(message)
+            raise ValueError(message)
 
         parity = ClosedShellParity(self.sys.system_parity, self.sys.Jtot)
         channels: list[Channel] = []
@@ -118,7 +211,9 @@ class ChannelBuilder:
                         )
 
         channels.sort(key=lambda channel: channel.E_int)
-        return [replace(channel, index=index) for index, channel in enumerate(channels)]
+        indexed_channels = tuple(replace(channel, index=index) for index, channel in enumerate(channels))
+        return ChannelBasis(channels=indexed_channels)
+
 
 # ----------------------------------------------------------------------------------------
 if __name__ == "__main__":

@@ -44,8 +44,9 @@ def element_mass_au(symbol: str) -> float:
         return ELEMENT_MASS_AU[symbol]
 
     supported = ", ".join(SUPPORTED_ELEMENT_SYMBOLS)
-    logger.error(f"Unsupported element symbol {symbol!r}. Supported: {supported}")
-    raise ValueError(f"Unsupported element symbol {symbol!r}. Supported: {supported}")
+    message = f"Unsupported element symbol {symbol!r}. Supported: {supported}"
+    logger.error(message)
+    raise ValueError(message)
 
 
 # ----------------------------------------------------------------------------------------
@@ -126,11 +127,13 @@ class ScattSystem:
 
     def __post_init__(self) -> None:
         if self.Jtot is not None and self.Jtot < 0:
-            logger.error(f"Invalid Jtot {self.Jtot}. Must be non-negative.")
-            raise ValueError(f"Invalid Jtot {self.Jtot}. Must be non-negative.")
+            message = f"Invalid Jtot {self.Jtot}. Must be non-negative."
+            logger.error(message)
+            raise ValueError(message)
         if self.system_parity is not None and self.system_parity not in (-1, 1):
-            logger.error(f"Invalid system_parity {self.system_parity}. Must be -1 or 1.")
-            raise ValueError(f"Invalid system_parity {self.system_parity}. Must be -1 or 1.")
+            message = f"Invalid system_parity {self.system_parity}. Must be -1 or 1."
+            logger.error(message)
+            raise ValueError(message)
 
 
 # ----------------------------------------------------------------------------------------

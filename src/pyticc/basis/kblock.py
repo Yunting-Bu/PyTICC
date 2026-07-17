@@ -54,8 +54,9 @@ def build_nncc_blocks(channels: Sequence[Channel], K_delta: int = 1) -> list[KBl
         blocks: list[KBlock] - NNCC propagation blocks
     """
     if K_delta < 1:
-        logger.error(f"NNCC requires K_delta >= 1, but got K_delta={K_delta}")
-        raise ValueError("NNCC requires K_delta >= 1")
+        message = f"NNCC requires K_delta >= 1, but got K_delta={K_delta}"
+        logger.error(message)
+        raise ValueError(message)
     if not channels:
         return []
 

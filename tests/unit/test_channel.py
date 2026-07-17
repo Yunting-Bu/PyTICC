@@ -12,6 +12,7 @@ def test_atom_diatom_keeps_internal_angular_momentum_above_J() -> None:
 
     channels = ChannelBuilder(system, TruncSpec()).build()
 
+    assert channels.n_channel == 3
     assert [(channel.j_couple, channel.K) for channel in channels] == [(0, 0), (1, 0), (2, 0)]
 
 
@@ -21,7 +22,7 @@ def test_channel_string_shows_quantum_numbers_and_energy() -> None:
 
     channel = ChannelBuilder(system, TruncSpec()).build()[0]
 
-    assert str(channel) == "Channel[0] X(v=-, j=0) Y(v=0, j=0) j_couple=0 K=0 J=0 parity=+1 E_int=0.0000000000 a.u."
+    assert str(channel) == "Channel[0] X(v=-, j=0) Y(v=0, j=0) j_couple=0 K=0 Jtot=0 parity=+1 E_int=0.0000000000 a.u."
 
 
 def test_diatom_diatom_filters_K0_for_every_rotational_state() -> None:
