@@ -42,6 +42,38 @@ class KBlock:
 
 
 # ----------------------------------------------------------------------------------------
+def build_cs_blocks(channels: Sequence[Channel]) -> list[KBlock]:
+    """
+    Build independent single-K propagation blocks for the coupled-states approximation.
+
+    Inputs:
+        channels: Sequence[Channel] - complete field-free channel basis
+
+    Returns:
+        blocks: list[KBlock] - one propagation block for each retained K
+    """
+    K_values = sorted({channel.K for channel in channels})
+    blocks: list[KBlock] = []
+    for block_index, K in enumerate(K_values):
+        channel_indices = tuple(index for index, channel in enumerate(channels) if channel.K == K)
+        blocks.append(
+            KBlock(
+                index=block_index,
+                center_K=K,
+                K_delta=0,
+                K_values=(K,),
+                channel_indices=channel_indices,
+                owned_K_values=(K,),
+                owned_channel_indices=channel_indices,
+            )
+        )
+    return blocks
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def build_nncc_blocks(channels: Sequence[Channel], K_delta: int = 1) -> list[KBlock]:
     """
     Build overlapping NNCC propagation blocks from a complete channel basis.

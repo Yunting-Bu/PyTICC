@@ -5,7 +5,7 @@ from typing import Protocol
 
 from loguru import logger
 
-from pyticc.constants import AU2AMU
+from pyticc.constants import AMU2AU
 
 # ----------------------------------------------------------------------------------------
 # Mass
@@ -23,7 +23,7 @@ ELEMENT_MASS_AMU: dict[str, float] = {
 }
 # ----------------------------------------------------------------------------------------
 
-ELEMENT_MASS_AU: dict[str, float] = {symbol: mass * AU2AMU for symbol, mass in ELEMENT_MASS_AMU.items()}
+ELEMENT_MASS_AU: dict[str, float] = {symbol: mass * AMU2AU for symbol, mass in ELEMENT_MASS_AMU.items()}
 
 
 SUPPORTED_ELEMENT_SYMBOLS = tuple(ELEMENT_MASS_AU)
@@ -47,6 +47,23 @@ def element_mass_au(symbol: str) -> float:
     message = f"Unsupported element symbol {symbol!r}. Supported: {supported}"
     logger.error(message)
     raise ValueError(message)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def element_masses_au(*symbols: str) -> tuple[float, ...]:
+    """
+    Get the atomic masses of several supported elements in atomic units.
+
+    Inputs:
+        symbols: str - element symbols in the requested output order
+
+    Returns:
+        masses: tuple[float, ...] - atomic masses in the same order as symbols
+    """
+    return tuple(element_mass_au(symbol) for symbol in symbols)
 
 
 # ----------------------------------------------------------------------------------------

@@ -112,3 +112,17 @@ def test_get_Vmat_BF_preserves_nncc_channel_order() -> None:
     block_Vmat = get_Vmat_BF(V_basis, potential, indices)
 
     np.testing.assert_allclose(block_Vmat, full_Vmat[np.ix_(indices, indices)])
+
+
+def test_get_Vmat_BF_accepts_radial_batch() -> None:
+    basis = make_atom_diatom_basis()
+    rovib = make_rovib()
+    cos_theta, theta_weights = roots_legendre(5)
+    V_basis = prepare_Vmat_BF_atom_diatom(basis, rovib, cos_theta, theta_weights)
+    potential = np.stack([np.full(V_basis.grid_shape, value) for value in (1.0, 2.0)])
+
+    Vmat = get_Vmat_BF(V_basis, potential)
+
+    assert Vmat.shape == (2, basis.n_channel, basis.n_channel)
+    np.testing.assert_allclose(Vmat[0], np.eye(basis.n_channel), atol=1.0e-13)
+    np.testing.assert_allclose(Vmat[1], 2.0 * np.eye(basis.n_channel), atol=1.0e-13)

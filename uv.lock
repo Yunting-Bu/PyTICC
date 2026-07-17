@@ -480,6 +480,8 @@ dependencies = [
     { name = "loguru" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "sympy" },
 ]
 
@@ -504,6 +506,7 @@ requires-dist = [
     { name = "meson", marker = "extra == 'fortran'", specifier = ">=1.1" },
     { name = "ninja", marker = "extra == 'fortran'", specifier = ">=1.11" },
     { name = "numpy", specifier = ">=1.26" },
+    { name = "scipy", specifier = ">=1.13" },
     { name = "sympy", specifier = ">=1.14.0" },
 ]
 provides-extras = ["fortran"]

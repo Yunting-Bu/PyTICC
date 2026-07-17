@@ -12,6 +12,7 @@ dependencies = [
     "jaxlib>=0.4.30",
     "numpy>=1.26",
     "loguru>=0.7",
+    "scipy>=1.13",
     "sympy>=1.14.0",
 ]
 

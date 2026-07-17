@@ -271,7 +271,7 @@ def get_Vmat_BF(
     channel_indices: Sequence[int] | None = None,
 ) -> NDArray[np.float64]:
     r"""
-    Get the body-fixed interaction matrix from potential values on internal grids.
+    Get body-fixed interaction matrices from potential values on internal grids.
 
     The potential is diagonal in exact K. ``channel_indices`` can select a complete,
     CS, or NNCC propagation block while preserving the requested channel order.
@@ -286,26 +286,35 @@ def get_Vmat_BF(
 
     Inputs:
         V_basis: VBasisBF - precomputed atom-diatom or diatom-diatom basis
-        potential_flat: NDArray[np.float64] - potential values in V_basis.grid_shape order
+        potential_flat: NDArray[np.float64] - one potential grid or a batch with leading R axis
         channel_indices: Sequence[int] | None - requested positions in the complete ChannelBasis
 
     Returns:
-        Vmat: NDArray[np.float64] - body-fixed interaction matrix
+        Vmat: NDArray[np.float64] - interaction matrix, preceded by R for batched input
     """
     if channel_indices is None:
         indices = tuple(range(V_basis.n_channel))
     else:
         indices = tuple(channel_indices)
 
-    potential = np.asarray(potential_flat, dtype=np.float64).reshape(-1)
     n_grid = prod(V_basis.grid_shape)
-    if potential.size != n_grid:
-        message = f"Potential grid has {potential.size} points, but V basis requires {n_grid}"
+    potential = np.asarray(potential_flat, dtype=np.float64)
+    if potential.shape == V_basis.grid_shape or potential.shape == (n_grid,):
+        potential_batch = potential.reshape(1, n_grid)
+        batched = False
+    elif potential.ndim == len(V_basis.grid_shape) + 1 and potential.shape[1:] == V_basis.grid_shape:
+        potential_batch = potential.reshape(potential.shape[0], n_grid)
+        batched = True
+    elif potential.ndim == 2 and potential.shape[1] == n_grid:
+        potential_batch = potential.reshape(potential.shape[0], n_grid)
+        batched = True
+    else:
+        message = f"Potential grid has shape {potential.shape}, but V basis requires {V_basis.grid_shape} with an optional leading R axis"
         logger.error(message)
         raise ValueError(message)
 
     global_to_local = {global_index: local_index for local_index, global_index in enumerate(indices)}
-    Vmat = np.zeros((len(indices), len(indices)), dtype=np.float64)
+    Vmat = np.zeros((potential_batch.shape[0], len(indices), len(indices)), dtype=np.float64)
 
     for K, K_channel_indices in V_basis.channel_indices.items():
         selected = tuple(
@@ -319,10 +328,11 @@ def get_Vmat_BF(
         block_positions, output_positions = zip(*selected, strict=True)
         B_real = V_basis.B_real[K][np.asarray(block_positions)]
         B_imag = None if V_basis.B_imag is None else V_basis.B_imag[K][np.asarray(block_positions)]
-        block_Vmat = _contract_basis(B_real, B_imag, V_basis.normalization, potential)
-        Vmat[np.ix_(output_positions, output_positions)] = block_Vmat
+        for radial_index, potential_row in enumerate(potential_batch):
+            block_Vmat = _contract_basis(B_real, B_imag, V_basis.normalization, potential_row)
+            Vmat[radial_index][np.ix_(output_positions, output_positions)] = block_Vmat
 
-    return Vmat
+    return Vmat if batched else Vmat[0]
 
 
 # ----------------------------------------------------------------------------------------

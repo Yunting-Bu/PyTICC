@@ -28,7 +28,14 @@ def set_Kmax(j_couple: int, Jtot: int, Kcut: int | None = None) -> int:
 # ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class TruncSpec:
-    """Monomer-energy and helicity truncations in atomic units."""
+    """
+    Monomer-energy and helicity truncations.
+
+    Members:
+        E_X_cut: float - X-monomer internal-energy cutoff in atomic units
+        E_Y_cut: float - Y-monomer internal-energy cutoff in atomic units
+        K_cut: int | None - maximum retained helicity, or None to retain every allowed K
+    """
 
     E_X_cut: float = math.inf
     E_Y_cut: float = math.inf

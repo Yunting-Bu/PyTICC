@@ -18,7 +18,7 @@ def riccati_bessel_jy(ell: float, x: float) -> tuple[float, float, float, float]
         j_ell_prime : float - derivative of the Riccati-Bessel function of the first kind
         y_ell_prime : float - derivative of the Riccati-Bessel function of the second kind
     """
-    if x <= 0.0 or ell < -0.5:
+    if x <= 0.0 or ell < 0.0:
         message = f"x must be positive and ell must be non-negative, but got x={x}, ell={ell}"
         logger.error(message)
         raise ValueError(message)

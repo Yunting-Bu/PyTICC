@@ -26,6 +26,36 @@ def test_ArHF_python_pes_builds_atom_diatom_grid() -> None:
     np.testing.assert_allclose(pes.monomer_Y(r), (r - 1.75) ** 2)
 
 
+def test_python_pes_evaluates_several_radial_grids() -> None:
+    pes = PESWrapper(interaction=ArHF_interaction)
+    R = np.array([5.0, 6.0])
+    r = np.array([1.5, 2.0])
+    theta = np.array([0.0, np.pi])
+
+    V = get_Vgrid_atom_diatom(pes, R, r, theta)
+
+    expected = np.stack([np.exp(-RR) * (r[:, None] + np.cos(theta)[None, :]) for RR in R])
+    np.testing.assert_allclose(V, expected)
+
+
+def test_pes_wrapper_uses_specialized_batch_interface() -> None:
+    calls: list[np.ndarray] = []
+
+    def interaction_many(R: np.ndarray, coordinates: np.ndarray) -> np.ndarray:
+        calls.append(R)
+        return R[:, None] + np.sum(coordinates, axis=0)[None, :]
+
+    pes = PESWrapper(
+        interaction=lambda R, coordinates: np.zeros(coordinates.shape[1]),
+        interaction_many=interaction_many,
+    )
+    R = np.array([5.0, 6.0])
+    V = get_Vgrid_atom_diatom(pes, R, np.array([1.5]), np.array([0.0, np.pi]))
+
+    assert len(calls) == 1
+    np.testing.assert_allclose(V[:, 0], R[:, None] + np.array([1.5, 1.5 + np.pi]))
+
+
 def test_diatom_diatom_grid_uses_interaction_coordinate_order() -> None:
     def interaction(R: float, coordinates: np.ndarray) -> np.ndarray:
         coefficients = np.arange(1.0, 6.0)[:, None]

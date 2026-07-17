@@ -17,6 +17,7 @@ import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pyticc.pes.parallel import _evaluate_fortran_many, _FortranPESSpec
 from pyticc.pes.wrapper import MonomerPES, PESWrapper
 
 _ROUTINES = ("pyticc_interaction_grid", "pyticc_monomer_x_grid", "pyticc_monomer_y_grid")
@@ -29,21 +30,30 @@ def load_fortran_pes(
     wrapper: str | Path | None = None,
     *,
     workdir: str | Path | None = None,
+    processes: int = 1,
 ) -> PESWrapper:
     """
     Compile or load fixed-interface Fortran potential-energy surfaces.
 
     ``sources`` can also be a short TOML file. Relative paths in TOML are
     resolved from the directory containing that TOML file.
+    ``processes`` affects only batched radial evaluation. Spawned workers load
+    and initialize isolated copies of the compiled PES.
 
     Inputs:
         sources: Sequence[str | Path] | str | Path - Fortran sources or a TOML file
         wrapper: str | Path | None - source implementing the PyTICC grid routines
         workdir: str | Path | None - directory containing PES runtime data files
+        processes: int - worker processes used when several R values are evaluated together
 
     Returns:
         pes: PESWrapper - compiled monomer and interaction potential interfaces
     """
+    if processes < 1:
+        message = f"processes must be positive, but got {processes}"
+        logger.error(message)
+        raise ValueError(message)
+
     source_paths, wrapper_path, runtime_dir = _resolve_inputs(sources, wrapper, workdir)
     routines = _find_routines(wrapper_path)
     digest = _digest(source_paths, wrapper_path)
@@ -56,7 +66,8 @@ def load_fortran_pes(
         extension = _build(build_dir, module_name, source_paths, wrapper_path, routines, compiler)
 
     module = _load_module(module_name, extension)
-    return _make_wrapper(module, runtime_dir)
+    spec = _FortranPESSpec(module_name, extension, runtime_dir)
+    return _make_wrapper(module, spec, processes)
 
 
 def _resolve_inputs(
@@ -266,10 +277,19 @@ def _in_workdir(workdir: Path | None):
                 os.chdir(previous)
 
 
-def _make_wrapper(module: ModuleType, workdir: Path | None) -> PESWrapper:
+def _make_interaction(module: ModuleType, workdir: Path | None) -> Callable[[float, NDArray[np.float64]], NDArray[np.float64]]:
     def interaction(R: float, coordinates: NDArray[np.float64]) -> NDArray[np.float64]:
         with _in_workdir(workdir):
             return np.asarray(module.pyticc_interaction_grid(R, np.asfortranarray(coordinates)), dtype=np.float64)
+
+    return interaction
+
+
+def _make_wrapper(module: ModuleType, spec: _FortranPESSpec, processes: int) -> PESWrapper:
+    interaction = _make_interaction(module, spec.workdir)
+
+    def interaction_many(R: NDArray[np.float64], coordinates: NDArray[np.float64]) -> NDArray[np.float64]:
+        return _evaluate_fortran_many(spec, R, coordinates, processes)
 
     def monomer(name: str) -> MonomerPES | None:
         routine: Callable[..., object] | None = getattr(module, name, None)
@@ -277,13 +297,14 @@ def _make_wrapper(module: ModuleType, workdir: Path | None) -> PESWrapper:
             return None
 
         def potential(r: NDArray[np.float64]) -> NDArray[np.float64]:
-            with _in_workdir(workdir):
+            with _in_workdir(spec.workdir):
                 return np.asarray(routine(np.ascontiguousarray(r)), dtype=np.float64)
 
         return potential
 
     return PESWrapper(
         interaction=interaction,
+        interaction_many=interaction_many,
         monomer_X=monomer("pyticc_monomer_x_grid"),
         monomer_Y=monomer("pyticc_monomer_y_grid"),
     )
