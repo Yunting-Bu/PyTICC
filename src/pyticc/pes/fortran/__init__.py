@@ -1,3 +1,3 @@
-from pyticc.pes.fortran.loader import load_fortran_pes
+from pyticc.pes.fortran.loader import load_fortran_diabatic_pes, load_fortran_pes
 
-__all__ = ["load_fortran_pes"]
+__all__ = ["load_fortran_diabatic_pes", "load_fortran_pes"]

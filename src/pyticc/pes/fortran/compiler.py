@@ -6,11 +6,15 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from loguru import logger
 
-_ROUTINES = ("pyticc_interaction_grid", "pyticc_monomer_x_grid", "pyticc_monomer_y_grid")
+PESABI = Literal["scalar", "diabatic"]
+_SCALAR_ROUTINES = ("pyticc_interaction_grid", "pyticc_monomer_x_grid", "pyticc_monomer_y_grid")
+_DIABATIC_ROUTINES = ("pyticc_diabatic_interaction_grid", "pyticc_diabatic_monomer_grid")
+_INCLUDE_PATTERN = re.compile(r"^\s*include\s*['\"]([^'\"]+)['\"]", re.IGNORECASE | re.MULTILINE)
 
 
 # ----------------------------------------------------------------------------------------
@@ -26,12 +30,24 @@ def prepare_extension(sources: tuple[Path, ...], wrapper: Path) -> tuple[str, Pa
         module_name: str - hash-qualified Python extension name
         extension: Path - compiled platform-specific extension path
     """
-    routines = _find_routines(wrapper)
-    module_name = f"pyticc_pes_{_source_digest(sources, wrapper)[:12]}"
+    return _prepare_extension(sources, wrapper, "scalar")
+
+
+# ----------------------------------------------------------------------------------------
+def prepare_diabatic_extension(sources: tuple[Path, ...], wrapper: Path) -> tuple[str, Path]:
+    """Return a cached or newly compiled diabatic PES extension."""
+    return _prepare_extension(sources, wrapper, "diabatic")
+
+
+# ----------------------------------------------------------------------------------------
+def _prepare_extension(sources: tuple[Path, ...], wrapper: Path, abi: PESABI) -> tuple[str, Path]:
+    """Compile one scalar or diabatic Fortran PES ABI."""
+    routines = _find_routines(wrapper, abi)
+    module_name = f"pyticc_pes_{_source_digest(sources, wrapper, abi)[:12]}"
     build_dir = _cache_dir() / module_name
     extension = _find_extension(build_dir, module_name)
     if extension is None:
-        extension = _compile_extension(build_dir, module_name, sources, wrapper, routines, _require_build_tools())
+        extension = _compile_extension(build_dir, module_name, sources, wrapper, routines, abi, _require_build_tools())
     return module_name, extension
 
 
@@ -49,15 +65,36 @@ def _cache_dir() -> Path:
 
 
 # ----------------------------------------------------------------------------------------
-def _source_digest(sources: tuple[Path, ...], wrapper: Path) -> str:
+def _source_digest(sources: tuple[Path, ...], wrapper: Path, abi: PESABI = "scalar") -> str:
     """Hash PES sources and the active Python/NumPy runtime for cache invalidation."""
     digest = hashlib.sha256()
-    for path in (*sources, wrapper):
+    for path in _source_dependencies((*sources, wrapper)):
         digest.update(path.name.encode())
         digest.update(path.read_bytes())
+    digest.update(abi.encode())
     digest.update(sys.version.encode())
     digest.update(np.__version__.encode())
     return digest.hexdigest()
+
+
+# ----------------------------------------------------------------------------------------
+def _source_dependencies(paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    """Return sources plus recursively resolved local Fortran INCLUDE files."""
+    dependencies: list[Path] = []
+    pending = list(paths)
+    seen: set[Path] = set()
+    while pending:
+        path = pending.pop(0).resolve()
+        if path in seen:
+            continue
+        seen.add(path)
+        dependencies.append(path)
+        source = path.read_text(errors="ignore")
+        for include_name in _INCLUDE_PATTERN.findall(source):
+            include_path = (path.parent / include_name).resolve()
+            if include_path.is_file():
+                pending.append(include_path)
+    return tuple(dependencies)
 
 
 # ----------------------------------------------------------------------------------------
@@ -116,12 +153,15 @@ def _require_build_tools() -> str:
 
 
 # ----------------------------------------------------------------------------------------
-def _find_routines(wrapper: Path) -> set[str]:
-    """Detect supported PyTICC wrapper subroutines and require the interaction entry point."""
+def _find_routines(wrapper: Path, abi: PESABI = "scalar") -> set[str]:
+    """Detect supported PyTICC wrapper subroutines and require one complete ABI."""
     source = wrapper.read_text(errors="ignore")
-    routines = {name for name in _ROUTINES if re.search(rf"^\s*subroutine\s+{name}\b", source, re.IGNORECASE | re.MULTILINE)}
-    if "pyticc_interaction_grid" not in routines:
-        message = f"Fortran wrapper must define pyticc_interaction_grid: {wrapper}"
+    supported = _SCALAR_ROUTINES if abi == "scalar" else _DIABATIC_ROUTINES
+    routines = {name for name in supported if re.search(rf"^\s*subroutine\s+{name}\b", source, re.IGNORECASE | re.MULTILINE)}
+    required = {"pyticc_interaction_grid"} if abi == "scalar" else set(_DIABATIC_ROUTINES)
+    missing = required - routines
+    if missing:
+        message = f"Fortran {abi} wrapper must define {', '.join(sorted(missing))}: {wrapper}"
         logger.error(message)
         raise ValueError(message)
     return routines
@@ -131,8 +171,27 @@ def _find_routines(wrapper: Path) -> set[str]:
 
 
 # ----------------------------------------------------------------------------------------
-def _f2py_signature(module_name: str, routines: set[str]) -> str:
+def _f2py_signature(module_name: str, routines: set[str], abi: PESABI = "scalar") -> str:
     """Generate the explicit f2py signature for the routines exposed by a wrapper."""
+    if abi == "diabatic":
+        blocks = [
+            """        subroutine pyticc_diabatic_interaction_grid(RR, coordinates, V, n_coordinate, n_grid, n_state)
+            real*8 intent(in) :: RR
+            real*8 intent(in), dimension(n_coordinate, n_grid) :: coordinates
+            real*8 intent(out), dimension(n_grid, n_state, n_state) :: V
+            integer intent(hide), depend(coordinates) :: n_coordinate = shape(coordinates, 0)
+            integer intent(hide), depend(coordinates) :: n_grid = shape(coordinates, 1)
+            integer intent(in) :: n_state
+        end subroutine pyticc_diabatic_interaction_grid""",
+            """        subroutine pyticc_diabatic_monomer_grid(r, V, n_grid, n_state)
+            real*8 intent(in), dimension(n_grid) :: r
+            real*8 intent(out), dimension(n_grid, n_state) :: V
+            integer intent(hide), depend(r) :: n_grid = shape(r, 0)
+            integer intent(in) :: n_state
+        end subroutine pyticc_diabatic_monomer_grid""",
+        ]
+        return f"python module {module_name}\n    interface\n" + "\n".join(blocks) + f"\n    end interface\nend python module {module_name}\n"
+
     blocks = [
         """        subroutine pyticc_interaction_grid(RR, coordinates, V, n_coordinate, n_grid)
             real*8 intent(in) :: RR
@@ -164,12 +223,15 @@ def _compile_extension(
     sources: tuple[Path, ...],
     wrapper: Path,
     routines: set[str],
+    abi: PESABI,
     compiler: str,
 ) -> Path:
     """Compile a Fortran PES extension with f2py/Meson and return its shared library."""
     build_dir.mkdir(parents=True, exist_ok=True)
     signature = build_dir / f"{module_name}.pyf"
-    signature.write_text(_f2py_signature(module_name, routines))
+    signature.write_text(_f2py_signature(module_name, routines, abi))
+    include_directories = tuple(dict.fromkeys(path.parent for path in (*sources, wrapper)))
+    include_flags = " ".join(f"-I{directory}" for directory in include_directories)
     command = [
         sys.executable,
         "-m",
@@ -180,8 +242,8 @@ def _compile_extension(
         str(wrapper),
         "--backend",
         "meson",
-        "--f77flags=-O3",
-        "--f90flags=-O3",
+        f"--f77flags=-O3 {include_flags}",
+        f"--f90flags=-O3 {include_flags}",
     ]
     environment = os.environ.copy()
     environment["FC"] = compiler

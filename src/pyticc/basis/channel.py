@@ -70,10 +70,12 @@ class Channel:
     def __str__(self) -> str:
         qn_X = f"t={self.mis_X.t}" if self.mis_X.t is not None else f"v={'-' if self.mis_X.v is None else self.mis_X.v}"
         qn_Y = f"t={self.mis_Y.t}" if self.mis_Y.t is not None else f"v={'-' if self.mis_Y.v is None else self.mis_Y.v}"
+        electronic_X = "" if self.mis_X.electronic_state is None else f"e={self.mis_X.electronic_state}, "
+        electronic_Y = "" if self.mis_Y.electronic_state is None else f"e={self.mis_Y.electronic_state}, "
         return (
             f"Channel[{self.index}] "
-            f"X({qn_X}, j={self.mis_X.j}) "
-            f"Y({qn_Y}, j={self.mis_Y.j}) "
+            f"X({electronic_X}{qn_X}, j={self.mis_X.j}) "
+            f"Y({electronic_Y}{qn_Y}, j={self.mis_Y.j}) "
             f"j_couple={self.j_couple} K={self.K} Jtot={self.Jtot} "
             f"parity={self.system_parity:+d} E_int={self.E_int:.10f} a.u."
         )

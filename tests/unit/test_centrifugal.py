@@ -54,6 +54,27 @@ def test_get_Umat_BF_does_not_couple_different_internal_states() -> None:
     np.testing.assert_allclose(Umat[3:, :3], 0.0)
 
 
+def test_get_Umat_BF_does_not_couple_different_electronic_states() -> None:
+    channels = tuple(
+        Channel(
+            mis_X=MolInnerState(j=0),
+            mis_Y=MolInnerState(v=0, j=2, electronic_state=electronic_state),
+            j_couple=2,
+            K=K,
+            Jtot=2,
+            system_parity=1,
+            E_int=float(electronic_state),
+            index=index,
+        )
+        for index, (electronic_state, K) in enumerate((state, K) for state in range(2) for K in range(3))
+    )
+
+    Umat = get_Umat_BF(ChannelBasis(channels))
+
+    np.testing.assert_allclose(Umat[:3, 3:], 0.0)
+    np.testing.assert_allclose(Umat[3:, :3], 0.0)
+
+
 def test_get_Umat_BF_preserves_requested_channel_order() -> None:
     basis = make_atom_diatom_basis()
     indices = (2, 1, 0)

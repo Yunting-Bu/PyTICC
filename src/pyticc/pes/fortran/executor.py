@@ -15,6 +15,7 @@ import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pyticc.pes.diabatic import DiabaticPESWrapper
 from pyticc.pes.wrapper import MonomerPES, PESWrapper
 
 
@@ -25,10 +26,14 @@ class _FortranPESSpec:
     module_name: str
     extension: Path
     workdir: Path | None
+    interaction_routine: str = "pyticc_interaction_grid"
+    interaction_args: tuple[int, ...] = ()
 
 
 _MODULE: ModuleType | None = None
 _COORDINATES: NDArray[np.float64] | None = None
+_INTERACTION_ROUTINE = "pyticc_interaction_grid"
+_INTERACTION_ARGS: tuple[int, ...] = ()
 _FORTRAN_LOCK = RLock()
 
 
@@ -48,7 +53,7 @@ def create_pes_wrapper(module_name: str, extension: Path, workdir: Path | None, 
     """
     spec = _FortranPESSpec(module_name, extension, workdir)
     module = _load_module(module_name, extension)
-    interaction = _make_interaction(module, workdir)
+    interaction = _make_interaction(module, workdir, spec.interaction_routine, spec.interaction_args)
     executor = _FortranPESExecutor(spec, processes, interaction)
 
     def interaction_many(R: NDArray[np.float64], coordinates: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -73,6 +78,43 @@ def create_pes_wrapper(module_name: str, extension: Path, workdir: Path | None, 
         interaction_many=interaction_many,
         monomer_X=monomer("pyticc_monomer_x_grid"),
         monomer_Y=monomer("pyticc_monomer_y_grid"),
+        _close=executor.close,
+    )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def create_diabatic_pes_wrapper(
+    module_name: str,
+    extension: Path,
+    workdir: Path | None,
+    processes: int,
+    n_state: int,
+) -> DiabaticPESWrapper:
+    """Load a compiled extension and expose its diabatic monomer and interaction matrices."""
+    routine_name = "pyticc_diabatic_interaction_grid"
+    spec = _FortranPESSpec(module_name, extension, workdir, routine_name, (n_state,))
+    module = _load_module(module_name, extension)
+    interaction = _make_interaction(module, workdir, routine_name, (n_state,))
+    executor = _FortranPESExecutor(spec, processes, interaction)
+    monomer_routine: Callable[..., object] = module.pyticc_diabatic_monomer_grid
+
+    def interaction_many(R: NDArray[np.float64], coordinates: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Evaluate a radial batch, returning shape ``(n_R, n_grid, n_state, n_state)``."""
+        return executor.evaluate(R, coordinates)
+
+    def monomer(r: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Evaluate all monomer states, returning shape ``(n_grid, n_state)``."""
+        with _in_workdir(workdir):
+            return np.asarray(monomer_routine(np.ascontiguousarray(r), n_state), dtype=np.float64)
+
+    return DiabaticPESWrapper(
+        n_state=n_state,
+        monomer=monomer,
+        interaction=interaction,
+        interaction_many=interaction_many,
         _close=executor.close,
     )
 
@@ -118,13 +160,19 @@ def _in_workdir(workdir: Path | None):
 
 
 # ----------------------------------------------------------------------------------------
-def _make_interaction(module: ModuleType, workdir: Path | None) -> Callable[[float, NDArray[np.float64]], NDArray[np.float64]]:
-    """Wrap a routine mapping coordinates of shape (n_coordinate, n_grid) to shape (n_grid,)."""
+def _make_interaction(
+    module: ModuleType,
+    workdir: Path | None,
+    routine_name: str = "pyticc_interaction_grid",
+    routine_args: tuple[int, ...] = (),
+) -> Callable[[float, NDArray[np.float64]], NDArray[np.float64]]:
+    """Wrap a scalar-R Fortran routine while preserving all PES output axes."""
+    routine: Callable[..., object] = getattr(module, routine_name)
 
     def interaction(R: float, coordinates: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Evaluate one R for coordinates of shape (n_coordinate, n_grid), returning (n_grid,)."""
+        """Evaluate one R for coordinates of shape ``(n_coordinate, n_grid)``."""
         with _in_workdir(workdir):
-            return np.asarray(module.pyticc_interaction_grid(R, np.asfortranarray(coordinates)), dtype=np.float64)
+            return np.asarray(routine(R, np.asfortranarray(coordinates), *routine_args), dtype=np.float64)
 
     return interaction
 
@@ -135,13 +183,15 @@ def _make_interaction(module: ModuleType, workdir: Path | None) -> Callable[[flo
 # ----------------------------------------------------------------------------------------
 def _initialize_worker(spec: _FortranPESSpec, coordinates: NDArray[np.float64]) -> None:
     """Load an isolated PES module and coordinates with shape (n_coordinate, n_grid)."""
-    global _MODULE, _COORDINATES
+    global _MODULE, _COORDINATES, _INTERACTION_ROUTINE, _INTERACTION_ARGS
 
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     if spec.workdir is not None:
         os.chdir(spec.workdir)
     _MODULE = _load_module(spec.module_name, spec.extension)
     _COORDINATES = np.asfortranarray(coordinates)
+    _INTERACTION_ROUTINE = spec.interaction_routine
+    _INTERACTION_ARGS = spec.interaction_args
 
 
 # ----------------------------------------------------------------------------------------
@@ -149,10 +199,11 @@ def _initialize_worker(spec: _FortranPESSpec, coordinates: NDArray[np.float64]) 
 
 # ----------------------------------------------------------------------------------------
 def _evaluate_worker(RR: float) -> NDArray[np.float64]:
-    """Evaluate one radial point in a prepared worker, returning shape (n_grid,)."""
+    """Evaluate one radial point in a prepared worker."""
     if _MODULE is None or _COORDINATES is None:
         raise RuntimeError("Fortran PES worker is not initialized")
-    return np.asarray(_MODULE.pyticc_interaction_grid(RR, _COORDINATES), dtype=np.float64)
+    routine: Callable[..., object] = getattr(_MODULE, _INTERACTION_ROUTINE)
+    return np.asarray(routine(RR, _COORDINATES, *_INTERACTION_ARGS), dtype=np.float64)
 
 
 # ----------------------------------------------------------------------------------------
@@ -203,7 +254,7 @@ class _FortranPESExecutor:
         return self._pool
 
     def evaluate(self, R: NDArray[np.float64], coordinates: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Evaluate R with shape (n_R,), returning potential values with shape (n_R, n_grid)."""
+        """Evaluate R with shape ``(n_R,)``, preserving every trailing PES output axis."""
         radial_points = np.asarray(R, dtype=np.float64)
         if radial_points.size == 0:
             return np.empty((0, coordinates.shape[1]), dtype=np.float64)

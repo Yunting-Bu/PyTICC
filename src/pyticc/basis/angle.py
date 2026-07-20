@@ -8,34 +8,43 @@ from sympy.physics.wigner import clebsch_gordan as sympy_clebsch_gordan
 
 
 # --------------------------------------------------------------------------------
-def gauss_legendre_dvr(theta_min: float, theta_max: float, nth: int, sysmetry: bool = False) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    r"""
-    Get Gauss-Legendre DVR grids and weights in the interval [theta_min, theta_max] with nth points.
-    If sysmetry is True, the grids and weights are symmetrically distributed around the center of the interval.
-    If sysmetry is False, the grids and weights are distributed in the whole interval.
+def gauss_legendre_dvr(lower: float, upper: float, n_points: int, symmetry: bool = False) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Return Gauss-Legendre nodes and weights on an interval.
+
+    With ``symmetry=True``, ``n_points`` nodes are retained from one half of a
+    ``2 * n_points`` rule and their weights are doubled. This is valid when the
+    complete integrand is symmetric about the interval center.
 
     Inputs:
-        tehta_min: float - left boundary of the interval in radians
-        theta_max: float - right boundary of the interval in radians
-        nth: int - number of points
-        sysmetry: bool - whether to use symmetry or not
+        lower: float - lower integration bound
+        upper: float - upper integration bound
+        n_points: int - number of returned quadrature points
+        symmetry: bool - whether to retain only one half of a symmetric rule
 
     Returns:
-        grids: NDArray[np.float64] - Gauss-Legendre DVR grids, shape (nth,)
-        weights: NDArray[np.float64] - Gauss-Legendre DVR weights, shape (nth,)
+        grids: NDArray[np.float64] - quadrature nodes, shape (n_points,)
+        weights: NDArray[np.float64] - quadrature weights, shape (n_points,)
     """
+    if n_points < 1:
+        message = f"n_points must be positive, but got {n_points}"
+        logger.error(message)
+        raise ValueError(message)
+    if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+        message = f"Quadrature bounds must be finite and increasing, but got lower={lower}, upper={upper}"
+        logger.error(message)
+        raise ValueError(message)
 
-    n_full = 2 * nth if sysmetry else nth
+    n_full = 2 * n_points if symmetry else n_points
     x, w = roots_legendre(n_full)
-    center_theta = 0.5 * (theta_max + theta_min)
-    half_range = 0.5 * (theta_max - theta_min)
+    center = 0.5 * (upper + lower)
+    half_range = 0.5 * (upper - lower)
     full_weights = half_range * w
 
-    if sysmetry:
-        grids = (center_theta + half_range * x[:nth]).copy()
-        weights = (2.0 * full_weights[:nth]).copy()
+    if symmetry:
+        grids = (center + half_range * x[:n_points]).copy()
+        weights = (2.0 * full_weights[:n_points]).copy()
     else:
-        grids = (center_theta + half_range * x).copy()
+        grids = (center + half_range * x).copy()
         weights = full_weights.copy()
 
     return grids, weights
@@ -74,6 +83,59 @@ def norm_YjK(j: int, K: int, x: float | NDArray[np.float64]) -> float | NDArray[
         factor *= -1.0
 
     return factor * lpmv(m, j, x)
+
+
+# --------------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------------
+def norm_reduced_wigner_d(
+    j: int,
+    K: int,
+    omega: int,
+    theta: float | NDArray[np.float64],
+) -> float | NDArray[np.float64]:
+    r"""
+    Get a reduced Wigner d function normalized for integration over cos(theta).
+
+    This follows ``DJMM(..., ID=3)`` in the ABC+D reference code, including its
+    phase convention.
+
+    Formula:
+        D_tilde^{j}_{K,omega}(theta)
+            = sqrt((2j+1)/2) d^{j}_{K,omega}(theta)
+
+    Inputs:
+        j: int - angular momentum quantum number
+        K: int - body-fixed projection on the intermolecular axis
+        omega: int - projection on the triatomic internal axis
+        theta: float | NDArray[np.float64] - polar angle in radians, scalar or
+            array with shape (...)
+
+    Returns:
+        value: float | NDArray[np.float64] - normalized reduced Wigner d value,
+            with the same shape (...) as theta
+    """
+    if abs(K) > j or abs(omega) > j:
+        message = f"Invalid Wigner d indices: j={j}, K={K}, omega={omega}"
+        logger.error(message)
+        raise ValueError(message)
+
+    angles = np.asarray(theta, dtype=np.float64)
+    cosine = np.cos(0.5 * angles)
+    sine = np.sin(0.5 * angles)
+    log_prefactor = 0.5 * (gammaln(j + omega + 1.0) + gammaln(j - omega + 1.0) + gammaln(j + K + 1.0) + gammaln(j - K + 1.0))
+    result = np.zeros_like(angles)
+
+    for k in range(max(0, omega - K), min(j - K, j + omega) + 1):
+        cosine_power = 2 * j + omega - K - 2 * k
+        sine_power = K - omega + 2 * k
+        log_denominator = gammaln(j - K - k + 1.0) + gammaln(j + omega - k + 1.0) + gammaln(K - omega + k + 1.0) + gammaln(k + 1.0)
+        phase = -1.0 if (k + sine_power) % 2 else 1.0
+        result += phase * np.exp(log_prefactor - log_denominator) * cosine**cosine_power * sine**sine_power
+
+    result *= np.sqrt((2.0 * j + 1.0) / 2.0)
+    return float(result) if result.ndim == 0 else result
 
 
 # --------------------------------------------------------------------------------

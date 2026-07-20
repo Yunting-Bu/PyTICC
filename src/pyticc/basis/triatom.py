@@ -142,6 +142,55 @@ class TriatomBasis:
 
 
 # ----------------------------------------------------------------------------------------
+def get_triatom_expansion(
+    basis: TriatomBasis,
+    j: int,
+    K: int,
+    t: int,
+) -> tuple[NDArray[np.int64], NDArray[np.float64]]:
+    """
+    Expand one contracted triatomic state in the unsymmetrized primitive basis.
+
+    The returned primitive quantum numbers are ``(j1, omega, v1, v2)``. This is
+    the representation needed to evaluate a contracted eigenfunction on the
+    five-dimensional atom-triatom interaction grid.
+
+    Inputs:
+        basis: TriatomBasis - contracted triatomic monomer basis
+        j: int - triatomic rotational angular momentum
+        K: int - system helicity
+        t: int - zero-based contracted-state index
+
+    Returns:
+        qn: NDArray[np.int64] - unsymmetrized primitive quantum numbers, shape
+            (n_primitive, 4)
+        coefficients: NDArray[np.float64] - expansion coefficients, shape
+            (n_primitive,)
+    """
+    blocks = basis.K0_blocks if K == 0 else basis.positive_K_blocks
+    try:
+        block = blocks[j]
+    except KeyError as error:
+        message = f"Triatomic basis has no block for j={j}, K={K}"
+        logger.error(message)
+        raise ValueError(message) from error
+
+    columns = np.flatnonzero(block.t_indices == t)
+    if columns.size != 1:
+        message = f"Triatomic state (j={j}, t={t}, K={K}) is not present in its contraction block"
+        logger.error(message)
+        raise ValueError(message)
+
+    j1max = int(np.max(block.qn[:, 0]))
+    vmax_1 = int(np.max(block.qn[:, 2]))
+    vmax_2 = int(np.max(block.qn[:, 3]))
+    qn = _unsym_qn(j, j1max, vmax_1, vmax_2)
+    transform = _symmetry_transform(qn, block.qn, K, basis.parity_block_sign, basis.jpar)
+    coefficients = transform @ block.coefficients[:, int(columns[0])]
+    return qn, np.asarray(coefficients, dtype=np.float64)
+
+
+# ----------------------------------------------------------------------------------------
 def _unsym_qn(j2: int, j1max: int, vmax_1: int, vmax_2: int) -> NDArray[np.int64]:
     """Enumerate unsymmetrized (j1, omega, v1, v2) states, shape (n_primitive, 4)."""
     states = [

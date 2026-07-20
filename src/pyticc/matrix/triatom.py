@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from pyticc.basis.angle import lambda_minus, lambda_plus, norm_YjK
+from pyticc.basis.angle import gauss_legendre_dvr, lambda_minus, lambda_plus, norm_YjK
 from pyticc.basis.podvr import VibPODVR
 
 TriatomPES = Callable[[NDArray[np.float64]], NDArray[np.float64]]
@@ -77,7 +77,7 @@ def prepare_triatom_hamiltonian(
             (n_v1, n_v1) and (n_v2, n_v2), and angular arrays with leading shape
             (n_theta, ...)
     """
-    cos_theta, theta_weights = np.polynomial.legendre.leggauss(n_theta)
+    cos_theta, theta_weights = gauss_legendre_dvr(-1.0, 1.0, n_theta)
     theta = np.arccos(cos_theta)
     r1_eq, r2_eq, theta_eq = equilibrium
 

@@ -1,0 +1,128 @@
+import numpy as np
+import pytest
+from numpy.typing import NDArray
+
+from pyticc.basis.channel import ChannelBuilder, TruncSpec
+from pyticc.basis.diabatic import build_DiabaticDiatomBasis
+from pyticc.basis.dvr import SineDVR, build_SineDVR
+from pyticc.basis.monomer import AtomSpec
+from pyticc.system import ScattSystem
+
+
+def _potential(offset: float):
+    def potential(r: NDArray[np.float64]) -> NDArray[np.float64]:
+        return 0.02 * (r - 2.0) ** 2 + offset
+
+    return potential
+
+
+def _dvrs() -> tuple[SineDVR, SineDVR]:
+    return (
+        build_SineDVR(1.0, 4.0, 30, 1000.0, _potential(0.0)),
+        build_SineDVR(1.0, 4.0, 30, 1000.0, _potential(0.3)),
+    )
+
+
+def test_diabatic_basis_uses_one_energy_zero_and_state_specific_truncations() -> None:
+    basis = build_DiabaticDiatomBasis(
+        _dvrs(),
+        n_podvr=(6, 5),
+        vmax=(1, 0),
+        jmax=(1, 2),
+        mass=1000.0,
+        jpar=(-1, 1),
+    )
+
+    states = list(basis.mis_iter(np.inf))
+
+    assert basis.n_state == 2
+    assert basis.rotational_parities == (-1, 1)
+    assert basis.states[0].rovib.grids.size == 6
+    assert basis.states[1].rovib.grids.size == 5
+    assert basis.states[0].spec.Eint[0, 0] == pytest.approx(0.0, abs=1.0e-14)
+    assert basis.states[1].spec.Eint[0, 0] == pytest.approx(0.3, abs=1.0e-13)
+    assert [(state.electronic_state, state.v, state.j) for state in states] == [
+        (0, 0, 1),
+        (0, 1, 1),
+        (1, 0, 0),
+        (1, 0, 2),
+    ]
+
+
+def test_diabatic_basis_retains_orthonormal_primitive_dvr_rovibrational_states() -> None:
+    basis = build_DiabaticDiatomBasis(
+        _dvrs(),
+        n_podvr=(6, 5),
+        vmax=(1, 0),
+        jmax=(1, 2),
+        mass=1000.0,
+    )
+
+    for state in basis.states:
+        assert state.rovib_dvr.WF_vj.shape == (state.dvr.grids.size, *state.rovib.E_vj.shape)
+        for j in range(state.rovib.E_vj.shape[1]):
+            wavefunctions = state.rovib_dvr.WF_vj[:, :, j]
+            np.testing.assert_allclose(wavefunctions.T @ wavefunctions, np.eye(wavefunctions.shape[1]), atol=1.0e-13)
+
+        np.testing.assert_allclose(state.rovib_dvr.WF_vj[:, :, 0], state.dvr.eigen_vec[:, : state.rovib.E_vj.shape[0]], atol=1.0e-12)
+
+
+def test_diabatic_basis_accepts_an_explicit_common_energy_reference() -> None:
+    reference = 0.125
+    basis = build_DiabaticDiatomBasis(
+        _dvrs(),
+        n_podvr=5,
+        vmax=0,
+        jmax=0,
+        mass=1000.0,
+        energy_reference=reference,
+    )
+
+    assert basis.energy_reference == reference
+    for state in basis.states:
+        np.testing.assert_allclose(state.spec.Eint, state.rovib.E_vj - reference)
+
+
+def test_diabatic_basis_generates_energy_sorted_channels_with_state_labels() -> None:
+    basis = build_DiabaticDiatomBasis(
+        _dvrs(),
+        n_podvr=5,
+        vmax=0,
+        jmax=(1, 0),
+        mass=1000.0,
+    )
+    system = ScattSystem(AtomSpec(), basis, Jtot=0, system_parity=1)
+
+    channels = ChannelBuilder(system, TruncSpec()).build()
+
+    assert np.all(np.diff(channels.E_int) >= 0.0)
+    assert {(channel.mis_Y.electronic_state, channel.mis_Y.v, channel.mis_Y.j) for channel in channels} == {
+        (0, 0, 0),
+        (0, 0, 1),
+        (1, 0, 0),
+    }
+    assert "Y(e=0, v=0, j=0)" in str(channels[0])
+
+
+def test_diabatic_basis_requires_a_shared_primitive_dvr_grid() -> None:
+    incompatible_dvrs = (
+        build_SineDVR(1.0, 4.0, 20, 1000.0, _potential(0.0)),
+        build_SineDVR(1.1, 4.0, 20, 1000.0, _potential(0.3)),
+    )
+
+    with pytest.raises(ValueError, match="same primitive DVR grid"):
+        build_DiabaticDiatomBasis(incompatible_dvrs, n_podvr=5, vmax=0, jmax=0, mass=1000.0)
+
+
+def test_diabatic_basis_validates_per_state_inputs() -> None:
+    with pytest.raises(ValueError, match="one value per electronic state"):
+        build_DiabaticDiatomBasis(_dvrs(), n_podvr=(5,), vmax=0, jmax=0, mass=1000.0)
+
+    basis = build_DiabaticDiatomBasis(_dvrs(), n_podvr=5, vmax=0, jmax=0, mass=1000.0)
+    with pytest.raises(ValueError, match="outside"):
+        basis.state(-1)
+
+
+def test_diabatic_basis_rejects_nonfinite_energy_reference() -> None:
+    with pytest.raises(ValueError, match="energy_reference must be finite"):
+        build_DiabaticDiatomBasis(_dvrs(), n_podvr=5, vmax=0, jmax=0, mass=1000.0, energy_reference=np.nan)

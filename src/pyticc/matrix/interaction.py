@@ -329,11 +329,13 @@ def get_Vmat_BF(
             B^R_{c g} V_g B^R_{c' g} + B^I_{c g} V_g B^I_{c' g}
         ],
 
-        where N = 1 for atom-diatom and N = 1/pi for diatom-diatom. The imaginary
-        contribution is absent when ``V_basis.B_imag`` is None.
+        where N = 1 for atom-diatom and N = 1/pi for atom-triatom or
+        diatom-diatom. The imaginary contribution is absent when
+        ``V_basis.B_imag`` is None.
 
     Inputs:
-        V_basis: VBasisBF - precomputed atom-diatom or diatom-diatom basis
+        V_basis: VBasisBF - precomputed atom-diatom, atom-triatom, or
+            diatom-diatom basis
         potential_flat: NDArray[np.float64] - one potential grid with shape
             grid_shape or (n_grid,), or a batch with shape (n_R, *grid_shape) or
             (n_R, n_grid)

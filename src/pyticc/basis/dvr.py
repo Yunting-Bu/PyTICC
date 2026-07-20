@@ -217,6 +217,75 @@ class SineDVR:
 
 
 # --------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class RovibDVR:
+    """
+    Diatomic rovibrational basis on one complete primitive DVR grid.
+
+    Members:
+        grids: NDArray[np.float64] - primitive bond-length grid, shape (n_dvr,)
+        E_vj: NDArray[np.float64] - rovibrational energies, shape (n_v, n_j)
+        WF_vj: NDArray[np.float64] - primitive-grid wavefunctions, shape
+            (n_dvr, n_v, n_j)
+    """
+
+    grids: NDArray[np.float64]
+    E_vj: NDArray[np.float64]
+    WF_vj: NDArray[np.float64]
+
+
+# --------------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------------
+def build_RovibDVR(dvr: SineDVR, vmax: int, jmax: int, mass: float) -> RovibDVR:
+    """
+    Build full primitive-DVR rovibrational states from a vibrational SineDVR.
+
+    The complete eigendecomposition stored by SineDVR reconstructs the j=0
+    Hamiltonian without requiring the original potential callable. Each rotational
+    Hamiltonian then adds j(j+1)/(2*mass*r**2) on the same primitive coordinate
+    basis, preserving one common grid gauge across electronic states.
+
+    Inputs:
+        dvr: SineDVR - complete primitive vibrational DVR basis
+        vmax: int - highest retained vibrational quantum number
+        jmax: int - highest retained rotational quantum number
+        mass: float - diatomic reduced mass in atomic units
+
+    Returns:
+        rovib: RovibDVR - energies and wavefunctions on the primitive DVR grid
+    """
+    if vmax < 0 or jmax < 0:
+        message = f"vmax and jmax must be non-negative, but got vmax={vmax}, jmax={jmax}"
+        logger.error(message)
+        raise ValueError(message)
+    if mass <= 0.0 or not np.isfinite(mass):
+        message = f"mass must be positive and finite, but got {mass}"
+        logger.error(message)
+        raise ValueError(message)
+
+    n_dvr = dvr.grids.size
+    n_v = min(vmax + 1, n_dvr)
+    energies = np.zeros((vmax + 1, jmax + 1), dtype=np.float64)
+    wavefunctions = np.zeros((n_dvr, vmax + 1, jmax + 1), dtype=np.float64)
+    reference_hamiltonian = (dvr.eigen_vec * dvr.eigen_val[None, :]) @ dvr.eigen_vec.T
+    diagonal = np.diag_indices(n_dvr)
+
+    for j in range(jmax + 1):
+        hamiltonian = reference_hamiltonian.copy()
+        hamiltonian[diagonal] += j * (j + 1) / (2.0 * mass * dvr.grids**2)
+        eigenvalues, eigenvectors = eigh(hamiltonian, subset_by_index=(0, n_v - 1))
+        energies[:n_v, j] = eigenvalues
+        wavefunctions[:, :n_v, j] = phase_fix(eigenvectors)
+
+    return RovibDVR(grids=dvr.grids, E_vj=energies, WF_vj=wavefunctions)
+
+
+# --------------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------------
 def build_SineDVR(a: float, b: float, n_dvr: int, mass: float, pot_func: Callable[[NDArray[np.float64]], NDArray[np.float64]]) -> SineDVR:
     """
     Build a SineDVR object with the given parameters.

@@ -5,22 +5,15 @@ from numpy.typing import NDArray
 
 from pyticc.basis.angle import lambda_plus
 from pyticc.basis.channel import Channel, ChannelBasis
+from pyticc.system import MolInnerState
 
-CentrifugalKey = tuple[int | None, int | None, int, int | None, int | None, int, int]
+CentrifugalKey = tuple[MolInnerState, MolInnerState, int]
 
 
 # ----------------------------------------------------------------------------------------
 def _centrifugal_key(channel: Channel) -> CentrifugalKey:
     """Return the quantum numbers that identify one Coriolis-coupled K ladder."""
-    return (
-        channel.mis_X.v,
-        channel.mis_X.t,
-        channel.mis_X.j,
-        channel.mis_Y.v,
-        channel.mis_Y.t,
-        channel.mis_Y.j,
-        channel.j_couple,
-    )
+    return channel.mis_X, channel.mis_Y, channel.j_couple
 
 
 # ----------------------------------------------------------------------------------------

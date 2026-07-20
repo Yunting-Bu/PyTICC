@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.special import roots_legendre
 
 import pyticc as ticc
 
@@ -49,6 +50,33 @@ def test_run_atom_diatom_returns_complete_scattering_result() -> None:
     assert len(result.Smat) == 2
     assert result.open_channel_indices[0].tolist() == [0]
     np.testing.assert_allclose(np.abs(result.Smat[0]), 1.0, atol=1.0e-13)
+
+
+def test_run_atom_diatom_uses_half_angle_rule_for_rotational_exchange_parity() -> None:
+    rovib = _rovib()
+    diatom = ticc.DiatomSpec(Eint=rovib.E_vj, vmax=0, jmax=0, jpar=1)
+    sampled_angles: list[np.ndarray] = []
+
+    def interaction(RR: float, coordinates: np.ndarray) -> np.ndarray:
+        sampled_angles.append(np.unique(coordinates[1]))
+        return np.zeros(coordinates.shape[1])
+
+    ticc.run_atom_diatom(
+        diatom,
+        rovib,
+        ticc.PESWrapper(interaction=interaction),
+        Jtot=0,
+        system_parity=1,
+        Etot=[0.1],
+        reduced_mass=2.0,
+        radial_boundaries=[3.0, 3.2],
+        radial_half_steps=[0.1],
+        n_theta=4,
+    )
+
+    full_cos_theta, _ = roots_legendre(8)
+    assert sampled_angles
+    np.testing.assert_allclose(sampled_angles[0], np.sort(np.arccos(full_cos_theta[:4])))
 
 
 def test_run_diatom_diatom_returns_complete_scattering_result() -> None:

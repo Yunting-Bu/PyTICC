@@ -63,3 +63,26 @@ def test_get_Bmat_BF_to_SF_returns_noninteger_L_for_incomplete_helicity_basis() 
 
     np.testing.assert_allclose(L, [2.0, np.sqrt(40.25) - 0.5], rtol=1.0e-13, atol=1.0e-13)
     assert not float(L[1]).is_integer()
+
+
+def test_get_Bmat_BF_to_SF_keeps_electronic_states_in_separate_blocks() -> None:
+    channels = tuple(
+        ticc.Channel(
+            mis_X=ticc.MolInnerState(j=0),
+            mis_Y=ticc.MolInnerState(v=0, j=2, electronic_state=electronic_state),
+            j_couple=2,
+            K=K,
+            Jtot=2,
+            system_parity=1,
+            E_int=float(electronic_state),
+            index=index,
+        )
+        for index, (electronic_state, K) in enumerate((state, K) for state in range(2) for K in range(3))
+    )
+    basis = ticc.ChannelBasis(channels)
+
+    Bmat, L = ticc.get_Bmat_BF_to_SF(basis)
+
+    np.testing.assert_allclose(Bmat[:3, 3:], 0.0)
+    np.testing.assert_allclose(Bmat[3:, :3], 0.0)
+    np.testing.assert_allclose(L[:3], L[3:])

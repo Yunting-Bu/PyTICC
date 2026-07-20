@@ -112,6 +112,7 @@ class MolInnerState:
     v: int | None = None
     t: int | None = None
     Eint: float = 0.0
+    electronic_state: int | None = None
 
 
 # ----------------------------------------------------------------------------------------
@@ -122,11 +123,6 @@ class MonomerSpec(Protocol):
     @property
     def type(self) -> MonomerType:
         """Return the monomer structural type."""
-        ...
-
-    @property
-    def jpar(self) -> int:
-        """Return the rotational parity selector."""
         ...
 
     def mis_iter(self, E_cut: float) -> Iterator[MolInnerState]:

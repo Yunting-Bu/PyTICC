@@ -119,6 +119,44 @@ def get_Vgrid_atom_diatom(
 
 
 # ----------------------------------------------------------------------------------------
+def get_Vgrid_atom_triatom(
+    pes: PESWrapper,
+    R: RadialInput,
+    r_1: NDArray[np.float64],
+    r_2: NDArray[np.float64],
+    theta_1: NDArray[np.float64],
+    theta_2: NDArray[np.float64],
+    phi: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """
+    Evaluate an atom-triatom interaction PES on tensor-product internal grids.
+
+    Inputs:
+        pes: PESWrapper - atom-triatom potential-energy surfaces
+        R: float | Sequence[float] | NDArray[np.float64] - scalar separation or
+            separations with shape (n_R,) in atomic units
+        r_1: NDArray[np.float64] - first triatomic radial grid, shape (n_r1,)
+        r_2: NDArray[np.float64] - second triatomic radial grid, shape (n_r2,)
+        theta_1: NDArray[np.float64] - triatomic bend grids in radians, shape
+            (n_theta_1,)
+        theta_2: NDArray[np.float64] - external polar grids in radians, shape
+            (n_theta_2,)
+        phi: NDArray[np.float64] - dihedral grids in radians, shape (n_phi,)
+
+    Returns:
+        V: NDArray[np.float64] - interaction grid with shape
+            (n_r1, n_r2, n_theta_1, n_theta_2, n_phi) for scalar R, or the same
+            shape preceded by n_R for batched R
+    """
+    grids = np.meshgrid(r_1, r_2, theta_1, theta_2, phi, indexing="ij")
+    coordinates = np.asfortranarray(np.stack(tuple(grid.reshape(-1) for grid in grids)))
+    return _evaluate(pes, R, coordinates, grids[0].shape)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def get_Vgrid_diatom_diatom(
     pes: PESWrapper,
     R: RadialInput,

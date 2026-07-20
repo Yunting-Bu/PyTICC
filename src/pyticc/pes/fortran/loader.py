@@ -4,8 +4,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from pyticc.pes.fortran.compiler import prepare_extension
-from pyticc.pes.fortran.executor import create_pes_wrapper
+from pyticc.pes.diabatic import DiabaticPESWrapper
+from pyticc.pes.fortran.compiler import prepare_diabatic_extension, prepare_extension
+from pyticc.pes.fortran.executor import create_diabatic_pes_wrapper, create_pes_wrapper
 from pyticc.pes.wrapper import PESWrapper
 
 
@@ -37,6 +38,45 @@ def load_fortran_pes(
     source_paths, wrapper_path, runtime_dir = _resolve_inputs(sources, wrapper, workdir)
     module_name, extension = prepare_extension(source_paths, wrapper_path)
     return create_pes_wrapper(module_name, extension, runtime_dir, processes)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def load_fortran_diabatic_pes(
+    sources: Sequence[str | Path] | str | Path,
+    wrapper: str | Path | None = None,
+    *,
+    n_state: int = 2,
+    workdir: str | Path | None = None,
+    processes: int = 1,
+) -> DiabaticPESWrapper:
+    """
+    Compile or load fixed-interface Fortran diabatic potential-energy matrices.
+
+    The Fortran wrapper receives PyTICC coordinates rather than native PES
+    coordinates. For atom-diatom calculations these are RR plus coordinate rows
+    (r, theta) in bohr and radians; the wrapper owns any conversion to bond lengths
+    or other PES-specific coordinates.
+
+    Inputs:
+        sources: Sequence[str | Path] | str | Path - Fortran sources or a TOML file
+        wrapper: str | Path | None - source implementing the diabatic PyTICC grid routines
+        n_state: int - number of diabatic electronic states
+        workdir: str | Path | None - directory containing PES runtime data files
+        processes: int - worker processes used for batched radial evaluation
+
+    Returns:
+        pes: DiabaticPESWrapper - compiled monomer potentials and interaction DPEM
+    """
+    if n_state < 1:
+        message = f"n_state must be positive, but got {n_state}"
+        logger.error(message)
+        raise ValueError(message)
+    source_paths, wrapper_path, runtime_dir = _resolve_inputs(sources, wrapper, workdir)
+    module_name, extension = prepare_diabatic_extension(source_paths, wrapper_path)
+    return create_diabatic_pes_wrapper(module_name, extension, runtime_dir, processes, n_state)
 
 
 # ----------------------------------------------------------------------------------------
