@@ -28,19 +28,19 @@ def get_Wmat(
         R: float - intermolecular separation in atomic units
         Etot: float - total energy in atomic units
         reduced_mass: float - collision reduced mass in atomic units
-        E_int: NDArray[np.float64] - channel internal energies in atomic units
-        Umat: NDArray[np.float64] - dimensionless centrifugal matrix
-        Vmat: NDArray[np.float64] - interaction potential matrix in atomic units
+        E_int: NDArray[np.float64] - channel internal energies in atomic units,
+            shape (n_channel,)
+        Umat: NDArray[np.float64] - dimensionless centrifugal matrix, shape
+            (n_channel, n_channel)
+        Vmat: NDArray[np.float64] - interaction potential matrix in atomic units,
+            shape (n_channel, n_channel)
 
     Returns:
-        Wmat: NDArray[np.float64] - radial equation matrix in inverse length squared
+        Wmat: NDArray[np.float64] - radial equation matrix in inverse length squared,
+            shape (n_channel, n_channel)
     """
     if R <= 0.0:
         message = f"R must be positive, but got R={R}"
-        logger.error(message)
-        raise ValueError(message)
-    if reduced_mass <= 0.0:
-        message = f"reduced_mass must be positive, but got reduced_mass={reduced_mass}"
         logger.error(message)
         raise ValueError(message)
 

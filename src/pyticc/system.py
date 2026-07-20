@@ -120,14 +120,26 @@ class MolInnerState:
 # ----------------------------------------------------------------------------------------
 class MonomerSpec(Protocol):
     @property
-    def type(self) -> MonomerType: ...
+    def type(self) -> MonomerType:
+        """Return the monomer structural type."""
+        ...
 
     @property
-    def jpar(self) -> int: ...
+    def jpar(self) -> int:
+        """Return the rotational parity selector."""
+        ...
 
-    def mis_iter(self, E_cut: float) -> Iterator[MolInnerState]: ...
+    def mis_iter(self, E_cut: float) -> Iterator[MolInnerState]:
+        """Iterate over internal states below the requested energy cutoff."""
+        ...
 
-    def energy(self, mis: MolInnerState, K: int) -> float: ...
+    def energy(self, mis: MolInnerState, K: int) -> float:
+        """Return the internal energy of a state in one helicity block."""
+        ...
+
+    def allows_K(self, mis: MolInnerState, K: int) -> bool:
+        """Return whether a state exists in the requested helicity block."""
+        ...
 
 
 # ----------------------------------------------------------------------------------------

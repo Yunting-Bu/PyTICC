@@ -84,6 +84,7 @@ def main() -> None:
         n_phi=10,
         mode="inelastic",
         approx=ticc.Approx.EXACT,
+        memory_limit_mb=512.0,
     )
     result.print_summary()
 

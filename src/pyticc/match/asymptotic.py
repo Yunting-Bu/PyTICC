@@ -26,11 +26,14 @@ def get_Bmat_BF_to_SF(
 
     Inputs:
         basis: ChannelBasis - complete field-free channel basis
-        channel_indices: Sequence[int] | None - complete-basis positions for one propagation block
+        channel_indices: Sequence[int] | None - complete-basis positions for one
+            propagation block, shape (n_channel,)
 
     Returns:
-        Bmat: NDArray[np.float64] - BF-to-SF orthogonal transformation matrix
-        L: NDArray[np.float64] - orbital angular momenta in SF channel order
+        Bmat: NDArray[np.float64] - BF-to-SF orthogonal transformation matrix,
+            shape (n_channel, n_channel)
+        L: NDArray[np.float64] - orbital angular momenta in SF channel order, shape
+            (n_channel,)
     """
     indices = tuple(range(basis.n_channel)) if channel_indices is None else tuple(channel_indices)
     if not indices:
@@ -69,6 +72,9 @@ def get_Bmat_BF_to_SF(
 
 
 # ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def transform_logD_BF_to_SF(Ymat: ArrayLike, Bmat: ArrayLike) -> NDArray[np.float64] | NDArray[np.complex128]:
     r"""
     Transform one or more log-derivative matrices from BF to SF representation.
@@ -77,11 +83,14 @@ def transform_logD_BF_to_SF(Ymat: ArrayLike, Bmat: ArrayLike) -> NDArray[np.floa
         Y_SF = B.T @ Y_BF @ B.
 
     Inputs:
-        Ymat: ArrayLike - BF log-derivative matrix or batch ending in square matrix axes
-        Bmat: ArrayLike - BF-to-SF transformation matrix
+        Ymat: ArrayLike - BF log-derivative matrix or batch, shape
+            (..., n_channel, n_channel)
+        Bmat: ArrayLike - BF-to-SF transformation matrix, shape
+            (n_channel, n_channel)
 
     Returns:
-        Y_SF: NDArray[np.float64] | NDArray[np.complex128] - transformed matrices
+        Y_SF: NDArray[np.float64] | NDArray[np.complex128] - transformed matrices,
+            shape (..., n_channel, n_channel)
     """
     Ymat_array = np.asarray(Ymat)
     Bmat_array = np.asarray(Bmat, dtype=np.float64)

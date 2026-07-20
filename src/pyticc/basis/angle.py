@@ -21,8 +21,8 @@ def gauss_legendre_dvr(theta_min: float, theta_max: float, nth: int, sysmetry: b
         sysmetry: bool - whether to use symmetry or not
 
     Returns:
-        grids: NDArray[np.float64] - Gauss-Legendre DVR grids
-        weights: NDArray[np.float64] - Gauss-Legendre DVR weights
+        grids: NDArray[np.float64] - Gauss-Legendre DVR grids, shape (nth,)
+        weights: NDArray[np.float64] - Gauss-Legendre DVR weights, shape (nth,)
     """
 
     n_full = 2 * nth if sysmetry else nth
@@ -52,10 +52,12 @@ def norm_YjK(j: int, K: int, x: float | NDArray[np.float64]) -> float | NDArray[
     Inputs:
         j: int - degree of the associated Legendre polynomial
         K: int - order of the associated Legendre polynomial
-        x: float | NDArray[np.float64] - argument of the associated Legendre polynomial
+        x: float | NDArray[np.float64] - scalar argument or array of arguments with
+            shape (...)
 
     Returns:
-        norm_YjK: float | NDArray[np.float64] - normalized associated Legendre polynomial
+        norm_YjK: float | NDArray[np.float64] - scalar value for scalar input, or
+            values with the same shape (...) as x
     """
 
     m = abs(K)
@@ -82,9 +84,6 @@ def norm_YjK(j: int, K: int, x: float | NDArray[np.float64]) -> float | NDArray[
 def clebsch_gordan(j1: int, m1: int, j2: int, m2: int, j_couple: int) -> float:
     r"""
     Get the Clebsch-Gordan coefficient ``<j1 m1, j2 m2 | j_couple, m1+m2>``.
-
-    SymPy uses the Condon-Shortley phase convention, consistent with the ``CG`` and
-    ``F3J`` routines in the reference TICC code.
 
     Inputs:
         j1: int - angular momentum of the first rotor

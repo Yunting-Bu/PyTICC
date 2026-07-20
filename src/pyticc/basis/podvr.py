@@ -16,7 +16,7 @@ def podvr_grids(
     Get podvr grids and transformation matrix from dvr to contracted basis.
 
     Inputs:
-        dvr_grids: NDArray[np.float64] - sine-DVR grids
+        dvr_grids: NDArray[np.float64] - sine-DVR grids, shape (n_dvr,)
         dvr_wf: NDArray[np.float64] - wavefunctions (eigenvectors) of the reference vibrational
             Hamiltonian in sine-DVR, shape (n_dvr, n_dvr). Only the first ``n_podvr`` columns are used.
         n_podvr: int - number of contracted (PODVR) basis functions to retain
@@ -140,14 +140,61 @@ def podvr_vibrot(
 
 # --------------------------------------------------------------------------------
 @dataclass(frozen=True)
+class VibPODVR:
+    """
+    Contracted one-dimensional vibrational basis on PODVR grids.
+
+    Members:
+        grids: NDArray[np.float64] - PODVR coordinate grids in atomic units, shape
+            (n_podvr,)
+        energies: NDArray[np.float64] - reference vibrational energies indexed by v,
+            shape (n_v,)
+        wavefunctions: NDArray[np.float64] - wavefunctions indexed as
+            wavefunctions[grid, v], shape (n_podvr, n_v)
+    """
+
+    grids: NDArray[np.float64]
+    energies: NDArray[np.float64]
+    wavefunctions: NDArray[np.float64]
+
+
+# --------------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------------
+def build_VibPODVR(dvr: SineDVR, n_podvr: int, vmax: int) -> VibPODVR:
+    """
+    Build a contracted one-dimensional vibrational basis from a sine-DVR calculation.
+
+    Inputs:
+        dvr: SineDVR - reference vibrational sine-DVR basis
+        n_podvr: int - number of PODVR grids to retain
+        vmax: int - highest vibrational quantum number
+
+    Returns:
+        vib: VibPODVR - PODVR grids, energies, and wavefunctions
+    """
+    po_grids, _, po_to_cfbr = podvr_grids(dvr.grids, dvr.eigen_vec, n_podvr)
+    energies, wavefunctions = podvr_vib(po_to_cfbr, dvr.eigen_val, vmax)
+    return VibPODVR(grids=po_grids, energies=energies, wavefunctions=wavefunctions)
+
+
+# --------------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------------
+@dataclass(frozen=True)
 class RovibPODVR:
     """
     Contracted diatomic rovibrational basis on PODVR grids.
 
     Members:
-        grids: NDArray[np.float64] - PODVR bond-length grids in atomic units
-        E_vj: NDArray[np.float64] - rovibrational energies indexed as E_vj[v, j]
-        WF_vj: NDArray[np.float64] - wavefunctions indexed as WF_vj[grid, v, j]
+        grids: NDArray[np.float64] - PODVR bond-length grids in atomic units, shape
+            (n_podvr,)
+        E_vj: NDArray[np.float64] - rovibrational energies indexed as E_vj[v, j],
+            shape (n_v, n_j)
+        WF_vj: NDArray[np.float64] - wavefunctions indexed as WF_vj[grid, v, j],
+            shape (n_podvr, n_v, n_j)
     """
 
     grids: NDArray[np.float64]
@@ -193,10 +240,11 @@ if __name__ == "__main__":
             V(x) = D_e (1 - e^{-a(x-x_e)})^2
 
         Inputs:
-            x: NDArray[np.float64] - position in atomic unit
+            x: NDArray[np.float64] - positions in atomic units, shape (n_point,)
 
         Returns:
-            V: NDArray[np.float64] - potential energy in atomic unit
+            V: NDArray[np.float64] - potential energies in atomic units, shape
+                (n_point,)
         """
         D_e = 4.7446 * EV2AU  # au (from eV)
         a = 1.9426 / ANG2AU  # 1/au (from 1/Angstrom)

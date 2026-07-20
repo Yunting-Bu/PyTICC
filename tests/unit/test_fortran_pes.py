@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-import pyticc.pes.fortran as fortran_module
+import pyticc.pes.fortran.compiler as compiler_module
 from pyticc.pes import load_fortran_pes
 
 
@@ -20,7 +20,7 @@ end subroutine pyticc_interaction_grid
 """
     )
     monkeypatch.setenv("PYTICC_CACHE_DIR", str(tmp_path / "cache"))
-    monkeypatch.setattr(fortran_module, "_build_tools", lambda: (True, None, "/usr/bin/ninja", "/usr/bin/gfortran"))
+    monkeypatch.setattr(compiler_module, "_build_tools", lambda: (True, None, "/usr/bin/ninja", "/usr/bin/gfortran"))
 
     with pytest.raises(RuntimeError, match="Meson: missing"):
         load_fortran_pes([source], wrapper)

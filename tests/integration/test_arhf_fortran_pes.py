@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import pyticc.pes.fortran as fortran_module
+import pyticc.pes.fortran.compiler as compiler_module
 from pyticc.pes import get_Vgrid_atom_diatom, load_fortran_pes
 
 ARHF_SOURCE = """
@@ -53,7 +53,7 @@ end subroutine pyticc_monomer_y_grid
 """
 
 
-@pytest.mark.skipif(not all(fortran_module._build_tools()), reason="Fortran f2py/Meson toolchain is unavailable")
+@pytest.mark.skipif(not all(compiler_module._build_tools()), reason="Fortran f2py/Meson toolchain is unavailable")
 def test_ArHF_fortran_wrapper_compiles_and_evaluates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "ArHF_PES.f90"
     wrapper = tmp_path / "pyticc_wrapper.f90"
@@ -81,6 +81,14 @@ def test_ArHF_fortran_wrapper_compiles_and_evaluates(tmp_path: Path, monkeypatch
             )
         )
     )
-    monkeypatch.setattr(fortran_module, "_require_build_tools", lambda: pytest.fail("Cached PES requested the build toolchain"))
+    monkeypatch.setattr(compiler_module, "_require_build_tools", lambda: pytest.fail("Cached PES requested the build toolchain"))
     cached_pes = load_fortran_pes(config)
     np.testing.assert_allclose(get_Vgrid_atom_diatom(cached_pes, 6.0, r, theta), expected)
+
+    parallel_pes = load_fortran_pes(config, processes=2)
+    radial_batch = np.array([6.0, 7.0])
+    parallel_values = get_Vgrid_atom_diatom(parallel_pes, radial_batch, r, theta)
+    parallel_expected = radial_batch[:, None, None] + 2.0 * r[None, :, None] + theta[None, None, :] / np.pi
+    np.testing.assert_allclose(parallel_values, parallel_expected)
+    np.testing.assert_allclose(get_Vgrid_atom_diatom(parallel_pes, np.array([8.0]), r, theta)[0], 8.0 + 2.0 * r[:, None] + theta[None, :] / np.pi)
+    parallel_pes.close()

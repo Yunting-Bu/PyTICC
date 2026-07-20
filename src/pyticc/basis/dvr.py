@@ -21,7 +21,7 @@ def sine_dvr_grids(a: float, b: float, n: int) -> tuple[NDArray[np.float64], flo
         n: int - number of points
 
     Returns:
-        x: NDArray[np.float64] - sine dvr grids
+        x: NDArray[np.float64] - sine DVR grids, shape (n,)
         w: float - weights
     """
     if n < 2:
@@ -50,7 +50,7 @@ def sine_dvr_to_fbr(n: int) -> NDArray[np.float64]:
         n: int - number of points
 
     Returns:
-        B: NDArray[np.float64] - dvr to fbr transformation matrix
+        B: NDArray[np.float64] - DVR-to-FBR transformation matrix, shape (n, n)
     """
     idx_m = np.arange(1, n + 1, dtype=np.float64)
     idx_l = np.arange(1, n + 1, dtype=np.float64)
@@ -82,7 +82,7 @@ def sine_dvr_kinetic(a: float, b: float, n: int, mass: float) -> NDArray[np.floa
         mass: float - mass in atomic unit
 
     Returns:
-        T: NDArray[np.float64] - sine dvr kinetic energy matrix
+        T: NDArray[np.float64] - sine DVR kinetic energy matrix, shape (n, n)
     """
 
     pre_factor = (np.pi**2) / (4.0 * mass * (b - a) ** 2)
@@ -120,10 +120,11 @@ def phase_fix(A: NDArray[np.float64]) -> NDArray[np.float64]:
     Flip the overall sign so the first significant element is positive.
 
     Inputs:
-        A: NDArray[np.float64] - 1D/2D input array
+        A: NDArray[np.float64] - input vector with shape (n,), or matrix with shape
+            (n_row, n_column)
 
     Returns:
-        A: NDArray[np.float64] - 1D/2D output array with fixed phase
+        A: NDArray[np.float64] - phase-fixed array with the same shape as the input
     """
     threshold = 1e-4
     res = np.array(A, dtype=np.float64, copy=True)
@@ -162,13 +163,15 @@ def sine_dvr_vib(T: NDArray[np.float64], V: NDArray[np.float64], n: int) -> tupl
         H_{ij} = T_{ij} + V_i \delta_{ij}
 
     Inputs:
-        T: NDArray[np.float64] - kinetic energy matrix
-        V: NDArray[np.float64] - potential energy in dvr grids
+        T: NDArray[np.float64] - kinetic energy matrix, shape (n, n)
+        V: NDArray[np.float64] - potential energy on the DVR grids, shape (n,)
         n: int - number of points
 
     Returns:
-        eigen_val: NDArray[np.float64] - eigenvalues of the vibrational Hamiltonian
-        eigen_vec: NDArray[np.float64] - eigenvectors of the vibrational Hamiltonian
+        eigen_val: NDArray[np.float64] - eigenvalues of the vibrational Hamiltonian,
+            shape (n,)
+        eigen_vec: NDArray[np.float64] - column eigenvectors of the vibrational
+            Hamiltonian, shape (n, n)
     """
     H = T.copy()
     diag_indices = np.diag_indices(n)
@@ -186,6 +189,21 @@ def sine_dvr_vib(T: NDArray[np.float64], V: NDArray[np.float64], n: int) -> tupl
 # --------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SineDVR:
+    """
+    One-dimensional sine-DVR basis and vibrational eigenstates.
+
+    Members:
+        n_dvr: int - number of DVR points
+        interval: tuple[float, float] - left and right coordinate boundaries
+        grids: NDArray[np.float64] - DVR coordinates, shape (n_dvr,)
+        weights: float - uniform DVR quadrature weight
+        dvr_to_fbr: NDArray[np.float64] - DVR-to-FBR transformation, shape
+            (n_dvr, n_dvr)
+        eigen_val: NDArray[np.float64] - vibrational eigenvalues, shape (n_dvr,)
+        eigen_vec: NDArray[np.float64] - column eigenvectors on the DVR grid, shape
+            (n_dvr, n_dvr)
+    """
+
     n_dvr: int
     interval: tuple[float, float]
     grids: NDArray[np.float64]
@@ -208,10 +226,13 @@ def build_SineDVR(a: float, b: float, n_dvr: int, mass: float, pot_func: Callabl
         b: float - right boundary of the interval
         n_dvr: int - number of points
         mass: float - mass in atomic unit
-        pot_func: Callable[[NDArray[np.float64]], NDArray[np.float64]] - potential energy function
+        pot_func: Callable[[NDArray[np.float64]], NDArray[np.float64]] - vectorized
+            potential mapping coordinates with shape (n_dvr,) to values with shape
+            (n_dvr,)
 
     Returns:
-        SineDVR: SineDVR - SineDVR object with the given parameters
+        SineDVR: SineDVR - basis containing arrays whose leading DVR dimension is
+            n_dvr
     """
     if n_dvr < 2:
         message = f"n_dvr should be greater than 1, but got n_dvr = {n_dvr}"
@@ -249,10 +270,11 @@ if __name__ == "__main__":
             V(x) = D_e (1 - e^{-a(x-x_e)})^2
 
         Inputs:
-            x: NDArray[np.float64] - position in atomic unit
+            x: NDArray[np.float64] - positions in atomic units, shape (n_point,)
 
         Returns:
-            V: NDArray[np.float64] - potential energy in atomic unit
+            V: NDArray[np.float64] - potential energies in atomic units, shape
+                (n_point,)
         """
         D_e = 4.7446 * EV2AU  # au (from eV)
         a = 1.9426 / ANG2AU  # 1/au (from 1/Angstrom)

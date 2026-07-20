@@ -56,6 +56,7 @@ def main() -> None:
         n_theta=35,
         mode="inelastic",
         approx=ticc.Approx.EXACT,
+        memory_limit_mb=512.0,
     )
     result.print_summary()
 

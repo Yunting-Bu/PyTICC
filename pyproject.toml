@@ -3,9 +3,7 @@ name = "pyticc"
 version = "0.1.0"
 description = "Time-Independent Coupled-Channel quantum scattering code in Python/JAX"
 readme = "README.md"
-authors = [
-    { name = "Yunting-Bu", email = "byt@mail.sdu.edu.cn" }
-]
+authors = [{ name = "Yunting-Bu", email = "byt@smail.nju.edu.cn" }]
 requires-python = ">=3.11"
 dependencies = [
     "jax>=0.4.30",
@@ -17,21 +15,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-fortran = [
-    "meson>=1.1",
-    "ninja>=1.11",
-]
+fortran = ["meson>=1.1", "ninja>=1.11"]
 
 [build-system]
 requires = ["uv_build>=0.11.25,<0.12.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = [
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
-    "ruff>=0.6",
-]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 
 [tool.ruff]
 line-length = 150

@@ -77,6 +77,41 @@ def test_propagate_BF_batches_distinct_radial_points() -> None:
     np.testing.assert_allclose(evaluated_R[0], [3.0, 3.1, 3.2, 3.3, 3.4])
 
 
+def test_propagate_BF_streams_small_windows_without_repeating_endpoints() -> None:
+    basis = _basis()
+    evaluated_R: list[np.ndarray] = []
+
+    def Vmat(RR: np.ndarray) -> np.ndarray:
+        radial_points = np.asarray(RR)
+        evaluated_R.append(radial_points.copy())
+        return np.zeros((radial_points.size, basis.n_channel, basis.n_channel))
+
+    streamed = ticc.propagate_BF(
+        basis=basis,
+        Vmat=Vmat,
+        Etot=[0.3],
+        reduced_mass=2.0,
+        radial_boundaries=[3.0, 3.4],
+        radial_half_steps=[0.1],
+        batch_Vmat=True,
+        memory_limit_mb=1.0e-6,
+    )
+    full = ticc.propagate_BF(
+        basis=basis,
+        Vmat=lambda RR: np.zeros((np.asarray(RR).size, basis.n_channel, basis.n_channel)),
+        Etot=[0.3],
+        reduced_mass=2.0,
+        radial_boundaries=[3.0, 3.4],
+        radial_half_steps=[0.1],
+        batch_Vmat=True,
+    )
+
+    assert len(evaluated_R) == 2
+    np.testing.assert_allclose(evaluated_R[0], [3.0, 3.1, 3.2])
+    np.testing.assert_allclose(evaluated_R[1], [3.3, 3.4])
+    np.testing.assert_allclose(streamed, full, rtol=1.0e-13, atol=1.0e-13)
+
+
 def test_propagate_BF_selects_one_nncc_block() -> None:
     basis = _basis()
     indices = (1,)

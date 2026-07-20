@@ -14,10 +14,12 @@ def get_Etot(source: EnergyInput) -> NDArray[np.float64]:
     Read and validate total energies in atomic units.
 
     Inputs:
-        source: EnergyInput - one-dimensional array-like input or a one-column text file
+        source: EnergyInput - array-like input with shape (n_energy,), or a
+            one-column text file
 
     Returns:
-        energies: NDArray[np.float64] - one-dimensional total-energy array in atomic units
+        energies: NDArray[np.float64] - total energies in atomic units, shape
+            (n_energy,)
     """
     if isinstance(source, str | Path):
         path = Path(source)

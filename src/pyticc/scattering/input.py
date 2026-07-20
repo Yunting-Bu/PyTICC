@@ -6,23 +6,24 @@ import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
-from pyticc.atom_diatom import run_atom_diatom
 from pyticc.basis.channel import TruncSpec
 from pyticc.basis.dvr import build_SineDVR
 from pyticc.basis.monomer import DiatomSpec
 from pyticc.basis.podvr import RovibPODVR, build_RovibPODVR
 from pyticc.constants import CM2AU
-from pyticc.diatom_diatom import run_diatom_diatom
 from pyticc.energy import EnergyInput, get_Etot
 from pyticc.pes.fortran import load_fortran_pes
 from pyticc.pes.wrapper import MonomerPES, PESWrapper
 from pyticc.result import CoupledStatesResult, ScatteringResult
+from pyticc.scattering.atom_diatom import run_atom_diatom
+from pyticc.scattering.diatom_diatom import run_diatom_diatom
 from pyticc.system import Approx, element_masses_au, reduced_mass
 
 TomlTable = dict[str, Any]
 
 
 def _required(table: TomlTable, key: str) -> Any:
+    """Read a required TOML value and raise a user-facing error when absent."""
     try:
         return table[key]
     except KeyError as error:
@@ -32,6 +33,7 @@ def _required(table: TomlTable, key: str) -> Any:
 
 
 def _section(config: TomlTable, name: str) -> TomlTable:
+    """Read and type-check one required TOML table."""
     value = _required(config, name)
     if not isinstance(value, dict):
         message = f"Input section {name!r} must be a TOML table"
@@ -41,11 +43,13 @@ def _section(config: TomlTable, name: str) -> TomlTable:
 
 
 def _resolve_path(base: Path, value: str | Path) -> Path:
+    """Resolve a user path relative to the input-file directory."""
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (base / path).resolve()
 
 
 def _load_pes(config: TomlTable, base: Path) -> PESWrapper:
+    """Build a Fortran PES wrapper from the input file's pes table."""
     pes_input = _section(config, "pes")
     pes_dir = _resolve_path(base, pes_input.get("path", "."))
     sources = pes_input.get("sources", ["interaction-PES.f"])
@@ -58,11 +62,13 @@ def _load_pes(config: TomlTable, base: Path) -> PESWrapper:
 
 
 def _get_energies_cm(value: Any, base: Path) -> NDArray[np.float64]:
+    """Read energies in cm-1 and convert them to an array of shape (n_energy,) in atomic units."""
     source = _resolve_path(base, value) if isinstance(value, str | Path) else value
     return get_Etot(cast(EnergyInput, source)) * CM2AU
 
 
 def _get_K_cut(truncation_input: TomlTable) -> int | None:
+    """Parse a non-negative helicity cutoff or the literal ``none``."""
     value = _required(truncation_input, "K_cut")
     if value == "none":
         return None
@@ -75,6 +81,7 @@ def _get_K_cut(truncation_input: TomlTable) -> int | None:
 
 
 def _get_approximation(config: TomlTable) -> tuple[Approx, int]:
+    """Parse the exact, CS, or NNCC method and its neighboring-K range."""
     approximation_input = config.get("approximation", {"method": "exact"})
     if not isinstance(approximation_input, dict):
         message = "Input section 'approximation' must be a TOML table"
@@ -98,6 +105,7 @@ def _get_approximation(config: TomlTable) -> tuple[Approx, int]:
 
 
 def _get_diatom_symbols(config: TomlTable, key: str) -> tuple[str, str]:
+    """Read exactly two element symbols for one diatomic monomer."""
     symbols = tuple(str(symbol) for symbol in _required(config, key))
     if len(symbols) != 2:
         message = f"{key} must contain two element symbols, but got {symbols}"
@@ -107,6 +115,7 @@ def _get_diatom_symbols(config: TomlTable, key: str) -> tuple[str, str]:
 
 
 def _build_diatom(symbols: tuple[str, str], basis_input: TomlTable, potential: MonomerPES) -> tuple[DiatomSpec, RovibPODVR, float]:
+    """Solve one diatomic PODVR basis and return its specification, basis, and total mass."""
     radial_interval = tuple(float(value) for value in _required(basis_input, "r"))
     if len(radial_interval) != 2:
         message = f"basis r must contain the two DVR boundaries, but got {radial_interval}"
@@ -143,6 +152,7 @@ def _build_diatom(symbols: tuple[str, str], basis_input: TomlTable, potential: M
 
 
 def _run_atom_diatom(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | CoupledStatesResult:
+    """Translate an atom-diatom TOML configuration into the high-level Python API."""
     atom_symbol = str(_required(config, "atom"))
     diatom_symbols = _get_diatom_symbols(config, "diatom")
     basis_input = _section(config, "basis")
@@ -180,10 +190,12 @@ def _run_atom_diatom(config: TomlTable, base: Path, pes: PESWrapper) -> Scatteri
         mode=mode,
         approx=approx,
         K_delta=K_delta,
+        memory_limit_mb=float(propagation_input.get("memory_limit_mb", 512.0)),
     )
 
 
 def _run_diatom_diatom(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | CoupledStatesResult:
+    """Translate a diatom-diatom TOML configuration into the high-level Python API."""
     symbols_X = _get_diatom_symbols(config, "diatom_X")
     symbols_Y = _get_diatom_symbols(config, "diatom_Y")
     basis_X_input = _section(config, "basis_X")
@@ -224,6 +236,7 @@ def _run_diatom_diatom(config: TomlTable, base: Path, pes: PESWrapper) -> Scatte
         mode=mode,
         approx=approx,
         K_delta=K_delta,
+        memory_limit_mb=float(propagation_input.get("memory_limit_mb", 512.0)),
     )
 
 

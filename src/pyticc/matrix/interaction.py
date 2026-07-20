@@ -22,8 +22,10 @@ class VBasisBF:
         n_channel: int - number of channels in the complete ChannelBasis
         grid_shape: tuple[int, ...] - tensor-product internal-grid shape
         channel_indices: dict[int, tuple[int, ...]] - complete-basis positions grouped by exact K
-        B_real: dict[int, NDArray[np.float64]] - weighted real basis grouped by exact K
-        B_imag: dict[int, NDArray[np.float64]] | None - weighted imaginary basis for diatom-diatom systems
+        B_real: dict[int, NDArray[np.float64]] - weighted real basis grouped by
+            exact K; each value has shape (n_channel_K, n_grid)
+        B_imag: dict[int, NDArray[np.float64]] | None - weighted imaginary basis;
+            each value has shape (n_channel_K, n_grid)
         normalization: float - normalization applied after grid contraction
     """
 
@@ -62,15 +64,19 @@ def prepare_Vmat_BF_atom_diatom(
     Inputs:
         basis: ChannelBasis - complete atom-diatom channel basis
         rovib: RovibPODVR - diatomic PODVR rovibrational basis
-        cos_theta: NDArray[np.float64] - cos(theta) quadrature grids
-        theta_weights: NDArray[np.float64] - Gauss-Legendre quadrature weights
+        cos_theta: NDArray[np.float64] - cos(theta) quadrature grids, shape
+            (n_theta,)
+        theta_weights: NDArray[np.float64] - Gauss-Legendre quadrature weights,
+            shape (n_theta,)
 
     Returns:
-        V_basis: VBasisBF - weighted bases grouped by exact K
+        V_basis: VBasisBF - weighted bases whose arrays have shape
+            (n_channel_K, n_r * n_theta)
     """
     grid_shape = (rovib.grids.size, cos_theta.size)
     n_grid = prod(grid_shape)
     sqrt_weight = np.sqrt(theta_weights)
+    # dict[(j, K): Y_jK]
     angular: dict[tuple[int, int], NDArray[np.float64]] = {}
     channel_indices_by_K: dict[int, tuple[int, ...]] = {}
     B_real_by_K: dict[int, NDArray[np.float64]] = {}
@@ -82,6 +88,7 @@ def prepare_Vmat_BF_atom_diatom(
         for local_index, channel_index in enumerate(channel_indices):
             channel = basis[channel_index]
             diatom_state = channel.mis_X if channel.mis_X.v is not None else channel.mis_Y
+            # cause v can be None if mis.X is atom
             v = cast(int, diatom_state.v)
             j = diatom_state.j
             key = (j, K)
@@ -119,6 +126,25 @@ def _angular_diatom_diatom(
     phi: NDArray[np.float64],
     phi_weights: NDArray[np.float64],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """
+    Build weighted real and imaginary angular factors for one coupled (j1, j2, j, K).
+
+    Inputs:
+        cos_theta_1: NDArray[np.float64] - first polar grid, shape (n_theta_1,)
+        theta_weights_1: NDArray[np.float64] - first polar weights, shape
+            (n_theta_1,)
+        cos_theta_2: NDArray[np.float64] - second polar grid, shape (n_theta_2,)
+        theta_weights_2: NDArray[np.float64] - second polar weights, shape
+            (n_theta_2,)
+        phi: NDArray[np.float64] - dihedral grid, shape (n_phi,)
+        phi_weights: NDArray[np.float64] - dihedral weights, shape (n_phi,)
+
+    Returns:
+        angular_real: NDArray[np.float64] - cosine contribution, shape
+            (n_theta_1, n_theta_2, n_phi)
+        angular_imag: NDArray[np.float64] - sine contribution, shape
+            (n_theta_1, n_theta_2, n_phi)
+    """
     shape = (cos_theta_1.size, cos_theta_2.size, phi.size)
     angular_real = np.zeros(shape, dtype=np.float64)
     angular_imag = np.zeros(shape, dtype=np.float64)
@@ -160,8 +186,8 @@ def prepare_Vmat_BF_diatom_diatom(
     Prepare the PES-independent body-fixed interaction basis for a diatom-diatom system.
 
     Polar quadratures are Gauss-Legendre grids in cos(theta). The phi quadrature is
-    defined on [0, pi], as in the reference TICC implementation. Grid flattening
-    follows C order with axes ``(r_X, r_Y, theta_X, theta_Y, phi)``.
+    defined on [0, pi]. Grid flattening follows C order with axes
+    ``(r_X, r_Y, theta_X, theta_Y, phi)``.
 
     Formula:
         For omega_Y = K - omega_X, the real and imaginary angular bases are
@@ -180,15 +206,22 @@ def prepare_Vmat_BF_diatom_diatom(
         basis: ChannelBasis - complete diatom-diatom channel basis
         rovib_X: RovibPODVR - first diatomic rovibrational basis
         rovib_Y: RovibPODVR - second diatomic rovibrational basis
-        cos_theta_X: NDArray[np.float64] - cos(theta_X) quadrature grids
-        theta_weights_X: NDArray[np.float64] - theta_X quadrature weights
-        cos_theta_Y: NDArray[np.float64] - cos(theta_Y) quadrature grids
-        theta_weights_Y: NDArray[np.float64] - theta_Y quadrature weights
-        phi: NDArray[np.float64] - dihedral-angle quadrature grids on [0, pi]
-        phi_weights: NDArray[np.float64] - dihedral-angle quadrature weights
+        cos_theta_X: NDArray[np.float64] - cos(theta_X) quadrature grids, shape
+            (n_theta_X,)
+        theta_weights_X: NDArray[np.float64] - theta_X quadrature weights, shape
+            (n_theta_X,)
+        cos_theta_Y: NDArray[np.float64] - cos(theta_Y) quadrature grids, shape
+            (n_theta_Y,)
+        theta_weights_Y: NDArray[np.float64] - theta_Y quadrature weights, shape
+            (n_theta_Y,)
+        phi: NDArray[np.float64] - dihedral-angle quadrature grids on [0, pi],
+            shape (n_phi,)
+        phi_weights: NDArray[np.float64] - dihedral-angle quadrature weights,
+            shape (n_phi,)
 
     Returns:
-        V_basis: VBasisBF - weighted bases grouped by exact K
+        V_basis: VBasisBF - weighted bases whose arrays have shape
+            (n_channel_K, n_r_X * n_r_Y * n_theta_X * n_theta_Y * n_phi)
     """
     grid_shape = (rovib_X.grids.size, rovib_Y.grids.size, cos_theta_X.size, cos_theta_Y.size, phi.size)
     n_grid = prod(grid_shape)
@@ -252,6 +285,21 @@ def _contract_basis(
     normalization: float,
     potential_flat: NDArray[np.float64],
 ) -> NDArray[np.float64]:
+    """
+    Contract one exact-K basis with a flattened potential grid.
+
+    Inputs:
+        B_real: NDArray[np.float64] - real weighted basis, shape
+            (n_channel_K, n_grid)
+        B_imag: NDArray[np.float64] | None - imaginary weighted basis, shape
+            (n_channel_K, n_grid)
+        normalization: float - final quadrature normalization
+        potential_flat: NDArray[np.float64] - potential values, shape (n_grid,)
+
+    Returns:
+        Vmat: NDArray[np.float64] - symmetric interaction block, shape
+            (n_channel_K, n_channel_K)
+    """
     weighted = B_real * potential_flat[None, :]
     Vmat = weighted @ B_real.T
     if B_imag is not None:
@@ -286,11 +334,16 @@ def get_Vmat_BF(
 
     Inputs:
         V_basis: VBasisBF - precomputed atom-diatom or diatom-diatom basis
-        potential_flat: NDArray[np.float64] - one potential grid or a batch with leading R axis
-        channel_indices: Sequence[int] | None - requested positions in the complete ChannelBasis
+        potential_flat: NDArray[np.float64] - one potential grid with shape
+            grid_shape or (n_grid,), or a batch with shape (n_R, *grid_shape) or
+            (n_R, n_grid)
+        channel_indices: Sequence[int] | None - requested complete-basis positions,
+            shape (n_selected_channel,)
 
     Returns:
-        Vmat: NDArray[np.float64] - interaction matrix, preceded by R for batched input
+        Vmat: NDArray[np.float64] - interaction matrix with shape
+            (n_selected_channel, n_selected_channel), or batched matrices with shape
+            (n_R, n_selected_channel, n_selected_channel)
     """
     if channel_indices is None:
         indices = tuple(range(V_basis.n_channel))

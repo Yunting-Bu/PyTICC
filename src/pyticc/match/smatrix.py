@@ -6,6 +6,7 @@ from pyticc.energy import EnergyInput, get_Etot
 from pyticc.match.bessel import modified_bessel_IK_logD, riccati_bessel_jy
 
 
+# ----------------------------------------------------------------------------------------
 def _reference_matrices(
     energy: float,
     Rmatch: float,
@@ -13,6 +14,24 @@ def _reference_matrices(
     E_int: NDArray[np.float64],
     L: NDArray[np.float64],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.bool_]]:
+    """
+    Evaluate diagonal open- and closed-channel reference functions at Rmatch.
+
+    Inputs:
+        E_int: NDArray[np.float64] - channel thresholds, shape (n_channel,)
+        L: NDArray[np.float64] - orbital angular momenta, shape (n_channel,)
+
+    Returns:
+        J: NDArray[np.float64] - regular reference values, shape
+            (n_channel, n_channel)
+        N: NDArray[np.float64] - irregular reference values, shape
+            (n_channel, n_channel)
+        J_prime: NDArray[np.float64] - regular derivatives, shape
+            (n_channel, n_channel)
+        N_prime: NDArray[np.float64] - irregular derivatives, shape
+            (n_channel, n_channel)
+        open_mask: NDArray[np.bool_] - open-channel flags, shape (n_channel,)
+    """
     energy_difference = energy - E_int
     if np.any(energy_difference == 0.0):
         message = f"Asymptotic matching is undefined exactly at a channel threshold Etot={energy}"
@@ -44,6 +63,9 @@ def _reference_matrices(
 
 
 # ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def get_Smat(
     Ymat: ArrayLike,
     Rmatch: float,
@@ -67,13 +89,17 @@ def get_Smat(
     Inputs:
         Ymat: ArrayLike - SF log-derivative matrices with shape (n_energy, n_channel, n_channel)
         Rmatch: float - asymptotic matching distance in atomic units
-        Etot: EnergyInput - total-energy array or one-column text file in atomic units
+        Etot: EnergyInput - total-energy array with shape (n_energy,), or a
+            one-column text file in atomic units
         reduced_mass: float - collision reduced mass in atomic units
-        E_int: ArrayLike - asymptotic channel internal energies in atomic units
-        L: ArrayLike - SF orbital angular momenta, including non-integral values
+        E_int: ArrayLike - asymptotic channel internal energies in atomic units,
+            shape (n_channel,)
+        L: ArrayLike - SF orbital angular momenta, including non-integral values,
+            shape (n_channel,)
 
     Returns:
-        Smat: tuple[NDArray[np.complex128], ...] - open-channel scattering matrix at each energy
+        Smat: tuple[NDArray[np.complex128], ...] - one matrix per energy; element i
+            has shape (n_open[i], n_open[i])
     """
     energies = get_Etot(Etot)
     Ymat_array = np.asarray(Ymat)

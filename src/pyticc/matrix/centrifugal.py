@@ -11,6 +11,7 @@ CentrifugalKey = tuple[int | None, int | None, int, int | None, int | None, int,
 
 # ----------------------------------------------------------------------------------------
 def _centrifugal_key(channel: Channel) -> CentrifugalKey:
+    """Return the quantum numbers that identify one Coriolis-coupled K ladder."""
     return (
         channel.mis_X.v,
         channel.mis_X.t,
@@ -41,11 +42,13 @@ def get_Umat_BF(
 
     Inputs:
         basis: ChannelBasis - complete field-free channel basis
-        channel_indices: Sequence[int] | None - positions of channels included in the matrix
+        channel_indices: Sequence[int] | None - selected complete-basis positions,
+            shape (n_selected_channel,)
         coriolis: bool - whether to include nearest-neighbor Coriolis couplings
 
     Returns:
-        Umat: NDArray[np.float64] - dimensionless body-fixed centrifugal matrix
+        Umat: NDArray[np.float64] - dimensionless body-fixed centrifugal matrix,
+            shape (n_selected_channel, n_selected_channel)
     """
     if channel_indices is None:
         indices = tuple(range(basis.n_channel))

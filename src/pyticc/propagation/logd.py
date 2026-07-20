@@ -9,7 +9,9 @@ jax.config.update("jax_enable_x64", True)
 LogDInput = jax.Array | NDArray[np.float64] | NDArray[np.complex128]
 
 
+# ----------------------------------------------------------------------------------------
 def _validate_square(name: str, value: LogDInput) -> tuple[int, ...]:
+    """Validate trailing square matrix axes and return the complete array shape."""
     shape = tuple(value.shape)
     if len(shape) < 2 or shape[-2] != shape[-1]:
         message = f"{name} must end with square matrix axes, but got shape={shape}"
@@ -18,10 +20,18 @@ def _validate_square(name: str, value: LogDInput) -> tuple[int, ...]:
     return shape
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _diagonal_matrix(diagonal: jax.Array) -> jax.Array:
+    """Embed vectors with shape (..., n) as diagonal matrices with shape (..., n, n)."""
     n_channel = diagonal.shape[-1]
     identity = jnp.eye(n_channel, dtype=diagonal.dtype)
     return diagonal[..., :, None] * identity
+
+
+# ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------
@@ -33,14 +43,19 @@ def initialize_logD_inelastic(Wmat: LogDInput) -> jax.Array:
         Y_ij(R0) = delta_ij sqrt(abs(W_ii(R0))).
 
     Inputs:
-        Wmat: LogDInput - radial equation matrix or batch of matrices
+        Wmat: LogDInput - radial equation matrix or batch of matrices, shape
+            (..., n_channel, n_channel)
 
     Returns:
-        Ymat: jax.Array - real initial log-derivative matrix
+        Ymat: jax.Array - real initial log-derivative matrices with the same shape
+            (..., n_channel, n_channel) as Wmat
     """
     _validate_square("Wmat", Wmat)
     diagonal = jnp.diagonal(jnp.asarray(Wmat, dtype=jnp.float64), axis1=-2, axis2=-1)
     return _diagonal_matrix(jnp.sqrt(jnp.abs(diagonal)))
+
+
+# ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------
@@ -53,10 +68,12 @@ def initialize_logD_capture(Wmat: LogDInput) -> jax.Array:
         Y_ii(R0) = -i sqrt(-W_ii),            W_ii < 0.
 
     Inputs:
-        Wmat: LogDInput - real radial equation matrix or batch of matrices
+        Wmat: LogDInput - real radial equation matrix or batch of matrices, shape
+            (..., n_channel, n_channel)
 
     Returns:
-        Ymat: jax.Array - complex initial log-derivative matrix
+        Ymat: jax.Array - complex initial log-derivative matrices with the same shape
+            (..., n_channel, n_channel) as Wmat
     """
     _validate_square("Wmat", Wmat)
     diagonal = jnp.diagonal(jnp.asarray(Wmat, dtype=jnp.float64), axis1=-2, axis2=-1)
@@ -64,7 +81,34 @@ def initialize_logD_capture(Wmat: LogDInput) -> jax.Array:
     return _diagonal_matrix(values.astype(jnp.complex128))
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _reference_matrices(radial_half_step: jax.Array, W_mid: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
+    r"""
+    Build diagonal LDMD reference matrices from the sector-midpoint potential.
+
+    Formula:
+        p_j^2 >= 0 :
+            y1_{ij} = \delta_{ij} p_j coth(p_j h)
+            y2_{ij} = \delta_{ij} p_j scsh(p_j h)
+        p_j^2 < 0 :
+            y1_{ij} = \delta_{ij} |p_j| cot(|p_j| h)
+            y2_{ij} = \delta_{ij} |p_j| scs(|p_j| h)
+
+    Inputs:
+        radial_half_step: jax.Array - scalar half-sector step, shape ()
+        W_mid: jax.Array - midpoint radial matrix, shape (n_channel, n_channel)
+
+    Returns:
+        y1: jax.Array - diagonal same-end reference log derivative, shape
+            (n_channel, n_channel)
+        y2: jax.Array - diagonal cross-end reference log derivative, shape
+            (n_channel, n_channel)
+        reference: jax.Array - diagonal reference potential, shape
+            (n_channel, n_channel)
+    """
     reference_values = jnp.real(jnp.diag(W_mid))
     magnitude = jnp.sqrt(jnp.abs(reference_values))
     argument = magnitude * radial_half_step
@@ -84,6 +128,10 @@ def _reference_matrices(radial_half_step: jax.Array, W_mid: jax.Array) -> tuple[
     return jnp.diag(y1_values.astype(W_mid.dtype)), jnp.diag(y2_values.astype(W_mid.dtype)), reference
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _propagate_logD_sector_jax(
     Ymat: jax.Array,
     radial_half_step: jax.Array,
@@ -91,6 +139,19 @@ def _propagate_logD_sector_jax(
     W_mid: jax.Array,
     W_end: jax.Array,
 ) -> jax.Array:
+    r"""
+    Execute one JAX-compatible two-half-step LDMD sector update.
+
+    Every matrix input and the returned log derivative has shape
+    (n_channel, n_channel); ``radial_half_step`` has scalar shape ().
+
+    Formula:
+        p_j^2 = W_mid_{jj}
+        T_{ij} = W_{ij} - \delta_{ij} p_j^2
+        Q_start = h T_start / 3
+        Q_mid = 4 / h [I - (I - h^2 T_mid / 6)^{-1}]
+        Q_end = h T_end / 3
+    """
     dtype = jnp.result_type(Ymat.dtype, W_start.dtype, W_mid.dtype, W_end.dtype)
     Ymat = Ymat.astype(dtype)
     W_start = W_start.astype(dtype)
@@ -112,6 +173,9 @@ def _propagate_logD_sector_jax(
     return 0.5 * (Y_end + Y_end.T)
 
 
+# ----------------------------------------------------------------------------------------
+
+
 _propagate_logD_sector_compiled = jax.jit(_propagate_logD_sector_jax)
 
 
@@ -131,14 +195,19 @@ def propagate_logD_sector(
     reference potential.
 
     Inputs:
-        Ymat: LogDInput - log-derivative matrix at the sector start
+        Ymat: LogDInput - log-derivative matrix at the sector start, shape
+            (n_channel, n_channel)
         radial_half_step: float - half-sector radial step in atomic units
-        W_start: LogDInput - radial equation matrix at the sector start
-        W_mid: LogDInput - radial equation matrix at the sector midpoint
-        W_end: LogDInput - radial equation matrix at the sector end
+        W_start: LogDInput - radial equation matrix at the sector start, shape
+            (n_channel, n_channel)
+        W_mid: LogDInput - radial equation matrix at the sector midpoint, shape
+            (n_channel, n_channel)
+        W_end: LogDInput - radial equation matrix at the sector end, shape
+            (n_channel, n_channel)
 
     Returns:
-        Y_end: jax.Array - log-derivative matrix at the sector end
+        Y_end: jax.Array - log-derivative matrix at the sector end, shape
+            (n_channel, n_channel)
     """
     shape = _validate_square("Ymat", Ymat)
     if radial_half_step <= 0.0:
@@ -160,6 +229,10 @@ def propagate_logD_sector(
     )
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _propagate_logD_jax(
     Y_initial: jax.Array,
     total_energies: jax.Array,
@@ -169,11 +242,19 @@ def _propagate_logD_jax(
     W_base_mid: jax.Array,
     W_base_end: jax.Array,
 ) -> jax.Array:
+    """
+    Propagate an energy batch over all sectors inside one compiled JAX kernel.
+
+    ``Y_initial`` has shape (n_energy, n_channel, n_channel), energies have shape
+    (n_energy,), half-steps have shape (n_sector,), and each W_base array has shape
+    (n_sector, n_channel, n_channel). The return shape matches ``Y_initial``.
+    """
     n_channel = Y_initial.shape[-1]
     identity = jnp.eye(n_channel, dtype=W_base_start.dtype)
     energy_shift = 2.0 * reduced_mass * total_energies[:, None, None] * identity
 
     def scan_sector(Ymat: jax.Array, sector: tuple[jax.Array, jax.Array, jax.Array, jax.Array]) -> tuple[jax.Array, None]:
+        """Advance a Y batch with shape (n_energy, n_channel, n_channel) by one sector."""
         radial_half_step, base_start, base_mid, base_end = sector
         W_start = base_start[None, :, :] - energy_shift
         W_mid = base_mid[None, :, :] - energy_shift
@@ -183,6 +264,9 @@ def _propagate_logD_jax(
 
     Y_final, _ = jax.lax.scan(scan_sector, Y_initial, (radial_half_steps, W_base_start, W_base_mid, W_base_end))
     return Y_final
+
+
+# ----------------------------------------------------------------------------------------
 
 
 _propagate_logD_compiled = jax.jit(_propagate_logD_jax)
@@ -215,36 +299,25 @@ def propagate_logD(
         Y_initial: LogDInput - initial matrices with shape (n_energy, n_channel, n_channel)
         total_energies: LogDInput - total energies with shape (n_energy,)
         reduced_mass: float - collision reduced mass in atomic units
-        radial_half_steps: LogDInput - radial half-step for each sector
-        W_base_start: LogDInput - energy-independent matrices at sector starts
-        W_base_mid: LogDInput - energy-independent matrices at sector midpoints
-        W_base_end: LogDInput - energy-independent matrices at sector ends
+        radial_half_steps: LogDInput - radial half-step for each sector, shape
+            (n_sector,)
+        W_base_start: LogDInput - energy-independent matrices at sector starts,
+            shape (n_sector, n_channel, n_channel)
+        W_base_mid: LogDInput - energy-independent matrices at sector midpoints,
+            shape (n_sector, n_channel, n_channel)
+        W_base_end: LogDInput - energy-independent matrices at sector ends, shape
+            (n_sector, n_channel, n_channel)
 
     Returns:
-        Y_final: jax.Array - final log-derivative matrices for all energies
+        Y_final: jax.Array - final log-derivative matrices, shape
+            (n_energy, n_channel, n_channel)
     """
-    Y_shape = _validate_square("Y_initial", Y_initial)
-    energy_shape = tuple(total_energies.shape)
     step_shape = tuple(radial_half_steps.shape)
-    if len(Y_shape) != 3 or energy_shape != (Y_shape[0],):
-        message = f"Y_initial must have shape (n_energy, n_channel, n_channel) matching total_energies, but got {Y_shape} and {energy_shape}"
-        logger.error(message)
-        raise ValueError(message)
+
     if len(step_shape) != 1:
         message = f"radial_half_steps must be one-dimensional, but got shape={step_shape}"
         logger.error(message)
         raise ValueError(message)
-    if reduced_mass <= 0.0:
-        message = f"reduced_mass must be positive, but got reduced_mass={reduced_mass}"
-        logger.error(message)
-        raise ValueError(message)
-
-    expected_W_shape = (step_shape[0], Y_shape[1], Y_shape[2])
-    for name, value in (("W_base_start", W_base_start), ("W_base_mid", W_base_mid), ("W_base_end", W_base_end)):
-        if tuple(value.shape) != expected_W_shape:
-            message = f"{name} must have shape {expected_W_shape}, but got {value.shape}"
-            logger.error(message)
-            raise ValueError(message)
 
     return _propagate_logD_compiled(
         jnp.asarray(Y_initial),

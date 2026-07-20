@@ -10,14 +10,160 @@ from pyticc.basis.channel import ChannelBasis
 from pyticc.energy import EnergyInput, get_Etot
 from pyticc.matrix.centrifugal import get_Umat_BF
 from pyticc.matrix.radial import get_Wmat
-from pyticc.propagation.grid import build_radial_sectors
+from pyticc.propagation.grid import build_radial_sectors, iter_radial_windows
 from pyticc.propagation.logd import initialize_logD_capture, initialize_logD_inelastic, propagate_logD
+
+VmatCallback = Callable[[float], NDArray[np.float64]] | Callable[[NDArray[np.float64]], NDArray[np.float64]]
+InteractionProvider = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[NDArray[np.float64], ...]]
+
+
+# ----------------------------------------------------------------------------------------
+def propagate_BF_blocks(
+    basis: ChannelBasis,
+    channel_blocks: Sequence[Sequence[int]],
+    interaction_provider: InteractionProvider,
+    energies: NDArray[np.float64],
+    reduced_mass: float,
+    radial_boundaries: Sequence[float],
+    radial_half_steps: Sequence[float],
+    mode: Literal["inelastic", "capture"],
+    memory_limit_mb: float,
+    potential_grid_size: int,
+) -> tuple[jax.Array, ...]:
+    """
+    Propagate one or more body-fixed channel blocks through shared radial windows.
+
+    The provider evaluates only new radial points. The interaction matrix at each
+    window boundary is retained and reused by the next window. All blocks therefore
+    share the same radial traversal while keeping independent log derivatives.
+
+    Inputs:
+        basis: ChannelBasis - complete field-free channel basis
+        channel_blocks: Sequence[Sequence[int]] - complete-basis positions for each
+            propagation block, each with shape (n_channel_block,)
+        interaction_provider: InteractionProvider - maps new radial points with
+            shape (n_new_R,) and channel blocks to one interaction batch per block;
+            each batch has shape (n_new_R, n_channel_block, n_channel_block)
+        energies: NDArray[np.float64] - total energies, shape (n_energy,)
+        reduced_mass: float - collision reduced mass in atomic units
+        radial_boundaries: Sequence[float] - radial interval boundaries, shape
+            (n_interval + 1,)
+        radial_half_steps: Sequence[float] - nominal LDMD half-steps, shape
+            (n_interval,)
+        mode: Literal["inelastic", "capture"] - inner-boundary condition
+        memory_limit_mb: float - target transient-memory limit in MiB
+        potential_grid_size: int - internal PES grid points per R used by the
+            memory estimator
+
+    Returns:
+        Y_blocks: tuple[jax.Array, ...] - final log derivatives; each array has
+            shape (n_energy, n_channel_block, n_channel_block)
+    """
+    if mode not in ("inelastic", "capture"):
+        message = f"mode must be 'inelastic' or 'capture', but got {mode!r}"
+        logger.error(message)
+        raise ValueError(message)
+
+    blocks = tuple(tuple(indices) for indices in channel_blocks)
+    if not blocks or any(not indices for indices in blocks):
+        message = "At least one non-empty channel block is required for propagation"
+        logger.error(message)
+        raise ValueError(message)
+
+    E_int_blocks: list[NDArray[np.float64]] = []
+    Umat_blocks: list[NDArray[np.float64]] = []
+    for indices in blocks:
+        positions = np.asarray(indices, dtype=np.int64)
+        E_int_blocks.append(basis.E_int[positions])
+        Umat_blocks.append(get_Umat_BF(basis, indices))
+
+    sectors = build_radial_sectors(radial_boundaries, radial_half_steps)
+    block_sizes = tuple(len(indices) for indices in blocks)
+    windows = iter_radial_windows(
+        sectors,
+        n_grid=potential_grid_size,
+        n_channel=max(block_sizes),
+        n_energy=energies.size,
+        memory_limit_mb=memory_limit_mb,
+        state_matrix_elements=sum(size**2 for size in block_sizes),
+    )
+    logger.info(f"Propagating {len(blocks)} body-fixed block(s) through {len(sectors)} radial sectors")
+
+    Y_states: list[jax.Array | None] = [None] * len(blocks)
+    cached_R: float | None = None
+    cached_interactions: list[NDArray[np.float64] | None] = [None] * len(blocks)
+
+    for window_index, (window, radial_points) in enumerate(windows):
+        reuse_endpoint = cached_R is not None and np.isclose(radial_points[0], cached_R, rtol=0.0, atol=1.0e-12)
+        new_points = radial_points[1:] if reuse_endpoint else radial_points
+        new_interactions = interaction_provider(new_points, blocks)
+        if len(new_interactions) != len(blocks):
+            message = f"Interaction provider returned {len(new_interactions)} blocks, but expected {len(blocks)}"
+            logger.error(message)
+            raise ValueError(message)
+
+        for block_index, (E_int, Umat, new_interaction) in enumerate(zip(E_int_blocks, Umat_blocks, new_interactions, strict=True)):
+            n_channel = block_sizes[block_index]
+            expected_shape = (new_points.size, n_channel, n_channel)
+            if new_interaction.shape != expected_shape:
+                message = f"Interaction block {block_index} has shape {new_interaction.shape}, but expected {expected_shape}"
+                logger.error(message)
+                raise ValueError(message)
+
+            cached_interaction = cached_interactions[block_index]
+            if reuse_endpoint and cached_interaction is not None:
+                interactions = np.concatenate((cached_interaction[None, :, :], new_interaction), axis=0)
+            else:
+                interactions = new_interaction
+
+            W_points = np.stack(
+                [
+                    get_Wmat(float(RR), 0.0, reduced_mass, E_int, Umat, interaction)
+                    for RR, interaction in zip(radial_points, interactions, strict=True)
+                ]
+            )
+            W_base_start = W_points[0:-1:2]
+            W_base_mid = W_points[1::2]
+            W_base_end = W_points[2::2]
+            sector_half_steps = np.asarray([sector.radial_half_step for sector in window], dtype=np.float64)
+
+            Y_current = Y_states[block_index]
+            if Y_current is None:
+                identity = np.eye(n_channel, dtype=np.float64)
+                W_initial = W_base_start[0][None, :, :] - 2.0 * reduced_mass * energies[:, None, None] * identity
+                if mode == "inelastic":
+                    Y_current = initialize_logD_inelastic(W_initial)
+                else:
+                    Y_current = initialize_logD_capture(W_initial)
+
+            Y_states[block_index] = propagate_logD(
+                Y_current,
+                energies,
+                reduced_mass,
+                sector_half_steps,
+                W_base_start,
+                W_base_mid,
+                W_base_end,
+            )
+            cached_interactions[block_index] = interactions[-1].copy()
+
+        cached_R = float(radial_points[-1])
+        logger.debug(f"Completed radial window {window_index + 1}")
+
+    if any(Y_state is None for Y_state in Y_states):
+        message = "Propagation produced no radial windows"
+        logger.error(message)
+        raise RuntimeError(message)
+    return tuple(cast(jax.Array, Y_state) for Y_state in Y_states)
+
+
+# ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------
 def propagate_BF(
     basis: ChannelBasis,
-    Vmat: Callable[[float], NDArray[np.float64]] | Callable[[NDArray[np.float64]], NDArray[np.float64]],
+    Vmat: VmatCallback,
     Etot: EnergyInput,
     reduced_mass: float,
     radial_boundaries: Sequence[float],
@@ -25,14 +171,11 @@ def propagate_BF(
     mode: Literal["inelastic", "capture"] = "inelastic",
     channel_indices: Sequence[int] | None = None,
     batch_Vmat: bool = False,
+    memory_limit_mb: float = 512.0,
+    potential_grid_size: int = 0,
 ) -> jax.Array:
     r"""
-    Propagate the body-fixed log-derivative matrix with the LDMD method.
-
-    The interaction callback is evaluated once at each distinct radial point, or once
-    for the complete radial array when ``batch_Vmat`` is true.
-    Radial sectors, centrifugal matrices, energy-dependent radial matrices, and
-    the initial log-derivative matrices are constructed internally.
+    Propagate one body-fixed log-derivative block with the LDMD method.
 
     Formula:
         W(R; Etot) = U / R**2
@@ -40,77 +183,50 @@ def propagate_BF(
 
     Inputs:
         basis: ChannelBasis - complete field-free channel basis
-        Vmat: Callable - scalar or batched interaction matrix evaluated at R
-        Etot: EnergyInput - total-energy array or one-column text file in atomic units
+        Vmat: Callable - scalar callback returning shape (n_channel, n_channel), or
+            batched callback mapping R with shape (n_R,) to matrices with shape
+            (n_R, n_channel, n_channel)
+        Etot: EnergyInput - total-energy array with shape (n_energy,), or a
+            one-column text file in atomic units
         reduced_mass: float - collision reduced mass in atomic units
-        radial_boundaries: Sequence[float] - increasing radial interval boundaries in atomic units
-        radial_half_steps: Sequence[float] - nominal LDMD half-step for each radial interval
+        radial_boundaries: Sequence[float] - increasing radial interval boundaries
+            with shape (n_interval + 1,) in atomic units
+        radial_half_steps: Sequence[float] - nominal LDMD half-step for each radial
+            interval, shape (n_interval,)
         mode: Literal["inelastic", "capture"] - inner-boundary condition
-        channel_indices: Sequence[int] | None - complete-basis positions for one propagation block
-        batch_Vmat: bool - evaluate all distinct radial interaction matrices in one call
+        channel_indices: Sequence[int] | None - complete-basis positions for one
+            propagation block, shape (n_channel,)
+        batch_Vmat: bool - evaluate each window's new radial points in one call
+        memory_limit_mb: float - target transient-memory limit in MiB
+        potential_grid_size: int - internal PES grid points per R used by the memory
+            estimator
 
     Returns:
-        Y_final: jax.Array - final log-derivative matrices with shape (n_energy, n_channel, n_channel)
+        Y_final: jax.Array - final log-derivative matrices with shape
+            (n_energy, n_channel, n_channel)
     """
-    if mode not in ("inelastic", "capture"):
-        message = f"mode must be 'inelastic' or 'capture', but got {mode!r}"
-        logger.error(message)
-        raise ValueError(message)
-
     energies = get_Etot(Etot)
-    sectors = build_radial_sectors(radial_boundaries, radial_half_steps)
     indices = tuple(range(basis.n_channel)) if channel_indices is None else tuple(channel_indices)
-    if not indices:
-        message = "At least one channel is required for propagation"
-        logger.error(message)
-        raise ValueError(message)
 
-    E_int = basis.E_int[np.asarray(indices)]
-    Umat = get_Umat_BF(basis, indices)
-    radial_starts = np.asarray([sector.radial_start for sector in sectors], dtype=np.float64)
-    radial_mids = np.asarray([sector.radial_mid for sector in sectors], dtype=np.float64)
-    radial_ends = np.asarray([sector.radial_end for sector in sectors], dtype=np.float64)
-    sector_half_steps = np.asarray([sector.radial_half_step for sector in sectors], dtype=np.float64)
+    def interaction_provider(radial_points: NDArray[np.float64], blocks: tuple[tuple[int, ...], ...]) -> tuple[NDArray[np.float64], ...]:
+        """Evaluate one interaction block at new R points, returning shape (n_R, n_channel, n_channel)."""
+        if batch_Vmat:
+            callback = cast(Callable[[NDArray[np.float64]], NDArray[np.float64]], Vmat)
+            interactions = np.asarray(callback(radial_points), dtype=np.float64)
+        else:
+            callback = cast(Callable[[float], NDArray[np.float64]], Vmat)
+            interactions = np.stack([np.asarray(callback(float(radial_point)), dtype=np.float64) for radial_point in radial_points])
+        return (interactions,)
 
-    W_base: dict[float, NDArray[np.float64]] = {}
-    radial_points = np.unique(np.concatenate((radial_starts, radial_mids, radial_ends)))
-    if batch_Vmat:
-        batched_callback = cast(Callable[[NDArray[np.float64]], NDArray[np.float64]], Vmat)
-        interactions = np.asarray(batched_callback(radial_points), dtype=np.float64)
-        expected_shape = (radial_points.size, len(indices), len(indices))
-        if interactions.shape != expected_shape:
-            message = f"Batched Vmat returned shape {interactions.shape}, but expected {expected_shape}"
-            logger.error(message)
-            raise ValueError(message)
-    else:
-        scalar_callback = cast(Callable[[float], NDArray[np.float64]], Vmat)
-        interactions = np.stack([np.asarray(scalar_callback(float(radial_point)), dtype=np.float64) for radial_point in radial_points])
-
-    for radial_point, interaction in zip(radial_points, interactions, strict=True):
-        radial_value = float(radial_point)
-        W_base[radial_value] = get_Wmat(radial_value, 0.0, reduced_mass, E_int, Umat, interaction)
-
-    W_base_start = np.stack([W_base[float(radial_value)] for radial_value in radial_starts])
-    W_base_mid = np.stack([W_base[float(radial_value)] for radial_value in radial_mids])
-    W_base_end = np.stack([W_base[float(radial_value)] for radial_value in radial_ends])
-
-    n_channel = len(indices)
-    identity = np.eye(n_channel, dtype=np.float64)
-    W_initial = W_base_start[0][None, :, :] - 2.0 * reduced_mass * energies[:, None, None] * identity
-    if mode == "inelastic":
-        Y_initial = initialize_logD_inelastic(W_initial)
-    else:
-        Y_initial = initialize_logD_capture(W_initial)
-
-    return propagate_logD(
-        Y_initial,
+    return propagate_BF_blocks(
+        basis,
+        (indices,),
+        interaction_provider,
         energies,
         reduced_mass,
-        sector_half_steps,
-        W_base_start,
-        W_base_mid,
-        W_base_end,
-    )
-
-
-# ----------------------------------------------------------------------------------------
+        radial_boundaries,
+        radial_half_steps,
+        mode,
+        memory_limit_mb,
+        potential_grid_size,
+    )[0]

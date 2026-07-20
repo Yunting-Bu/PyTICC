@@ -3,6 +3,7 @@ import pytest
 
 from pyticc.basis.channel import ChannelBuilder, TruncSpec
 from pyticc.basis.monomer import AtomSpec, DiatomSpec
+from pyticc.basis.triatom import TriatomBasis
 from pyticc.system import ScattSystem
 
 
@@ -73,3 +74,46 @@ def test_K_cut_limits_helicity_without_limiting_j_couple() -> None:
 
     assert {channel.j_couple for channel in channels} == {0, 2}
     assert {channel.K for channel in channels} == {0}
+
+
+def test_atom_triatom_odd_parity_keeps_K0_for_positive_j() -> None:
+    triatom = TriatomBasis(Eint=np.array([[0.0], [0.01]]), jmax=1, tmax=0, parity_block_sign=-1)
+    system = ScattSystem(monomer_X=AtomSpec(), monomer_Y=triatom, Jtot=1, system_parity=1)
+
+    channels = ChannelBuilder(system, TruncSpec()).build()
+
+    assert [(channel.mis_Y.j, channel.mis_Y.t, channel.K) for channel in channels] == [
+        (1, 0, 0),
+        (1, 0, 1),
+    ]
+    assert "Y(t=0, j=1)" in str(channels[0])
+
+
+def test_atom_triatom_even_parity_keeps_j_zero_and_all_allowed_K() -> None:
+    triatom = TriatomBasis(Eint=np.array([[0.0], [0.01]]), jmax=1, tmax=0)
+    system = ScattSystem(monomer_X=AtomSpec(), monomer_Y=triatom, Jtot=1, system_parity=-1)
+
+    channels = ChannelBuilder(system, TruncSpec()).build()
+
+    assert [(channel.mis_Y.j, channel.mis_Y.t, channel.K) for channel in channels] == [
+        (0, 0, 0),
+        (1, 0, 0),
+        (1, 0, 1),
+    ]
+
+
+def test_atom_triatom_parity_is_independent_of_monomer_order() -> None:
+    triatom = TriatomBasis(Eint=np.array([[0.0], [0.01]]), jmax=1, tmax=0, parity_block_sign=-1)
+    system = ScattSystem(monomer_X=triatom, monomer_Y=AtomSpec(), Jtot=1, system_parity=1)
+
+    channels = ChannelBuilder(system, TruncSpec(K_cut=0)).build()
+
+    assert [(channel.mis_X.j, channel.mis_X.t, channel.K) for channel in channels] == [(1, 0, 0)]
+
+
+def test_atom_triatom_requires_matching_parity_block() -> None:
+    triatom = TriatomBasis(Eint=np.array([[0.0]]), jmax=0, tmax=0, parity_block_sign=1)
+    system = ScattSystem(monomer_X=AtomSpec(), monomer_Y=triatom, Jtot=1, system_parity=1)
+
+    with pytest.raises(ValueError, match="parity_block_sign"):
+        ChannelBuilder(system, TruncSpec()).build()

@@ -1,5 +1,5 @@
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TypeAlias
 
 import numpy as np
@@ -19,24 +19,45 @@ class PESWrapper:
     Monomer and interaction potential-energy surfaces.
 
     Members:
-        interaction: InteractionPES - interaction energy evaluated as V(R, coordinates)
-        monomer_X: MonomerPES | None - first monomer potential evaluated as V(r)
-        monomer_Y: MonomerPES | None - second monomer potential evaluated as V(r)
-        interaction_many: InteractionManyPES | None - interaction energies evaluated for multiple R
+        interaction: InteractionPES - interaction energy evaluated from coordinates
+            with shape (n_coordinate, n_grid), returning shape (n_grid,)
+        monomer_X: MonomerPES | None - first monomer potential mapping coordinates
+            with shape (n_grid,) to values with shape (n_grid,)
+        monomer_Y: MonomerPES | None - second monomer potential mapping coordinates
+            with shape (n_grid,) to values with shape (n_grid,)
+        interaction_many: InteractionManyPES | None - batched interaction accepting
+            R with shape (n_R,) and coordinates with shape (n_coordinate, n_grid),
+            returning shape (n_R, n_grid)
     """
 
     interaction: InteractionPES
     monomer_X: MonomerPES | None = None
     monomer_Y: MonomerPES | None = None
     interaction_many: InteractionManyPES | None = None
+    _close: Callable[[], None] | None = field(default=None, repr=False, compare=False)
+
+    def close(self) -> None:
+        """Release persistent resources owned by a compiled PES wrapper."""
+        if self._close is not None:
+            self._close()
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _evaluate(
     pes: PESWrapper,
     R: RadialInput,
     coordinates: NDArray[np.float64],
     grid_shape: tuple[int, ...],
 ) -> NDArray[np.float64]:
+    """
+    Dispatch scalar or batched radial PES evaluation and restore tensor-grid axes.
+
+    ``coordinates`` has shape (n_coordinate, n_grid). A scalar R returns
+    ``grid_shape``; R with shape (n_R,) returns shape (n_R, *grid_shape).
+    """
     radial_points = np.asarray(R, dtype=np.float64)
     if radial_points.ndim == 0:
         values = np.asarray(pes.interaction(float(radial_points), coordinates), dtype=np.float64)
@@ -64,6 +85,9 @@ def _evaluate(
 
 
 # ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def get_Vgrid_atom_diatom(
     pes: PESWrapper,
     R: RadialInput,
@@ -75,16 +99,23 @@ def get_Vgrid_atom_diatom(
 
     Inputs:
         pes: PESWrapper - atom-diatom potential-energy surfaces
-        R: float | Sequence[float] | NDArray[np.float64] - atom-diatom center-of-mass separations in atomic units
-        r: NDArray[np.float64] - diatomic bond-length grids in atomic units
-        theta: NDArray[np.float64] - Jacobi-angle grids in radians
+        R: float | Sequence[float] | NDArray[np.float64] - scalar separation or
+            separations with shape (n_R,) in atomic units
+        r: NDArray[np.float64] - diatomic bond-length grids in atomic units, shape
+            (n_r,)
+        theta: NDArray[np.float64] - Jacobi-angle grids in radians, shape
+            (n_theta,)
 
     Returns:
-        V: NDArray[np.float64] - interaction grid with axes (r, theta), preceded by R for batched input
+        V: NDArray[np.float64] - interaction grid with shape (n_r, n_theta) for
+            scalar R, or (n_R, n_r, n_theta) for batched R
     """
     grids = np.meshgrid(r, theta, indexing="ij")
     coordinates = np.asfortranarray(np.stack(tuple(grid.reshape(-1) for grid in grids)))
     return _evaluate(pes, R, coordinates, grids[0].shape)
+
+
+# ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------
@@ -102,19 +133,25 @@ def get_Vgrid_diatom_diatom(
 
     Inputs:
         pes: PESWrapper - diatom-diatom potential-energy surfaces
-        R: float | Sequence[float] | NDArray[np.float64] - center-of-mass separations in atomic units
-        r_X: NDArray[np.float64] - first diatom bond-length grids in atomic units
-        r_Y: NDArray[np.float64] - second diatom bond-length grids in atomic units
-        theta_X: NDArray[np.float64] - first polar-angle grids in radians
-        theta_Y: NDArray[np.float64] - second polar-angle grids in radians
-        phi: NDArray[np.float64] - dihedral-angle grids in radians
+        R: float | Sequence[float] | NDArray[np.float64] - scalar separation or
+            separations with shape (n_R,) in atomic units
+        r_X: NDArray[np.float64] - first diatom bond-length grids, shape (n_r_X,)
+        r_Y: NDArray[np.float64] - second diatom bond-length grids, shape (n_r_Y,)
+        theta_X: NDArray[np.float64] - first polar-angle grids, shape (n_theta_X,)
+        theta_Y: NDArray[np.float64] - second polar-angle grids, shape (n_theta_Y,)
+        phi: NDArray[np.float64] - dihedral-angle grids, shape (n_phi,)
 
     Returns:
-        V: NDArray[np.float64] - interaction grid with internal axes, preceded by R for batched input
+        V: NDArray[np.float64] - interaction grid with shape
+            (n_r_X, n_r_Y, n_theta_X, n_theta_Y, n_phi) for scalar R, or the same
+            shape preceded by n_R for batched R
     """
     grids = np.meshgrid(r_X, r_Y, theta_X, theta_Y, phi, indexing="ij")
     coordinates = np.asfortranarray(np.stack(tuple(grid.reshape(-1) for grid in grids)))
     return _evaluate(pes, R, coordinates, grids[0].shape)
+
+
+# ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------

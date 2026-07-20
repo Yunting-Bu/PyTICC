@@ -105,6 +105,7 @@ def build_nncc_blocks(channels: Sequence[Channel], K_delta: int = 1) -> list[KBl
     last_center = centers[-1]
 
     def owner_center(K: int) -> int:
+        """Assign each physical K to the unique NNCC block that owns its result."""
         if K <= first_center:
             return first_center
         if K >= last_center:

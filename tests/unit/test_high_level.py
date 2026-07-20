@@ -43,6 +43,7 @@ def test_run_atom_diatom_returns_complete_scattering_result() -> None:
         n_theta=4,
     )
 
+    assert isinstance(result, ticc.ScatteringResult)
     assert result.basis.n_channel == 1
     assert result.Y_BF.shape == (2, 1, 1)
     assert len(result.Smat) == 2
@@ -74,6 +75,7 @@ def test_run_diatom_diatom_returns_complete_scattering_result() -> None:
         n_phi=4,
     )
 
+    assert isinstance(result, ticc.ScatteringResult)
     assert result.basis.n_channel == 1
     assert result.Y_SF.shape == (1, 1, 1)
     assert result.Smat[0].shape == (1, 1)
@@ -140,3 +142,39 @@ def test_run_atom_diatom_nncc_reuses_one_batched_pes_grid() -> None:
     assert calls == 1
     owned_indices = sorted(index for block in result.blocks for index in block.block.owned_channel_indices)
     assert owned_indices == list(range(result.basis.n_channel))
+
+
+def test_run_atom_diatom_nncc_shares_each_radial_window_across_blocks() -> None:
+    rovib = _rotational_rovib(4)
+    diatom = ticc.DiatomSpec(Eint=rovib.E_vj, vmax=0, jmax=4)
+    evaluated_R: list[np.ndarray] = []
+
+    def interaction_many(RR: np.ndarray, coordinates: np.ndarray) -> np.ndarray:
+        evaluated_R.append(RR.copy())
+        return np.zeros((RR.size, coordinates.shape[1]))
+
+    pes = ticc.PESWrapper(
+        interaction=lambda RR, coordinates: np.zeros(coordinates.shape[1]),
+        interaction_many=interaction_many,
+    )
+    result = ticc.run_atom_diatom(
+        diatom,
+        rovib,
+        pes,
+        Jtot=4,
+        system_parity=1,
+        Etot=[0.1],
+        reduced_mass=2.0,
+        radial_boundaries=[3.0, 3.4],
+        radial_half_steps=[0.1],
+        n_theta=8,
+        approx=ticc.Approx.NNCC,
+        K_delta=1,
+        memory_limit_mb=1.0e-6,
+    )
+
+    assert isinstance(result, ticc.CoupledStatesResult)
+    assert len(result.blocks) == 3
+    assert len(evaluated_R) == 2
+    np.testing.assert_allclose(evaluated_R[0], [3.0, 3.1, 3.2])
+    np.testing.assert_allclose(evaluated_R[1], [3.3, 3.4])

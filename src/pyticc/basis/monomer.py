@@ -68,14 +68,22 @@ def set_j_parity(jpar: int) -> tuple[int, int]:
 
 # ----------------------------------------------------------------------------------------
 class AtomSpec:
+    """Structureless atomic monomer with one zero-energy internal state."""
+
     type = MonomerType.ATOM
     jpar: int = 0
 
     def mis_iter(self, E_cut: float):
+        """Yield the atom's only internal state."""
         yield MolInnerState(j=0, Eint=0.0)
 
     def energy(self, mis: MolInnerState, K: int) -> float:
+        """Return the zero internal energy of a structureless atom."""
         return 0.0
+
+    def allows_K(self, mis: MolInnerState, K: int) -> bool:
+        """Allow every system helicity because the atomic monomer has j=0."""
+        return True
 
 
 # ----------------------------------------------------------------------------------------
@@ -84,6 +92,18 @@ class AtomSpec:
 # ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiatomSpec:
+    """
+    Diatomic monomer states selected from a rovibrational energy table.
+
+    Members:
+        Eint: NDArray - internal energies indexed as Eint[v, j], shape
+            (n_v_available, n_j_available)
+        vmax: int - maximum retained vibrational quantum number
+        jmax: int - maximum retained rotational quantum number
+        vmin: int - minimum retained vibrational quantum number
+        jpar: int - rotational parity selector
+    """
+
     type = MonomerType.DIATOM
     Eint: NDArray
     vmax: int
@@ -115,6 +135,7 @@ class DiatomSpec:
         set_j_parity(self.jpar)
 
     def mis_iter(self, E_cut: float):
+        """Yield retained (v, j) states whose internal energy does not exceed E_cut."""
         jmin, jinc = set_j_parity(self.jpar)
         for v in range(self.vmin, self.vmax + 1):
             for j in range(jmin, self.jmax + 1, jinc):
@@ -123,11 +144,16 @@ class DiatomSpec:
                     yield MolInnerState(j=j, v=v, Eint=energy)
 
     def energy(self, mis: MolInnerState, K: int) -> float:
+        """Look up the internal energy of one labeled diatomic state."""
         if mis.v is None:
             message = "Diatomic inner state requires v"
             logger.error(message)
             raise ValueError(message)
         return float(self.Eint[mis.v, mis.j])
+
+    def allows_K(self, mis: MolInnerState, K: int) -> bool:
+        """Allow every system helicity admitted by the coupled angular momentum."""
+        return True
 
 
 # ----------------------------------------------------------------------------------------
