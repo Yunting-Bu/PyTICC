@@ -187,33 +187,3 @@ def get_Vgrid_diatom_diatom(
     grids = np.meshgrid(r_X, r_Y, theta_X, theta_Y, phi, indexing="ij")
     coordinates = np.asfortranarray(np.stack(tuple(grid.reshape(-1) for grid in grids)))
     return _evaluate(pes, R, coordinates, grids[0].shape)
-
-
-# ----------------------------------------------------------------------------------------
-
-
-# ----------------------------------------------------------------------------------------
-if __name__ == "__main__":
-    from pathlib import Path
-
-    from pyticc.constants import AU2CM
-    from pyticc.pes.fortran import load_fortran_pes
-
-    pes_dir = Path("/Users/byt/software/PES/ArHF")
-    pes = load_fortran_pes(
-        [pes_dir / "interaction-PES.f"],
-        pes_dir / "pyticc_wrapper.f90",
-        workdir=pes_dir,
-    )
-
-    labels = np.array(["global minimum", "linear local minimum", "off-minimum point"])
-    R = np.array([6.470, 6.421, 6.647])
-    r = np.full(3, 1.7325)
-    theta_degree = np.array([0.0, 180.0, 109.724])
-    theta = np.deg2rad(theta_degree)
-
-    V = np.array([pes.interaction(R_i, np.array([[r_i], [theta_i]], dtype=np.float64))[0] for R_i, r_i, theta_i in zip(R, r, theta, strict=True)])
-
-    print("ArHF interaction potential batch:")
-    for label, R_i, r_i, theta_i, V_i in zip(labels, R, r, theta_degree, V * AU2CM, strict=True):
-        print(f"{label:20s}  R={R_i:6.3f} bohr  r={r_i:6.4f} bohr  theta={theta_i:7.3f} deg  V={V_i:12.6f} cm-1")

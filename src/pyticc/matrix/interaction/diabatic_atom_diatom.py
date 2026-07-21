@@ -9,17 +9,16 @@ from numpy.typing import NDArray
 
 from pyticc.basis.angle import norm_YjK
 from pyticc.basis.channel import Channel, ChannelBasis
-from pyticc.basis.diabatic import DiabaticDiatomBasis
-from pyticc.pes.diabatic import DiabaticPESWrapper, RadialInput, get_DPEM_grid_atom_diatom
+from pyticc.basis.monomer.diabatic import DiabaticDiatomBasis
+from pyticc.pes.diabatic import DiabaticPESWrapper, RadialInput, get_diabatic_potential_grid_atom_diatom
 from pyticc.system import MolInnerState
 
 ElectronicK = tuple[int, int]
 
 
-# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiabaticVBasisBF:
-    """State-aware atom-diatom bases for diagonal and off-diagonal DPEM contractions."""
+    """State-aware atom-diatom bases for diagonal and off-diagonal diabatic-potential contractions."""
 
     n_channel: int
     n_state: int
@@ -31,16 +30,14 @@ class DiabaticVBasisBF:
     B_coupling: dict[ElectronicK, NDArray[np.float64]]
 
 
-# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiabaticVGridBF:
-    """DPEM values sampled on state-specific diagonal and shared coupling grids."""
+    """Diabatic-potential values sampled on state-specific diagonal and shared coupling grids."""
 
     diagonal: tuple[NDArray[np.float64], ...]
     coupling: NDArray[np.float64]
 
 
-# ----------------------------------------------------------------------------------------
 def _diatomic_inner_state(channel: Channel) -> MolInnerState:
     """Return the unique diatomic inner state from an atom-diatom channel."""
     candidates = tuple(state for state in (channel.mis_X, channel.mis_Y) if state.v is not None)
@@ -51,8 +48,7 @@ def _diatomic_inner_state(channel: Channel) -> MolInnerState:
     return candidates[0]
 
 
-# ----------------------------------------------------------------------------------------
-def prepare_DiabaticVmat_BF_atom_diatom(
+def prepare(
     basis: ChannelBasis,
     diabatic_basis: DiabaticDiatomBasis,
     cos_theta: NDArray[np.float64],
@@ -60,10 +56,8 @@ def prepare_DiabaticVmat_BF_atom_diatom(
 ) -> DiabaticVBasisBF:
     r"""Prepare state-specific PODVR bases and shared primitive-DVR coupling bases.
 
-    Diagonal electronic blocks use each state's contracted PODVR grid. Off-diagonal
-    blocks use the common primitive DVR grid, matching the TransP/TransD separation
-    in ABCdia. Both representations use the same Gauss-Legendre angular quadrature
-    and are diagonal in exact K.
+    Diagonal blocks use state-specific PODVR grids; couplings use the common
+    primitive DVR grid, matching the TransP/TransD separation in ABCdia.
 
     Inputs:
         basis: ChannelBasis - electronically labelled atom-diatom channels
@@ -132,13 +126,12 @@ def prepare_DiabaticVmat_BF_atom_diatom(
     )
 
 
-# ----------------------------------------------------------------------------------------
-def get_DiabaticVgrid_BF_atom_diatom(
+def sample(
     pes: DiabaticPESWrapper,
     R: RadialInput,
     V_basis: DiabaticVBasisBF,
 ) -> DiabaticVGridBF:
-    """Sample diagonal and coupling DPEM elements on their respective radial grids."""
+    """Sample diagonal and coupling diabatic-potential elements on their respective radial grids."""
     if pes.n_state != V_basis.n_state:
         message = f"PES has {pes.n_state} electronic states, but the interaction basis has {V_basis.n_state}"
         logger.error(message)
@@ -147,16 +140,15 @@ def get_DiabaticVgrid_BF_atom_diatom(
     radial_grids = (*V_basis.diagonal_grids, V_basis.coupling_grid)
     radial_sizes = tuple(grid.size for grid in radial_grids)
     combined_grid = np.concatenate(radial_grids)
-    combined_dpem = get_DPEM_grid_atom_diatom(pes, R, combined_grid, V_basis.theta)
+    combined_potential = get_diabatic_potential_grid_atom_diatom(pes, R, combined_grid, V_basis.theta)
     radial_axis = 1 if np.asarray(R).ndim == 1 else 0
     split_points = np.cumsum(radial_sizes[:-1])
-    sampled_grids = np.split(combined_dpem, split_points, axis=radial_axis)
+    sampled_grids = np.split(combined_potential, split_points, axis=radial_axis)
     diagonal = tuple(sampled_grids[state][..., state, state] for state in range(V_basis.n_state))
     coupling = sampled_grids[-1]
     return DiabaticVGridBF(diagonal=diagonal, coupling=coupling)
 
 
-# ----------------------------------------------------------------------------------------
 def _as_grid_batch(
     values: NDArray[np.float64],
     grid_shape: tuple[int, ...],
@@ -188,7 +180,6 @@ def _as_grid_batch(
     return batch, batched
 
 
-# ----------------------------------------------------------------------------------------
 def _selected_group(
     group_indices: tuple[int, ...],
     selected_indices: dict[int, int],
@@ -201,7 +192,6 @@ def _selected_group(
     )
 
 
-# ----------------------------------------------------------------------------------------
 def _contract_weighted_basis(
     left: NDArray[np.float64],
     weights: NDArray[np.float64],
@@ -217,20 +207,19 @@ def _contract_weighted_basis(
     return result
 
 
-# ----------------------------------------------------------------------------------------
-def get_DiabaticVmat_BF(
+def contract(
     V_basis: DiabaticVBasisBF,
     potential: DiabaticVGridBF,
     channel_indices: Sequence[int] | None = None,
 ) -> NDArray[np.float64]:
-    r"""Contract a state-resolved atom-diatom DPEM into a body-fixed channel matrix.
+    r"""Contract a state-resolved atom-diatom diabatic potential into a body-fixed channel matrix.
 
     Formula:
         V[c_i,c'_j] = delta[K,K'] sum_g B[c_i,g] V[i,j,g] B[c'_j,g].
 
     Inputs:
         V_basis: DiabaticVBasisBF - state-aware diagonal and coupling bases
-        potential: DiabaticVGridBF - sampled diagonal and full coupling DPEM grids
+        potential: DiabaticVGridBF - sampled diagonal and full diabatic coupling grids
         channel_indices: Sequence[int] | None - optional complete/CS/NNCC selection
 
     Returns:
@@ -252,7 +241,7 @@ def get_DiabaticVmat_BF(
         potential.coupling,
         (V_basis.coupling_grid.size, V_basis.theta.size),
         (V_basis.n_state, V_basis.n_state),
-        "Coupling DPEM",
+        "Diabatic coupling potential",
     )
     batched_flags.append(coupling_batched)
     batch_sizes = {batch.shape[0] for batch in (*diagonal_batches, coupling_batch)}
@@ -261,7 +250,7 @@ def get_DiabaticVmat_BF(
         logger.error(message)
         raise ValueError(message)
     if not np.allclose(coupling_batch, np.swapaxes(coupling_batch, -2, -1), rtol=1.0e-12, atol=1.0e-12):
-        message = "Coupling DPEM must be symmetric"
+        message = "Diabatic coupling potential must be symmetric"
         logger.error(message)
         raise ValueError(message)
 
@@ -308,6 +297,3 @@ def get_DiabaticVmat_BF(
                 Vmat[:, positions_b[:, None], positions_a[None, :]] = np.swapaxes(block, -2, -1)
 
     return Vmat if batched_flags[0] else Vmat[0]
-
-
-# ----------------------------------------------------------------------------------------

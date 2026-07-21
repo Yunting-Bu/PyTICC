@@ -4,12 +4,14 @@ import numpy as np
 import pytest
 
 import pyticc as pt
+from pyticc.basis.channel import ChannelBuilder
+from pyticc.basis.monomer import DiatomSpec
 
 
 def build_test_basis() -> pt.ChannelBasis:
-    diatom = pt.DiatomSpec(Eint=np.array([[0.0, 1.0, 2.0]]), vmax=0, jmax=2)
+    diatom = DiatomSpec(Eint=np.array([[0.0, 1.0, 2.0]]), vmax=0, jmax=2)
     system = pt.ScattSystem(monomer_X=pt.AtomSpec(), monomer_Y=diatom, Jtot=0, system_parity=1)
-    return pt.ChannelBuilder(system, pt.TruncSpec()).build()
+    return ChannelBuilder(system, pt.TruncSpec()).build()
 
 
 def test_open_closed_channels_accept_array_input() -> None:

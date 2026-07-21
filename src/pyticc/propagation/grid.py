@@ -146,7 +146,7 @@ def iter_radial_windows(
     available = max(0, budget - resident_bytes - initial_point_bytes)
     estimated = max(1, available // max(1, sector_bytes))
     window_size = min(n_sector, _MAX_SECTORS_PER_WINDOW, estimated)
-    logger.debug(f"Using {ceil(n_sector / window_size)} radial windows of at most {window_size} sectors")
+    logger.trace(f"Using {ceil(n_sector / window_size)} radial windows of at most {window_size} sectors")
 
     for window_start in range(0, n_sector, window_size):
         window = tuple(sectors[window_start : window_start + window_size])

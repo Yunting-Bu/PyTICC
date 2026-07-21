@@ -4,6 +4,7 @@ from numpy.typing import NDArray
 from scipy.special import roots_legendre
 
 import pyticc as ticc
+from pyticc.scattering import diabatic_atom_diatom
 
 
 def _diabatic_basis(jpar: int | tuple[int, int] = 0) -> ticc.DiabaticDiatomBasis:
@@ -33,22 +34,30 @@ def _pes(coupling: float, n_state: int = 2) -> ticc.DiabaticPESWrapper:
     return ticc.DiabaticPESWrapper(n_state=n_state, monomer=monomer, interaction=interaction)
 
 
-def _run(coupling: float) -> ticc.ScatteringResult:
-    return ticc.run_diabatic_atom_diatom(
-        _diabatic_basis(),
-        _pes(coupling),
+def _solve(
+    diatom: ticc.DiabaticDiatomBasis,
+    pes: ticc.DiabaticPESWrapper,
+    *,
+    n_theta: int = 6,
+    propagation: ticc.Propagation | None = None,
+) -> ticc.ScatteringResult:
+    system = ticc.ScattSystem(
+        ticc.AtomSpec(),
+        diatom,
         Jtot=0,
         system_parity=1,
-        Etot=[0.05],
+        potential=pes,
         reduced_mass=1000.0,
-        radial_boundaries=[3.0, 4.0],
-        radial_half_steps=[0.1],
-        n_theta=6,
     )
+    hamiltonian = diabatic_atom_diatom.build_hamiltonian(system, n_theta=n_theta)
+    radial = ticc.Propagation((3.0, 4.0), (0.1,)) if propagation is None else propagation
+    result = ticc.solve(hamiltonian, [0.05], radial)
+    assert isinstance(result, ticc.ScatteringResult)
+    return result
 
 
-def test_run_diabatic_atom_diatom_returns_unitary_coupled_state_smatrix() -> None:
-    result = _run(0.02)
+def test_solve_diabatic_atom_diatom_returns_unitary_coupled_state_smatrix() -> None:
+    result = _solve(_diabatic_basis(), _pes(0.02))
 
     assert result.basis.n_channel == 2
     assert {channel.mis_Y.electronic_state for channel in result.basis} == {0, 1}
@@ -58,13 +67,13 @@ def test_run_diabatic_atom_diatom_returns_unitary_coupled_state_smatrix() -> Non
     np.testing.assert_allclose(result.Smat[0].conj().T @ result.Smat[0], np.eye(2), atol=1.0e-11)
 
 
-def test_run_diabatic_atom_diatom_zero_coupling_separates_electronic_states() -> None:
-    result = _run(0.0)
+def test_solve_diabatic_atom_diatom_zero_coupling_separates_electronic_states() -> None:
+    result = _solve(_diabatic_basis(), _pes(0.0))
 
     np.testing.assert_allclose(result.Smat[0] - np.diag(np.diag(result.Smat[0])), 0.0, atol=1.0e-13)
 
 
-def test_run_diabatic_atom_diatom_uses_half_angle_rule_when_all_states_have_exchange_parity() -> None:
+def test_solve_diabatic_atom_diatom_uses_half_angle_rule_when_all_states_have_exchange_parity() -> None:
     sampled_angles: list[np.ndarray] = []
 
     def monomer(r: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -74,16 +83,11 @@ def test_run_diabatic_atom_diatom_uses_half_angle_rule_when_all_states_have_exch
         sampled_angles.append(np.unique(coordinates[1]))
         return np.zeros((coordinates.shape[1], 2, 2))
 
-    ticc.run_diabatic_atom_diatom(
+    _solve(
         _diabatic_basis(jpar=(1, 1)),
         ticc.DiabaticPESWrapper(n_state=2, monomer=monomer, interaction=interaction),
-        Jtot=0,
-        system_parity=1,
-        Etot=[0.05],
-        reduced_mass=1000.0,
-        radial_boundaries=[3.0, 3.2],
-        radial_half_steps=[0.1],
         n_theta=3,
+        propagation=ticc.Propagation((3.0, 3.2), (0.1,)),
     )
 
     full_cos_theta, _ = roots_legendre(6)
@@ -91,15 +95,14 @@ def test_run_diabatic_atom_diatom_uses_half_angle_rule_when_all_states_have_exch
     np.testing.assert_allclose(sampled_angles[0], np.sort(np.arccos(full_cos_theta[:3])))
 
 
-def test_run_diabatic_atom_diatom_validates_electronic_state_count() -> None:
+def test_build_diabatic_atom_diatom_validates_electronic_state_count() -> None:
     with pytest.raises(ValueError, match="electronic states"):
-        ticc.run_diabatic_atom_diatom(
+        system = ticc.ScattSystem(
+            ticc.AtomSpec(),
             _diabatic_basis(),
-            _pes(0.0, n_state=1),
             Jtot=0,
             system_parity=1,
-            Etot=[0.05],
+            potential=_pes(0.0, n_state=1),
             reduced_mass=1000.0,
-            radial_boundaries=[3.0, 4.0],
-            radial_half_steps=[0.1],
         )
+        diabatic_atom_diatom.build_hamiltonian(system)

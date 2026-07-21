@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
-from typing import Literal, cast
+from math import ceil
+from time import perf_counter
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax
 import numpy as np
@@ -13,8 +17,50 @@ from pyticc.matrix.radial import get_Wmat
 from pyticc.propagation.grid import build_radial_sectors, iter_radial_windows
 from pyticc.propagation.logd import initialize_logD_capture, initialize_logD_inelastic, propagate_logD
 
+if TYPE_CHECKING:
+    from pyticc.scattering.hamiltonian import ScattHamiltonian
+
 VmatCallback = Callable[[float], NDArray[np.float64]] | Callable[[NDArray[np.float64]], NDArray[np.float64]]
 InteractionProvider = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[NDArray[np.float64], ...]]
+
+
+def propagate(
+    hamiltonian: ScattHamiltonian,
+    Etot: EnergyInput,
+    radial_boundaries: Sequence[float],
+    radial_half_steps: Sequence[float],
+    mode: Literal["inelastic", "capture"] = "inelastic",
+    memory_limit_mb: float = 512.0,
+    progress_every_sectors: int | None = None,
+) -> jax.Array:
+    """Propagate one scattering Hamiltonian to the final radial boundary.
+
+    Inputs:
+        hamiltonian: ScattHamiltonian - projected channel Hamiltonian
+        Etot: EnergyInput - total energies in atomic units
+        radial_boundaries: Sequence[float] - radial interval boundaries
+        radial_half_steps: Sequence[float] - LDMD half-step for every interval
+        mode: Literal["inelastic", "capture"] - inner-boundary condition
+        memory_limit_mb: float - target transient-memory limit in MiB
+        progress_every_sectors: int | None - INFO-log interval in completed sectors;
+            None selects an automatic interval and zero disables intermediate logs
+
+    Returns:
+        Y_final: jax.Array - final body-fixed log-derivative matrices
+    """
+    return propagate_BF(
+        basis=hamiltonian.basis,
+        Vmat=hamiltonian.interaction,
+        Etot=Etot,
+        reduced_mass=hamiltonian.reduced_mass,
+        radial_boundaries=radial_boundaries,
+        radial_half_steps=radial_half_steps,
+        mode=mode,
+        batch_Vmat=hamiltonian.batched,
+        memory_limit_mb=memory_limit_mb,
+        potential_grid_size=hamiltonian.potential_grid_size,
+        progress_every_sectors=progress_every_sectors,
+    )
 
 
 # ----------------------------------------------------------------------------------------
@@ -29,6 +75,7 @@ def propagate_BF_blocks(
     mode: Literal["inelastic", "capture"],
     memory_limit_mb: float,
     potential_grid_size: int,
+    progress_every_sectors: int | None = None,
 ) -> tuple[jax.Array, ...]:
     """
     Propagate one or more body-fixed channel blocks through shared radial windows.
@@ -54,6 +101,8 @@ def propagate_BF_blocks(
         memory_limit_mb: float - target transient-memory limit in MiB
         potential_grid_size: int - internal PES grid points per R used by the
             memory estimator
+        progress_every_sectors: int | None - INFO-log interval in completed sectors;
+            None selects an automatic interval and zero disables intermediate logs
 
     Returns:
         Y_blocks: tuple[jax.Array, ...] - final log derivatives; each array has
@@ -87,7 +136,12 @@ def propagate_BF_blocks(
         memory_limit_mb=memory_limit_mb,
         state_matrix_elements=sum(size**2 for size in block_sizes),
     )
-    logger.info(f"Propagating {len(blocks)} body-fixed block(s) through {len(sectors)} radial sectors")
+    n_sector = len(sectors)
+    progress_interval = max(1, ceil(n_sector / 10)) if progress_every_sectors is None else progress_every_sectors
+    next_progress = progress_interval
+    completed_sectors = 0
+    propagation_start = perf_counter()
+    logger.info(f"Propagation started: blocks={len(blocks)}, sectors={n_sector}, channels={max(block_sizes)}, energies={energies.size}")
 
     Y_states: list[jax.Array | None] = [None] * len(blocks)
     cached_R: float | None = None
@@ -148,7 +202,17 @@ def propagate_BF_blocks(
             cached_interactions[block_index] = interactions[-1].copy()
 
         cached_R = float(radial_points[-1])
-        logger.debug(f"Completed radial window {window_index + 1}")
+        completed_sectors += len(window)
+        if completed_sectors == n_sector or (progress_interval > 0 and completed_sectors >= next_progress):
+            for Y_state in Y_states:
+                if Y_state is not None:
+                    Y_state.block_until_ready()
+            logger.info(
+                f"Propagation: {completed_sectors}/{n_sector} sectors, R={cached_R:.6f} bohr, wall={perf_counter() - propagation_start:.3f} s"
+            )
+            while progress_interval > 0 and next_progress <= completed_sectors:
+                next_progress += progress_interval
+        logger.trace(f"Completed radial window {window_index + 1}")
 
     if any(Y_state is None for Y_state in Y_states):
         message = "Propagation produced no radial windows"
@@ -173,6 +237,7 @@ def propagate_BF(
     batch_Vmat: bool = False,
     memory_limit_mb: float = 512.0,
     potential_grid_size: int = 0,
+    progress_every_sectors: int | None = None,
 ) -> jax.Array:
     r"""
     Propagate one body-fixed log-derivative block with the LDMD method.
@@ -200,6 +265,8 @@ def propagate_BF(
         memory_limit_mb: float - target transient-memory limit in MiB
         potential_grid_size: int - internal PES grid points per R used by the memory
             estimator
+        progress_every_sectors: int | None - INFO-log interval in completed sectors;
+            None selects an automatic interval and zero disables intermediate logs
 
     Returns:
         Y_final: jax.Array - final log-derivative matrices with shape
@@ -229,4 +296,5 @@ def propagate_BF(
         mode,
         memory_limit_mb,
         potential_grid_size,
+        progress_every_sectors,
     )[0]

@@ -1,10 +1,12 @@
 import numpy as np
 from scipy.special import roots_legendre
 
+import pyticc.matrix.interaction.atom_diatom as atom_diatom
+import pyticc.matrix.interaction.diatom_diatom as diatom_diatom
 from pyticc.basis.angle import clebsch_gordan
 from pyticc.basis.channel import Channel, ChannelBasis
 from pyticc.basis.podvr import RovibPODVR
-from pyticc.matrix.interaction import get_Vmat_BF, prepare_Vmat_BF_atom_diatom, prepare_Vmat_BF_diatom_diatom
+from pyticc.matrix.interaction import contract
 from pyticc.system import MolInnerState
 
 
@@ -66,9 +68,9 @@ def test_constant_potential_is_identity_for_atom_diatom_basis() -> None:
     basis = make_atom_diatom_basis()
     rovib = make_rovib()
     cos_theta, theta_weights = roots_legendre(5)
-    V_basis = prepare_Vmat_BF_atom_diatom(basis, rovib, cos_theta, theta_weights)
+    V_basis = atom_diatom.prepare(basis, rovib, cos_theta, theta_weights)
 
-    Vmat = get_Vmat_BF(V_basis, np.full(V_basis.grid_shape, 2.5))
+    Vmat = contract(V_basis, np.full(V_basis.grid_shape, 2.5))
 
     np.testing.assert_allclose(Vmat, 2.5 * np.eye(basis.n_channel), atol=1.0e-13)
     assert V_basis.grid_shape == (rovib.grids.size, cos_theta.size)
@@ -83,7 +85,7 @@ def test_constant_potential_is_identity_for_diatom_diatom_basis() -> None:
     phi_x, phi_x_weights = roots_legendre(16)
     phi = 0.5 * np.pi * (phi_x + 1.0)
     phi_weights = 0.5 * np.pi * phi_x_weights
-    V_basis = prepare_Vmat_BF_diatom_diatom(
+    V_basis = diatom_diatom.prepare(
         basis,
         rovib_X,
         rovib_Y,
@@ -95,33 +97,33 @@ def test_constant_potential_is_identity_for_diatom_diatom_basis() -> None:
         phi_weights,
     )
 
-    Vmat = get_Vmat_BF(V_basis, np.full(V_basis.grid_shape, 1.75))
+    Vmat = contract(V_basis, np.full(V_basis.grid_shape, 1.75))
 
     np.testing.assert_allclose(Vmat, 1.75 * np.eye(basis.n_channel), atol=1.0e-12)
 
 
-def test_get_Vmat_BF_preserves_nncc_channel_order() -> None:
+def test_contract_preserves_nncc_channel_order() -> None:
     basis = make_atom_diatom_basis()
     rovib = make_rovib()
     cos_theta, theta_weights = roots_legendre(5)
-    V_basis = prepare_Vmat_BF_atom_diatom(basis, rovib, cos_theta, theta_weights)
+    V_basis = atom_diatom.prepare(basis, rovib, cos_theta, theta_weights)
     potential = np.broadcast_to(1.0 + np.arccos(cos_theta), V_basis.grid_shape)
     indices = (2, 0)
 
-    full_Vmat = get_Vmat_BF(V_basis, potential)
-    block_Vmat = get_Vmat_BF(V_basis, potential, indices)
+    full_Vmat = contract(V_basis, potential)
+    block_Vmat = contract(V_basis, potential, indices)
 
     np.testing.assert_allclose(block_Vmat, full_Vmat[np.ix_(indices, indices)])
 
 
-def test_get_Vmat_BF_accepts_radial_batch() -> None:
+def test_contract_accepts_radial_batch() -> None:
     basis = make_atom_diatom_basis()
     rovib = make_rovib()
     cos_theta, theta_weights = roots_legendre(5)
-    V_basis = prepare_Vmat_BF_atom_diatom(basis, rovib, cos_theta, theta_weights)
+    V_basis = atom_diatom.prepare(basis, rovib, cos_theta, theta_weights)
     potential = np.stack([np.full(V_basis.grid_shape, value) for value in (1.0, 2.0)])
 
-    Vmat = get_Vmat_BF(V_basis, potential)
+    Vmat = contract(V_basis, potential)
 
     assert Vmat.shape == (2, basis.n_channel, basis.n_channel)
     np.testing.assert_allclose(Vmat[0], np.eye(basis.n_channel), atol=1.0e-13)

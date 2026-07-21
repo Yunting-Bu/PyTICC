@@ -1,6 +1,7 @@
 import numpy as np
 
-import pyticc as ticc
+from pyticc.match import get_Smat, modified_bessel_IK_logD, riccati_bessel_jy
+from pyticc.propagation import propagate_logD
 
 
 def _reference_matrices(
@@ -19,13 +20,13 @@ def _reference_matrices(
         wave_number = np.sqrt(2.0 * reduced_mass * abs(energy - threshold))
         argument = wave_number * Rmatch
         if energy > threshold:
-            j_value, n_value, j_derivative, n_derivative = ticc.riccati_bessel_jy(float(L[index]), argument)
+            j_value, n_value, j_derivative, n_derivative = riccati_bessel_jy(float(L[index]), argument)
             J[index] = j_value / np.sqrt(wave_number)
             N[index] = n_value / np.sqrt(wave_number)
             J_prime[index] = np.sqrt(wave_number) * j_derivative
             N_prime[index] = np.sqrt(wave_number) * n_derivative
         else:
-            I_logD, K_logD = ticc.modified_bessel_IK_logD(float(L[index] + 0.5), argument)
+            I_logD, K_logD = modified_bessel_IK_logD(float(L[index] + 0.5), argument)
             J_prime[index] = 0.5 / Rmatch + wave_number * I_logD
             N_prime[index] = 0.5 / Rmatch + wave_number * K_logD
 
@@ -47,7 +48,7 @@ def test_get_Smat_free_single_channel_returns_identity() -> None:
     J, N, J_prime, N_prime = _reference_matrices(energy, Rmatch, reduced_mass, E_int, L)
     Ymat = _logD_from_reaction_matrix(J, N, J_prime, N_prime, np.zeros((1, 1)))
 
-    (Smat,) = ticc.get_Smat(Ymat[None, :, :], Rmatch, [energy], reduced_mass, E_int, L)
+    (Smat,) = get_Smat(Ymat[None, :, :], Rmatch, [energy], reduced_mass, E_int, L)
 
     np.testing.assert_allclose(Smat, np.eye(1), rtol=1.0e-13, atol=1.0e-13)
 
@@ -62,7 +63,7 @@ def test_free_single_channel_propagation_and_matching_returns_identity() -> None
     W_base = np.zeros((5, 1, 1))
     Y_initial = np.array([[[wave_number / np.tan(wave_number * R_start)]]])
 
-    Y_final = ticc.propagate_logD(
+    Y_final = propagate_logD(
         Y_initial,
         np.array([energy]),
         reduced_mass,
@@ -71,7 +72,7 @@ def test_free_single_channel_propagation_and_matching_returns_identity() -> None
         W_base,
         W_base,
     )
-    (Smat,) = ticc.get_Smat(Y_final, Rmatch, [energy], reduced_mass, [0.0], [0.0])
+    (Smat,) = get_Smat(Y_final, Rmatch, [energy], reduced_mass, [0.0], [0.0])
 
     np.testing.assert_allclose(Smat, np.eye(1), rtol=1.0e-12, atol=1.0e-12)
 
@@ -86,7 +87,7 @@ def test_get_Smat_real_open_channel_reaction_matrix_is_unitary() -> None:
     J, N, J_prime, N_prime = _reference_matrices(energy, Rmatch, reduced_mass, E_int, L)
     Ymat = _logD_from_reaction_matrix(J, N, J_prime, N_prime, reaction_matrix)
 
-    (Smat,) = ticc.get_Smat(Ymat[None, :, :], Rmatch, [energy], reduced_mass, E_int, L)
+    (Smat,) = get_Smat(Ymat[None, :, :], Rmatch, [energy], reduced_mass, E_int, L)
     identity = np.eye(2)
     expected = np.linalg.solve(identity + 1.0j * reaction_matrix, identity - 1.0j * reaction_matrix)
 
@@ -104,7 +105,7 @@ def test_get_Smat_includes_closed_channels_before_extracting_open_block() -> Non
     J, N, J_prime, N_prime = _reference_matrices(energy, Rmatch, reduced_mass, E_int, L)
     Ymat = _logD_from_reaction_matrix(J, N, J_prime, N_prime, reaction_matrix)
 
-    (Smat,) = ticc.get_Smat(Ymat[None, :, :], Rmatch, [energy], reduced_mass, E_int, L)
+    (Smat,) = get_Smat(Ymat[None, :, :], Rmatch, [energy], reduced_mass, E_int, L)
     expected = (1.0 - 0.25j) / (1.0 + 0.25j)
 
     assert Smat.shape == (1, 1)
@@ -121,7 +122,7 @@ def test_get_Smat_complex_capture_boundary_is_nonunitary() -> None:
     J, N, J_prime, N_prime = _reference_matrices(energy, Rmatch, reduced_mass, E_int, L)
     Ymat = _logD_from_reaction_matrix(J, N, J_prime, N_prime, reaction_matrix)
 
-    (Smat,) = ticc.get_Smat(Ymat[None, :, :], Rmatch, [energy], reduced_mass, E_int, L)
+    (Smat,) = get_Smat(Ymat[None, :, :], Rmatch, [energy], reduced_mass, E_int, L)
 
     np.testing.assert_allclose(Smat[0, 0], 2.0 / 3.0, rtol=1.0e-12, atol=1.0e-12)
     assert abs(Smat[0, 0]) < 1.0

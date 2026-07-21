@@ -1,0 +1,40 @@
+type = "diabatic-atom-diatom"
+atom = "H"
+diatom = ["O", "O"]
+Jtot = 0
+system_parity = 1
+energies_cm = [17.38631, 18.18561, 18.46362, 18.77639]
+
+[approximation]
+method = "exact"
+
+[pes]
+path = "pes"
+sources = ["ho2-dpme.f", "long_range_H_O2.f"]
+wrapper = "pyticc_wrapper.f90"
+workdir = "."
+n_state = 2
+processes = 4
+
+[basis]
+r = [1.2, 5.0]
+n_dvr = 135
+n_podvr = 80
+vmin = [0, 0]
+vmax = [29, 26]
+jmax = [55, 56]
+jpar = [-1, 1]
+
+[quadrature]
+n_theta = 30
+
+[truncation]
+E_Y_cut_cm = 38000.0
+K_cut = "none"
+
+[propagation]
+radial_boundaries = [0.8, 2.5, 6.0, 30.0]
+radial_half_steps = [0.002, 0.005, 0.3]
+mode = "inelastic"
+memory_limit_mb = 4096.0
+progress_every_sectors = 2

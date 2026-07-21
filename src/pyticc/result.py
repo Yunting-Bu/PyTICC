@@ -5,17 +5,27 @@ from numpy.typing import NDArray
 
 from pyticc.basis.channel import ChannelBasis, OpenClosedChannels
 from pyticc.basis.kblock import KBlock
-from pyticc.constants import AU2CM
 from pyticc.system import Approx
 
 LogDArray = NDArray[np.float64] | NDArray[np.complex128]
+
+
+@dataclass(frozen=True, slots=True)
+class Timing:
+    """Elapsed wall-clock and process CPU times in seconds."""
+
+    wall_seconds: float
+    cpu_seconds: float
+
+    def __str__(self) -> str:
+        return f"wall={self.wall_seconds:.3f} s, CPU={self.cpu_seconds:.3f} s"
 
 
 # ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ScatteringResult:
     """
-    Field-free scattering result for one J and parity block.
+    Field-free scattering result for one Jtot and system-parity block.
 
     Members:
         basis: ChannelBasis - complete body-fixed channel basis
@@ -32,6 +42,7 @@ class ScatteringResult:
             (n_energy, n_channel, n_channel)
         Smat: tuple[NDArray[np.complex128], ...] - one matrix per energy; element i
             has shape (n_open[i], n_open[i])
+        timing: Timing | None - elapsed solver or end-to-end run time
     """
 
     basis: ChannelBasis
@@ -42,17 +53,12 @@ class ScatteringResult:
     L: NDArray[np.float64]
     Y_SF: LogDArray
     Smat: tuple[NDArray[np.complex128], ...]
+    timing: Timing | None = None
 
     @property
     def open_channel_indices(self) -> tuple[NDArray[np.int64], ...]:
         """Return one index array with shape (n_open[i],) for each energy."""
         return tuple(np.asarray(np.flatnonzero(mask), dtype=np.int64) for mask in self.open_closed.open_mask)
-
-    def print_summary(self) -> None:
-        """Print channel counts and open-channel counts over the energy grid."""
-        print(f"Channels: {self.basis.n_channel}")
-        for energy, n_open in zip(self.Etot, self.open_closed.n_open, strict=True):
-            print(f"Etot = {energy * AU2CM:12.6f} cm-1   open channels = {n_open}")
 
 
 # ----------------------------------------------------------------------------------------
@@ -97,7 +103,7 @@ class KBlockResult:
 @dataclass(frozen=True)
 class CoupledStatesResult:
     """
-    Field-free CS or NNCC result for one J and parity block.
+    Field-free CS or NNCC result for one Jtot and system-parity block.
 
     NNCC block scattering matrices are not one global unitary scattering matrix, so
     they remain separated in ``blocks`` until observables are implemented.
@@ -109,6 +115,7 @@ class CoupledStatesResult:
         open_closed: OpenClosedChannels - full-basis open and closed channels
         approx: Approx - CS or NNCC approximation
         blocks: tuple[KBlockResult, ...] - independently propagated and matched blocks
+        timing: Timing | None - elapsed solver or end-to-end run time
     """
 
     basis: ChannelBasis
@@ -116,15 +123,7 @@ class CoupledStatesResult:
     open_closed: OpenClosedChannels
     approx: Approx
     blocks: tuple[KBlockResult, ...]
-
-    def print_summary(self) -> None:
-        """Print approximation, block sizes, and open-channel counts."""
-        print(f"Approximation: {self.approx.value}")
-        print(f"Channels: {self.basis.n_channel}   K blocks: {len(self.blocks)}")
-        for block_result in self.blocks:
-            print(block_result.block)
-        for energy, n_open in zip(self.Etot, self.open_closed.n_open, strict=True):
-            print(f"Etot = {energy * AU2CM:12.6f} cm-1   open channels = {n_open}")
+    timing: Timing | None = None
 
 
 # ----------------------------------------------------------------------------------------

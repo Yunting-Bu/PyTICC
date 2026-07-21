@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from pyticc.pes import DiabaticPESWrapper, get_DPEM_grid_atom_diatom
+from pyticc.pes import DiabaticPESWrapper, get_diabatic_potential_grid_atom_diatom
 
 
 def _monomer(r: np.ndarray) -> np.ndarray:
@@ -22,24 +22,24 @@ def test_python_diabatic_pes_builds_atom_diatom_grid() -> None:
     r = np.array([1.5, 2.0])
     theta = np.array([0.0, 0.5 * np.pi, np.pi])
 
-    dpem = get_DPEM_grid_atom_diatom(pes, 6.0, r, theta)
+    potential = get_diabatic_potential_grid_atom_diatom(pes, 6.0, r, theta)
 
-    assert dpem.shape == (2, 3, 2, 2)
-    np.testing.assert_allclose(dpem[..., 0, 0], 6.0 + r[:, None] + np.cos(theta)[None, :])
-    np.testing.assert_allclose(dpem[..., 1, 1], 12.0 - r[:, None] + np.zeros_like(theta)[None, :])
-    np.testing.assert_allclose(dpem[..., 0, 1], np.zeros_like(r)[:, None] + np.sin(theta)[None, :] / 6.0)
-    np.testing.assert_allclose(dpem[..., 1, 0], dpem[..., 0, 1])
+    assert potential.shape == (2, 3, 2, 2)
+    np.testing.assert_allclose(potential[..., 0, 0], 6.0 + r[:, None] + np.cos(theta)[None, :])
+    np.testing.assert_allclose(potential[..., 1, 1], 12.0 - r[:, None] + np.zeros_like(theta)[None, :])
+    np.testing.assert_allclose(potential[..., 0, 1], np.zeros_like(r)[:, None] + np.sin(theta)[None, :] / 6.0)
+    np.testing.assert_allclose(potential[..., 1, 0], potential[..., 0, 1])
 
 
 def test_python_diabatic_pes_evaluates_radial_batch() -> None:
     pes = DiabaticPESWrapper(n_state=2, monomer=_monomer, interaction=_interaction)
     radial_points = np.array([5.0, 6.0])
 
-    dpem = get_DPEM_grid_atom_diatom(pes, radial_points, np.array([1.5]), np.array([0.0, np.pi]))
+    potential = get_diabatic_potential_grid_atom_diatom(pes, radial_points, np.array([1.5]), np.array([0.0, np.pi]))
 
-    expected = np.stack([get_DPEM_grid_atom_diatom(pes, RR, np.array([1.5]), np.array([0.0, np.pi])) for RR in radial_points])
-    assert dpem.shape == (2, 1, 2, 2, 2)
-    np.testing.assert_allclose(dpem, expected)
+    expected = np.stack([get_diabatic_potential_grid_atom_diatom(pes, RR, np.array([1.5]), np.array([0.0, np.pi])) for RR in radial_points])
+    assert potential.shape == (2, 1, 2, 2, 2)
+    np.testing.assert_allclose(potential, expected)
 
 
 def test_diabatic_pes_uses_specialized_batch_interface() -> None:
@@ -51,10 +51,10 @@ def test_diabatic_pes_uses_specialized_batch_interface() -> None:
 
     pes = DiabaticPESWrapper(n_state=2, monomer=_monomer, interaction=_interaction, interaction_many=interaction_many)
 
-    dpem = get_DPEM_grid_atom_diatom(pes, np.array([5.0, 6.0]), np.array([1.5]), np.array([0.0]))
+    potential = get_diabatic_potential_grid_atom_diatom(pes, np.array([5.0, 6.0]), np.array([1.5]), np.array([0.0]))
 
     assert len(calls) == 1
-    assert dpem.shape == (2, 1, 1, 2, 2)
+    assert potential.shape == (2, 1, 1, 2, 2)
 
 
 def test_diabatic_pes_exposes_state_specific_monomer_callables() -> None:
@@ -71,9 +71,9 @@ def test_diabatic_pes_exposes_state_specific_monomer_callables() -> None:
 def test_diabatic_pes_supports_empty_radial_batch() -> None:
     pes = DiabaticPESWrapper(n_state=2, monomer=_monomer, interaction=_interaction)
 
-    dpem = get_DPEM_grid_atom_diatom(pes, np.array([]), np.ones(2), np.ones(3))
+    potential = get_diabatic_potential_grid_atom_diatom(pes, np.array([]), np.ones(2), np.ones(3))
 
-    assert dpem.shape == (0, 2, 3, 2, 2)
+    assert potential.shape == (0, 2, 3, 2, 2)
 
 
 @pytest.mark.parametrize(
@@ -92,7 +92,7 @@ def test_diabatic_pes_rejects_invalid_interaction_values(interaction, message: s
     pes = DiabaticPESWrapper(n_state=2, monomer=_monomer, interaction=interaction)
 
     with pytest.raises(ValueError, match=message):
-        get_DPEM_grid_atom_diatom(pes, 5.0, np.ones(2), np.ones(3))
+        get_diabatic_potential_grid_atom_diatom(pes, 5.0, np.ones(2), np.ones(3))
 
 
 def test_diabatic_pes_rejects_invalid_monomer_values() -> None:

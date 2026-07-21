@@ -1,6 +1,7 @@
 import numpy as np
 
 import pyticc as ticc
+from pyticc.scattering import diatom_diatom
 
 
 def _rovib(grids: list[float], energies: list[float]) -> ticc.RovibPODVR:
@@ -16,11 +17,11 @@ def _rovib(grids: list[float], energies: list[float]) -> ticc.RovibPODVR:
     )
 
 
-def _model() -> tuple[ticc.DiatomSpec, ticc.RovibPODVR, ticc.DiatomSpec, ticc.RovibPODVR, ticc.PESWrapper]:
+def _model() -> tuple[ticc.DiatomBasis, ticc.DiatomBasis, ticc.PESWrapper]:
     rovib_X = _rovib([1.2, 1.6], [0.0, 0.01, 0.02])
     rovib_Y = _rovib([1.4, 1.8], [0.0, 0.015])
-    diatom_X = ticc.DiatomSpec(Eint=rovib_X.E_vj, vmax=0, jmax=2, jpar=1)
-    diatom_Y = ticc.DiatomSpec(Eint=rovib_Y.E_vj, vmax=0, jmax=1)
+    diatom_X = ticc.DiatomBasis(rovib=rovib_X, energy_zero=0.0, vmax=0, jmax=2, jpar=1)
+    diatom_Y = ticc.DiatomBasis(rovib=rovib_Y, energy_zero=0.0, vmax=0, jmax=1)
 
     def interaction(RR: float, coordinates: np.ndarray) -> np.ndarray:
         r_X, r_Y, theta_X, theta_Y, phi = coordinates
@@ -29,7 +30,7 @@ def _model() -> tuple[ticc.DiatomSpec, ticc.RovibPODVR, ticc.DiatomSpec, ticc.Ro
         stretch = 1.0 + 0.10 * (r_X - 1.4) - 0.08 * (r_Y - 1.6)
         return radial * angular * stretch
 
-    return diatom_X, rovib_X, diatom_Y, rovib_Y, ticc.PESWrapper(interaction=interaction)
+    return diatom_X, diatom_Y, ticc.PESWrapper(interaction=interaction)
 
 
 def _run(
@@ -38,26 +39,25 @@ def _run(
     K_cut: int | None = None,
     K_delta: int = 1,
 ) -> ticc.ScatteringResult | ticc.CoupledStatesResult:
-    diatom_X, rovib_X, diatom_Y, rovib_Y, pes = _model()
-    return ticc.run_diatom_diatom(
+    diatom_X, diatom_Y, pes = _model()
+    system = ticc.ScattSystem(
         diatom_X,
-        rovib_X,
         diatom_Y,
-        rovib_Y,
-        pes,
         Jtot=Jtot,
         system_parity=1,
-        Etot=[0.08],
+        approx=approx,
+        K_delta=K_delta,
+        potential=pes,
         reduced_mass=2.0,
-        radial_boundaries=[3.0, 4.0, 5.0],
-        radial_half_steps=[0.25, 0.25],
+    )
+    hamiltonian = diatom_diatom.build_hamiltonian(
+        system,
         trunc=ticc.TruncSpec(K_cut=K_cut),
         n_theta_X=4,
         n_theta_Y=4,
         n_phi=5,
-        approx=approx,
-        K_delta=K_delta,
     )
+    return ticc.solve(hamiltonian, [0.08], ticc.Propagation((3.0, 4.0, 5.0), (0.25, 0.25)))
 
 
 def _assert_exact_matches_single_block(exact: ticc.ScatteringResult, approximate: ticc.CoupledStatesResult) -> None:

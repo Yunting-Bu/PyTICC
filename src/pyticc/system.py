@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
 from pyticc.constants import AMU2AU
+
+if TYPE_CHECKING:
+    from pyticc.pes.diabatic import DiabaticPESWrapper
+    from pyticc.pes.wrapper import PESWrapper
 
 # ----------------------------------------------------------------------------------------
 # Mass
@@ -27,6 +33,16 @@ ELEMENT_MASS_AU: dict[str, float] = {symbol: mass * AMU2AU for symbol, mass in E
 
 
 SUPPORTED_ELEMENT_SYMBOLS = tuple(ELEMENT_MASS_AU)
+
+
+def set_j_parity(jpar: int) -> tuple[int, int]:
+    """Return the first allowed rotational j and its increment."""
+    try:
+        return {-1: (1, 2), 0: (0, 1), 1: (0, 2)}[jpar]
+    except KeyError as error:
+        message = f"jpar must be -1, 0, or 1, but got jpar={jpar}"
+        logger.error(message)
+        raise ValueError(message) from error
 
 
 # ----------------------------------------------------------------------------------------
@@ -144,11 +160,27 @@ class MonomerSpec(Protocol):
 # ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ScattSystem:
+    """Physical definition of one field-free scattering block.
+
+    Members:
+        monomer_X: MonomerSpec - first monomer internal-state model
+        monomer_Y: MonomerSpec - second monomer internal-state model
+        Jtot: int | None - total angular momentum
+        system_parity: int | None - total system parity, -1 or 1
+        approx: Approx - exact CC, CS, or NNCC approximation
+        K_delta: int - neighboring-K range used by NNCC
+        potential: PESWrapper | DiabaticPESWrapper | None - interaction PES
+        reduced_mass: float | None - collision reduced mass in atomic units
+    """
+
     monomer_X: MonomerSpec
     monomer_Y: MonomerSpec
     Jtot: int | None = None
     system_parity: int | None = None
     approx: Approx = Approx.EXACT
+    K_delta: int = 1
+    potential: PESWrapper | DiabaticPESWrapper | None = None
+    reduced_mass: float | None = None
 
     def __post_init__(self) -> None:
         if self.Jtot is not None and self.Jtot < 0:
@@ -157,6 +189,14 @@ class ScattSystem:
             raise ValueError(message)
         if self.system_parity is not None and self.system_parity not in (-1, 1):
             message = f"Invalid system_parity {self.system_parity}. Must be -1 or 1."
+            logger.error(message)
+            raise ValueError(message)
+        if self.K_delta < 1:
+            message = f"Invalid K_delta {self.K_delta}. Must be positive."
+            logger.error(message)
+            raise ValueError(message)
+        if self.reduced_mass is not None and self.reduced_mass <= 0.0:
+            message = f"Invalid reduced_mass {self.reduced_mass}. Must be positive."
             logger.error(message)
             raise ValueError(message)
 

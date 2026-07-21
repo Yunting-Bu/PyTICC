@@ -1,6 +1,5 @@
-from pyticc.scattering.atom_diatom import run_atom_diatom, run_diabatic_atom_diatom
-from pyticc.scattering.atom_triatom import run_atom_triatom
-from pyticc.scattering.diatom_diatom import run_diatom_diatom
-from pyticc.scattering.input import run
+from pyticc.input import run
+from pyticc.scattering.hamiltonian import ScattHamiltonian
+from pyticc.scattering.solver import build_k_blocks, solve
 
-__all__ = ["run", "run_atom_diatom", "run_atom_triatom", "run_diabatic_atom_diatom", "run_diatom_diatom"]
+__all__ = ["ScattHamiltonian", "build_k_blocks", "run", "solve"]

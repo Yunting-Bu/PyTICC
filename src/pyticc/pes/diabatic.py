@@ -20,7 +20,7 @@ class DiabaticPESWrapper:
     Diabatic monomer potentials and interaction potential-energy matrix.
 
     ``monomer`` returns shape ``(n_grid, n_state)``. ``interaction`` returns the
-    interaction DPEM after subtracting each diagonal monomer potential, with shape
+    diabatic interaction matrix after subtracting each diagonal monomer potential, with shape
     (n_grid, n_state, n_state). Atom-diatom grid helpers pass R separately and
     arrange coordinate rows as (r, theta). A user PES adapter is responsible for
     conversion to its native coordinates, atom order, and units. The PyTICC-side
@@ -94,7 +94,7 @@ def _validate_values(values: NDArray[np.float64], expected_shape: tuple[int, ...
         raise ValueError(message)
 
 
-def _validate_dpem(values: NDArray[np.float64], expected_shape: tuple[int, ...]) -> None:
+def _validate_diabatic_matrix(values: NDArray[np.float64], expected_shape: tuple[int, ...]) -> None:
     _validate_values(values, expected_shape, "Diabatic interaction PES")
     if not np.allclose(values, np.swapaxes(values, -2, -1), rtol=1.0e-12, atol=1.0e-12):
         message = "Diabatic interaction PES must return a symmetric matrix"
@@ -103,13 +103,13 @@ def _validate_dpem(values: NDArray[np.float64], expected_shape: tuple[int, ...])
 
 
 # ----------------------------------------------------------------------------------------
-def _evaluate_dpem(
+def _evaluate_diabatic_matrix(
     pes: DiabaticPESWrapper,
     R: RadialInput,
     coordinates: NDArray[np.float64],
     grid_shape: tuple[int, ...],
 ) -> NDArray[np.float64]:
-    """Dispatch scalar or batched radial DPEM evaluation and restore tensor-grid axes."""
+    """Dispatch scalar or batched radial diabatic-matrix evaluation and restore tensor-grid axes."""
     radial_points = np.asarray(R, dtype=np.float64)
     matrix_shape = (pes.n_state, pes.n_state)
     if radial_points.ndim == 0:
@@ -131,19 +131,19 @@ def _evaluate_dpem(
         logger.error(message)
         raise ValueError(message)
 
-    _validate_dpem(values, expected_shape)
+    _validate_diabatic_matrix(values, expected_shape)
     return values.reshape(output_shape)
 
 
 # ----------------------------------------------------------------------------------------
-def get_DPEM_grid_atom_diatom(
+def get_diabatic_potential_grid_atom_diatom(
     pes: DiabaticPESWrapper,
     R: RadialInput,
     r: NDArray[np.float64],
     theta: NDArray[np.float64],
 ) -> NDArray[np.float64]:
     """
-    Evaluate an atom-diatom interaction DPEM on a tensor-product Jacobi grid.
+    Evaluate an atom-diatom diabatic interaction matrix on a tensor-product Jacobi grid.
 
     Inputs:
         pes: DiabaticPESWrapper - diabatic monomer and interaction potentials
@@ -152,7 +152,7 @@ def get_DPEM_grid_atom_diatom(
         theta: NDArray[np.float64] - Jacobi-angle grid in radians, shape ``(n_theta,)``
 
     Returns:
-        DPEM: NDArray[np.float64] - shape ``(n_r, n_theta, n_state, n_state)``
+        potential: NDArray[np.float64] - shape ``(n_r, n_theta, n_state, n_state)``
             for scalar R, or the same shape preceded by ``n_R`` for batched R
     """
     r_values = np.asarray(r, dtype=np.float64)
@@ -164,7 +164,7 @@ def get_DPEM_grid_atom_diatom(
 
     grids = np.meshgrid(r_values, theta_values, indexing="ij")
     coordinates = np.asfortranarray(np.stack(tuple(grid.reshape(-1) for grid in grids)))
-    return _evaluate_dpem(pes, R, coordinates, grids[0].shape)
+    return _evaluate_diabatic_matrix(pes, R, coordinates, grids[0].shape)
 
 
 # ----------------------------------------------------------------------------------------

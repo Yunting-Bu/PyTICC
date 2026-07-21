@@ -23,7 +23,7 @@ def test_channel_string_shows_quantum_numbers_and_energy() -> None:
 
     channel = ChannelBuilder(system, TruncSpec()).build()[0]
 
-    assert str(channel) == "Channel[0] X(v=-, j=0) Y(v=0, j=0) j_couple=0 K=0 Jtot=0 parity=+1 E_int=0.0000000000 a.u."
+    assert str(channel) == "Channel[0] X(v=-, j=0) Y(v=0, j=0) j_couple=0 K=0 Jtot=0 system_parity=+1 E_int=0.0000000000 a.u."
 
 
 def test_diatom_diatom_filters_K0_for_every_rotational_state() -> None:

@@ -5,15 +5,14 @@ import numpy as np
 from loguru import logger
 
 from pyticc.basis.dvr import RovibDVR, SineDVR, build_RovibDVR
-from pyticc.basis.monomer import DiatomSpec
+from pyticc.basis.monomer.diatom import DiatomSpec
 from pyticc.basis.podvr import RovibPODVR, build_RovibPODVR
 from pyticc.system import MolInnerState, MonomerType
 
 
-# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiabaticDiatomState:
-    """One diabatic electronic state's primitive, contracted, and selected diatomic bases."""
+    """One diabatic electronic state's primitive and contracted bases."""
 
     electronic_state: int
     dvr: SineDVR
@@ -40,22 +39,12 @@ class DiabaticDiatomState:
             raise ValueError(message)
 
 
-# ----------------------------------------------------------------------------------------
-
-
-# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiabaticDiatomBasis:
-    """
-    Diatomic bases for several diabatic electronic states on one primitive DVR grid.
-
-    All state energies use ``energy_reference`` as a common zero. State-specific
-    PODVR grids are retained for diagonal potential blocks, while the shared primitive
-    DVR grids and wavefunctions are retained for future off-diagonal contractions.
-    """
+    """Diatomic basis spanning several diabatic electronic states."""
 
     states: tuple[DiabaticDiatomState, ...]
-    energy_reference: float
+    energy_zero: float
     type = MonomerType.DIATOM
 
     def __post_init__(self) -> None:
@@ -63,11 +52,15 @@ class DiabaticDiatomBasis:
             message = "At least one diabatic electronic state is required"
             logger.error(message)
             raise ValueError(message)
+        if not np.isfinite(self.energy_zero):
+            message = f"energy_zero must be finite, but got {self.energy_zero}"
+            logger.error(message)
+            raise ValueError(message)
 
-        electronic_states = tuple(state.electronic_state for state in self.states)
-        expected_states = tuple(range(len(self.states)))
-        if electronic_states != expected_states:
-            message = f"electronic_state labels must be consecutive from zero, but got {electronic_states}"
+        labels = tuple(state.electronic_state for state in self.states)
+        expected = tuple(range(len(self.states)))
+        if labels != expected:
+            message = f"electronic_state labels must be consecutive from zero, but got {labels}"
             logger.error(message)
             raise ValueError(message)
 
@@ -103,7 +96,7 @@ class DiabaticDiatomBasis:
                 yield replace(inner_state, electronic_state=state.electronic_state)
 
     def energy(self, mis: MolInnerState, K: int) -> float:
-        """Return one electronic state's rovibrational threshold on the common energy zero."""
+        """Return one threshold relative to the common energy zero."""
         if mis.electronic_state is None:
             message = "Diabatic diatomic inner state requires electronic_state"
             logger.error(message)
@@ -111,16 +104,12 @@ class DiabaticDiatomBasis:
         return self.state(mis.electronic_state).spec.energy(mis, K)
 
     def allows_K(self, mis: MolInnerState, K: int) -> bool:
-        """Allow every helicity admitted by the coupled angular momentum."""
+        """Allow every helicity admitted by angular momentum coupling."""
         if mis.electronic_state is None:
             return False
         return self.state(mis.electronic_state).spec.allows_K(mis, K)
 
 
-# ----------------------------------------------------------------------------------------
-
-
-# ----------------------------------------------------------------------------------------
 def _per_state(value: int | Sequence[int], n_state: int, name: str) -> tuple[int, ...]:
     values = (value,) * n_state if isinstance(value, int) else tuple(value)
     if len(values) != n_state:
@@ -130,7 +119,6 @@ def _per_state(value: int | Sequence[int], n_state: int, name: str) -> tuple[int
     return values
 
 
-# ----------------------------------------------------------------------------------------
 def build_DiabaticDiatomBasis(
     dvrs: Sequence[SineDVR],
     *,
@@ -140,24 +128,9 @@ def build_DiabaticDiatomBasis(
     mass: float,
     vmin: int | Sequence[int] = 0,
     jpar: int | Sequence[int] = 0,
-    energy_reference: float | None = None,
+    energy_zero: float | None = None,
 ) -> DiabaticDiatomBasis:
-    """
-    Build state-specific PODVR bases with one shared asymptotic energy zero.
-
-    Inputs:
-        dvrs: Sequence[SineDVR] - one primitive sine-DVR solution per electronic state
-        n_podvr: int | Sequence[int] - retained PODVR size for each state
-        vmax: int | Sequence[int] - maximum vibrational quantum number for each state
-        jmax: int | Sequence[int] - maximum rotational quantum number for each state
-        mass: float - diatomic reduced mass in atomic units
-        vmin: int | Sequence[int] - minimum retained vibrational quantum number for each state
-        jpar: int | Sequence[int] - rotational parity selector for each state
-        energy_reference: float | None - common energy zero; defaults to state 0, v=0, j=0
-
-    Returns:
-        basis: DiabaticDiatomBasis - electronic-state bases sharing one primitive DVR grid
-    """
+    """Build state-specific diatomic bases with one common energy zero."""
     dvr_states = tuple(dvrs)
     if not dvr_states:
         message = "At least one primitive DVR state is required"
@@ -170,7 +143,6 @@ def build_DiabaticDiatomBasis(
     jmax_values = _per_state(jmax, n_state, "jmax")
     vmin_values = _per_state(vmin, n_state, "vmin")
     jpar_values = _per_state(jpar, n_state, "jpar")
-
     rovib_states = tuple(
         build_RovibPODVR(dvr, n_po, vmax_state, jmax_state, mass)
         for dvr, n_po, vmax_state, jmax_state in zip(dvr_states, n_podvr_values, vmax_values, jmax_values, strict=True)
@@ -178,9 +150,9 @@ def build_DiabaticDiatomBasis(
     primitive_states = tuple(
         build_RovibDVR(dvr, vmax_state, jmax_state, mass) for dvr, vmax_state, jmax_state in zip(dvr_states, vmax_values, jmax_values, strict=True)
     )
-    reference = float(rovib_states[0].E_vj[0, 0]) if energy_reference is None else float(energy_reference)
-    if not np.isfinite(reference):
-        message = f"energy_reference must be finite, but got {reference}"
+    zero = float(rovib_states[0].E_vj[0, 0]) if energy_zero is None else float(energy_zero)
+    if not np.isfinite(zero):
+        message = f"energy_zero must be finite, but got {zero}"
         logger.error(message)
         raise ValueError(message)
 
@@ -191,7 +163,7 @@ def build_DiabaticDiatomBasis(
             rovib=rovib,
             rovib_dvr=rovib_dvr,
             spec=DiatomSpec(
-                Eint=np.asarray(rovib.E_vj - reference, dtype=np.float64),
+                Eint=np.asarray(rovib.E_vj - zero, dtype=np.float64),
                 vmax=vmax_state,
                 jmax=jmax_state,
                 vmin=vmin_state,
@@ -202,10 +174,7 @@ def build_DiabaticDiatomBasis(
             zip(dvr_states, rovib_states, primitive_states, vmax_values, jmax_values, vmin_values, jpar_values, strict=True)
         )
     )
-    return DiabaticDiatomBasis(states=states, energy_reference=reference)
-
-
-# ----------------------------------------------------------------------------------------
+    return DiabaticDiatomBasis(states=states, energy_zero=zero)
 
 
 if __name__ == "__main__":
@@ -215,7 +184,7 @@ if __name__ == "__main__":
     from pyticc.constants import AU2CM
     from pyticc.pes import load_fortran_diabatic_pes
 
-    pes_dir = Path(__file__).resolve().parents[3] / "example" / "dia_HO2" / "pes"
+    pes_dir = Path(__file__).resolve().parents[4] / "example" / "dia_HO2" / "pes"
     oxygen_reduced_mass = 15.99492 * 1822.88853 / 2.0
     pes = load_fortran_diabatic_pes(
         [pes_dir / "ho2-dpme.f", pes_dir / "long_range_H_O2.f"],
@@ -223,16 +192,7 @@ if __name__ == "__main__":
         workdir=pes_dir,
     )
     try:
-        ho2_dvrs = tuple(
-            build_SineDVR(
-                1.2,
-                5.0,
-                135,
-                oxygen_reduced_mass,
-                pes.monomer_state(electronic_state),
-            )
-            for electronic_state in range(2)
-        )
+        ho2_dvrs = tuple(build_SineDVR(1.2, 5.0, 135, oxygen_reduced_mass, pes.monomer_state(state)) for state in range(2))
         ho2_basis = build_DiabaticDiatomBasis(
             ho2_dvrs,
             n_podvr=80,
@@ -241,12 +201,11 @@ if __name__ == "__main__":
             mass=oxygen_reduced_mass,
             jpar=(-1, 1),
         )
-
         labels = ("D0", "state 1: v=0, j=1", "state 1: v=0, j=3", "state 2: v=0, j=0", "state 2: v=0, j=2")
         calculated = (
             np.array(
                 [
-                    ho2_basis.energy_reference,
+                    ho2_basis.energy_zero,
                     ho2_basis.state(0).spec.Eint[0, 1],
                     ho2_basis.state(0).spec.Eint[0, 3],
                     ho2_basis.state(1).spec.Eint[0, 0],

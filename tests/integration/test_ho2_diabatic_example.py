@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 
 import pyticc.pes.fortran.compiler as compiler_module
-from pyticc import (
+from pyticc.pes import (
     DiabaticPESWrapper,
-    get_DPEM_grid_atom_diatom,
+    get_diabatic_potential_grid_atom_diatom,
     load_fortran_diabatic_pes,
 )
 
@@ -75,8 +75,8 @@ def test_ho2_adapter_initializes_independently_in_worker_processes(ho2_pes: Diab
         processes=2,
     )
     try:
-        actual = get_DPEM_grid_atom_diatom(parallel_pes, radial_points, r_oo, theta)
-        expected = np.stack([get_DPEM_grid_atom_diatom(ho2_pes, R, r_oo, theta) for R in radial_points])
+        actual = get_diabatic_potential_grid_atom_diatom(parallel_pes, radial_points, r_oo, theta)
+        expected = np.stack([get_diabatic_potential_grid_atom_diatom(ho2_pes, R, r_oo, theta) for R in radial_points])
         np.testing.assert_allclose(actual, expected, atol=1.0e-13)
     finally:
         parallel_pes.close()

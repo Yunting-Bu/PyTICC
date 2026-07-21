@@ -3,9 +3,8 @@ import pytest
 from numpy.typing import NDArray
 
 from pyticc.basis.channel import ChannelBuilder, TruncSpec
-from pyticc.basis.diabatic import build_DiabaticDiatomBasis
 from pyticc.basis.dvr import SineDVR, build_SineDVR
-from pyticc.basis.monomer import AtomSpec
+from pyticc.basis.monomer import AtomSpec, build_DiabaticDiatomBasis
 from pyticc.system import ScattSystem
 
 
@@ -67,7 +66,7 @@ def test_diabatic_basis_retains_orthonormal_primitive_dvr_rovibrational_states()
         np.testing.assert_allclose(state.rovib_dvr.WF_vj[:, :, 0], state.dvr.eigen_vec[:, : state.rovib.E_vj.shape[0]], atol=1.0e-12)
 
 
-def test_diabatic_basis_accepts_an_explicit_common_energy_reference() -> None:
+def test_diabatic_basis_accepts_an_explicit_energy_zero() -> None:
     reference = 0.125
     basis = build_DiabaticDiatomBasis(
         _dvrs(),
@@ -75,10 +74,10 @@ def test_diabatic_basis_accepts_an_explicit_common_energy_reference() -> None:
         vmax=0,
         jmax=0,
         mass=1000.0,
-        energy_reference=reference,
+        energy_zero=reference,
     )
 
-    assert basis.energy_reference == reference
+    assert basis.energy_zero == reference
     for state in basis.states:
         np.testing.assert_allclose(state.spec.Eint, state.rovib.E_vj - reference)
 
@@ -123,6 +122,6 @@ def test_diabatic_basis_validates_per_state_inputs() -> None:
         basis.state(-1)
 
 
-def test_diabatic_basis_rejects_nonfinite_energy_reference() -> None:
-    with pytest.raises(ValueError, match="energy_reference must be finite"):
-        build_DiabaticDiatomBasis(_dvrs(), n_podvr=5, vmax=0, jmax=0, mass=1000.0, energy_reference=np.nan)
+def test_diabatic_basis_rejects_nonfinite_energy_zero() -> None:
+    with pytest.raises(ValueError, match="energy_zero must be finite"):
+        build_DiabaticDiatomBasis(_dvrs(), n_podvr=5, vmax=0, jmax=0, mass=1000.0, energy_zero=np.nan)

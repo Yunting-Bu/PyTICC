@@ -1,15 +1,19 @@
 from pathlib import Path
 
 import numpy as np
+from loguru import logger
 
 import pyticc as ticc
+from pyticc.basis.channel import ChannelBuilder
+from pyticc.basis.monomer import DiatomSpec
+from pyticc.propagation import propagate_BF
 
 
 def _basis() -> ticc.ChannelBasis:
     atom = ticc.AtomSpec()
-    diatom = ticc.DiatomSpec(Eint=np.array([[0.0, 0.2]]), vmax=0, jmax=1)
+    diatom = DiatomSpec(Eint=np.array([[0.0, 0.2]]), vmax=0, jmax=1)
     system = ticc.ScattSystem(atom, diatom, Jtot=0, system_parity=1)
-    return ticc.ChannelBuilder(system, ticc.TruncSpec()).build()
+    return ChannelBuilder(system, ticc.TruncSpec()).build()
 
 
 def test_propagate_BF_builds_radial_matrices_and_caches_shared_points() -> None:
@@ -20,7 +24,7 @@ def test_propagate_BF_builds_radial_matrices_and_caches_shared_points() -> None:
         evaluated_R.append(RR)
         return np.zeros((basis.n_channel, basis.n_channel))
 
-    result = ticc.propagate_BF(
+    result = propagate_BF(
         basis=basis,
         Vmat=Vmat,
         Etot=[0.1, 0.3],
@@ -38,7 +42,7 @@ def test_propagate_BF_reads_energies_from_file_and_supports_capture(tmp_path: Pa
     energy_file = tmp_path / "energies.dat"
     np.savetxt(energy_file, [0.1, 0.3])
 
-    result = ticc.propagate_BF(
+    result = propagate_BF(
         basis=basis,
         Vmat=lambda RR: np.zeros((basis.n_channel, basis.n_channel)),
         Etot=energy_file,
@@ -62,7 +66,7 @@ def test_propagate_BF_batches_distinct_radial_points() -> None:
         evaluated_R.append(radial_points)
         return np.zeros((radial_points.size, basis.n_channel, basis.n_channel))
 
-    result = ticc.propagate_BF(
+    result = propagate_BF(
         basis=basis,
         Vmat=Vmat,
         Etot=[0.3],
@@ -86,7 +90,7 @@ def test_propagate_BF_streams_small_windows_without_repeating_endpoints() -> Non
         evaluated_R.append(radial_points.copy())
         return np.zeros((radial_points.size, basis.n_channel, basis.n_channel))
 
-    streamed = ticc.propagate_BF(
+    streamed = propagate_BF(
         basis=basis,
         Vmat=Vmat,
         Etot=[0.3],
@@ -96,7 +100,7 @@ def test_propagate_BF_streams_small_windows_without_repeating_endpoints() -> Non
         batch_Vmat=True,
         memory_limit_mb=1.0e-6,
     )
-    full = ticc.propagate_BF(
+    full = propagate_BF(
         basis=basis,
         Vmat=lambda RR: np.zeros((np.asarray(RR).size, basis.n_channel, basis.n_channel)),
         Etot=[0.3],
@@ -116,7 +120,7 @@ def test_propagate_BF_selects_one_nncc_block() -> None:
     basis = _basis()
     indices = (1,)
 
-    result = ticc.propagate_BF(
+    result = propagate_BF(
         basis=basis,
         Vmat=lambda RR: np.zeros((1, 1)),
         Etot=[0.3],
@@ -127,3 +131,24 @@ def test_propagate_BF_selects_one_nncc_block() -> None:
     )
 
     assert result.shape == (1, 1, 1)
+
+
+def test_propagate_BF_logs_completed_sector_count_radius_and_wall_time() -> None:
+    basis = _basis()
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(message.record["message"]), level="INFO")
+    try:
+        propagate_BF(
+            basis=basis,
+            Vmat=lambda RR: np.zeros((basis.n_channel, basis.n_channel)),
+            Etot=[0.3],
+            reduced_mass=2.0,
+            radial_boundaries=[3.0, 3.4],
+            radial_half_steps=[0.1],
+            progress_every_sectors=0,
+        )
+    finally:
+        logger.remove(sink)
+
+    assert any("Propagation started" in message and "sectors=2" in message for message in messages)
+    assert any("Propagation: 2/2 sectors" in message and "R=3.400000 bohr" in message and "wall=" in message for message in messages)

@@ -68,7 +68,7 @@ def load_fortran_diabatic_pes(
         processes: int - worker processes used for batched radial evaluation
 
     Returns:
-        pes: DiabaticPESWrapper - compiled monomer potentials and interaction DPEM
+        pes: DiabaticPESWrapper - compiled monomer potentials and diabatic interaction matrix
     """
     if n_state < 1:
         message = f"n_state must be positive, but got {n_state}"

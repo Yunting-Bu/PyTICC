@@ -42,7 +42,7 @@ class KBlock:
 
 
 # ----------------------------------------------------------------------------------------
-def build_cs_blocks(channels: Sequence[Channel]) -> list[KBlock]:
+def build_cs_blocks(channels: Sequence[Channel]) -> tuple[KBlock, ...]:
     """
     Build independent single-K propagation blocks for the coupled-states approximation.
 
@@ -50,7 +50,7 @@ def build_cs_blocks(channels: Sequence[Channel]) -> list[KBlock]:
         channels: Sequence[Channel] - complete field-free channel basis
 
     Returns:
-        blocks: list[KBlock] - one propagation block for each retained K
+        blocks: tuple[KBlock, ...] - one propagation block for each retained K
     """
     K_values = sorted({channel.K for channel in channels})
     blocks: list[KBlock] = []
@@ -67,14 +67,14 @@ def build_cs_blocks(channels: Sequence[Channel]) -> list[KBlock]:
                 owned_channel_indices=channel_indices,
             )
         )
-    return blocks
+    return tuple(blocks)
 
 
 # ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------
-def build_nncc_blocks(channels: Sequence[Channel], K_delta: int = 1) -> list[KBlock]:
+def build_nncc_blocks(channels: Sequence[Channel], K_delta: int = 1) -> tuple[KBlock, ...]:
     """
     Build overlapping NNCC propagation blocks from a complete channel basis.
 
@@ -83,14 +83,14 @@ def build_nncc_blocks(channels: Sequence[Channel], K_delta: int = 1) -> list[KBl
         K_delta: int - number of neighboring K blocks included on each side
 
     Returns:
-        blocks: list[KBlock] - NNCC propagation blocks
+        blocks: tuple[KBlock, ...] - NNCC propagation blocks
     """
     if K_delta < 1:
         message = f"NNCC requires K_delta >= 1, but got K_delta={K_delta}"
         logger.error(message)
         raise ValueError(message)
     if not channels:
-        return []
+        return ()
 
     Kmin = min(channel.K for channel in channels)
     Kmax = max(channel.K for channel in channels)
@@ -134,35 +134,4 @@ def build_nncc_blocks(channels: Sequence[Channel], K_delta: int = 1) -> list[KBl
             )
         )
 
-    return blocks
-
-
-# ----------------------------------------------------------------------------------------
-if __name__ == "__main__":
-    import numpy as np
-
-    from pyticc.basis.channel import ChannelBuilder, TruncSpec
-    from pyticc.basis.monomer import AtomSpec, DiatomSpec
-    from pyticc.system import Approx, ScattSystem
-
-    atom = AtomSpec()
-    diatom = DiatomSpec(Eint=np.zeros((1, 7)), vmax=0, jmax=6)
-    system = ScattSystem(
-        monomer_X=atom,
-        monomer_Y=diatom,
-        Jtot=6,
-        system_parity=1,
-        approx=Approx.NNCC,
-    )
-    channels = ChannelBuilder(system, TruncSpec()).build()
-
-    for K_delta in (1, 2):
-        print(f"Test case: NNCC with K_delta={K_delta}")
-        K_blocks = build_nncc_blocks(channels, K_delta)
-        for K_block in K_blocks:
-            print(K_block)
-
-        owned_indices = sorted(index for K_block in K_blocks for index in K_block.owned_channel_indices)
-        assert owned_indices == list(range(len(channels)))
-        assert all(set(K_block.owned_channel_indices) <= set(K_block.channel_indices) for K_block in K_blocks)
-        print()
+    return tuple(blocks)

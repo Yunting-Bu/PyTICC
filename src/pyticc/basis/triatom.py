@@ -338,7 +338,7 @@ def build_TriatomBasis(
     tmax: int,
     parity_block_sign: int,
     exchange_parity: int = 0,
-    energy_reference: float | None = None,
+    energy_zero: float | None = None,
     matching_tolerance: float = 1.0e-8,
 ) -> TriatomBasis:
     r"""
@@ -365,7 +365,7 @@ def build_TriatomBasis(
         tmax: int - maximum retained contracted-state index
         parity_block_sign: int - epsilon*(-1)^J for the K=0 basis
         exchange_parity: int - A2B exchange parity, or 0 for ABC
-        energy_reference: float | None - energy subtracted from every level; lowest level when None
+        energy_zero: float | None - energy subtracted from every level; lowest level when None
         matching_tolerance: float - maximum K=0/K=1 matching error in atomic units
 
     Returns:
@@ -440,7 +440,7 @@ def build_TriatomBasis(
         logger.info(f"Solved triatomic eigenstates for j={j2}")
 
     finite = np.isfinite(Eint)
-    shift = ground_energy if energy_reference is None else float(energy_reference)
+    shift = ground_energy if energy_zero is None else float(energy_zero)
     if shift is None:
         message = "Could not determine the triatomic reference energy"
         logger.error(message)

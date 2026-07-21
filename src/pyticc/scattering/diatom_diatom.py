@@ -1,93 +1,49 @@
 from collections.abc import Sequence
 from math import prod
-from typing import Literal
 
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+import pyticc.matrix.interaction.diatom_diatom as vmat
 from pyticc.basis.angle import gauss_legendre_dvr
 from pyticc.basis.channel import ChannelBuilder, TruncSpec
-from pyticc.basis.monomer import DiatomSpec
-from pyticc.basis.podvr import RovibPODVR
-from pyticc.energy import EnergyInput, get_Etot
-from pyticc.match.finalize import finalize_scattering
-from pyticc.matrix.interaction import get_Vmat_BF, prepare_Vmat_BF_diatom_diatom
+from pyticc.basis.monomer import DiatomBasis
+from pyticc.matrix.interaction import contract
 from pyticc.pes.wrapper import PESWrapper, get_Vgrid_diatom_diatom
-from pyticc.propagation.runner import propagate_BF
-from pyticc.result import CoupledStatesResult, ScatteringResult
-from pyticc.scattering.coupled_states import run_coupled_states_BF
-from pyticc.system import Approx, ScattSystem
+from pyticc.scattering.hamiltonian import ScattHamiltonian
+from pyticc.system import ScattSystem
 
 
 # ----------------------------------------------------------------------------------------
-def run_diatom_diatom(
-    diatom_X: DiatomSpec,
-    rovib_X: RovibPODVR,
-    diatom_Y: DiatomSpec,
-    rovib_Y: RovibPODVR,
-    pes: PESWrapper,
+def build_hamiltonian(
+    system: ScattSystem,
     *,
-    Jtot: int,
-    system_parity: int,
-    Etot: EnergyInput,
-    reduced_mass: float,
-    radial_boundaries: Sequence[float],
-    radial_half_steps: Sequence[float],
     trunc: TruncSpec | None = None,
     n_theta_X: int = 15,
     n_theta_Y: int = 15,
     n_phi: int = 12,
-    mode: Literal["inelastic", "capture"] = "inelastic",
-    approx: Approx = Approx.EXACT,
-    K_delta: int = 1,
-    memory_limit_mb: float = 512.0,
-) -> ScatteringResult | CoupledStatesResult:
-    """
-    Run one field-free diatom-diatom scattering block from channels through matching.
+) -> ScattHamiltonian:
+    """Build a diatom-diatom scattering Hamiltonian."""
+    if not isinstance(system.monomer_X, DiatomBasis) or not isinstance(system.monomer_Y, DiatomBasis):
+        message = "Diatom-diatom Hamiltonian requires two DiatomBasis monomers"
+        logger.error(message)
+        raise TypeError(message)
+    if not isinstance(system.potential, PESWrapper):
+        message = "Diatom-diatom Hamiltonian requires a PESWrapper"
+        logger.error(message)
+        raise TypeError(message)
 
-    Both monomer internal-energy arrays and ``Etot`` must use the same energy zero.
-    Angular quadrature, interaction matrices, propagation, the BF-to-SF transformation,
-    and asymptotic matching are handled internally.
-
-    Inputs:
-        diatom_X: DiatomSpec - first diatom states and internal energies
-        rovib_X: RovibPODVR - first diatom PODVR grids and wavefunctions
-        diatom_Y: DiatomSpec - second diatom states and internal energies
-        rovib_Y: RovibPODVR - second diatom PODVR grids and wavefunctions
-        pes: PESWrapper - monomer and interaction potential interfaces
-        Jtot: int - total angular momentum
-        system_parity: int - field-free parity block, -1 or 1
-        Etot: EnergyInput - total energies with shape (n_energy,) in atomic units,
-            or a one-column text file
-        reduced_mass: float - diatom-diatom collision reduced mass in atomic units
-        radial_boundaries: Sequence[float] - radial interval boundaries with shape
-            (n_interval + 1,) in atomic units
-        radial_half_steps: Sequence[float] - nominal LDMD half-step for each radial
-            interval, shape (n_interval,)
-        trunc: TruncSpec | None - channel-energy and helicity truncations
-        n_theta_X: int - Gauss-Legendre points for the first polar angle
-        n_theta_Y: int - Gauss-Legendre points for the second polar angle
-        n_phi: int - Gauss-Legendre points for the dihedral angle on [0, pi]
-        mode: Literal["inelastic", "capture"] - inner-boundary condition
-        approx: Approx - exact CC, CS, or NNCC propagation
-        K_delta: int - neighboring K range retained on each side in NNCC
-        memory_limit_mb: float - target transient-memory limit in MiB
-
-    Returns:
-        result: ScatteringResult | CoupledStatesResult - exact result containing
-            log-derivative arrays of shape (n_energy, n_channel, n_channel), or
-            separated CS/NNCC block arrays with their corresponding block dimensions
-    """
-    energies = get_Etot(Etot)
-    system = ScattSystem(diatom_X, diatom_Y, Jtot=Jtot, system_parity=system_parity, approx=approx)
+    pes = system.potential
+    rovib_X = system.monomer_X.rovib
+    rovib_Y = system.monomer_Y.rovib
     basis = ChannelBuilder(system, TruncSpec() if trunc is None else trunc).build()
     cos_theta_X, theta_weights_X = gauss_legendre_dvr(-1.0, 1.0, n_theta_X)
     cos_theta_Y, theta_weights_Y = gauss_legendre_dvr(-1.0, 1.0, n_theta_Y)
     phi, phi_weights = gauss_legendre_dvr(0.0, np.pi, n_phi)
     theta_X = np.arccos(cos_theta_X)
     theta_Y = np.arccos(cos_theta_Y)
-    V_basis = prepare_Vmat_BF_diatom_diatom(
+    V_basis = vmat.prepare(
         basis,
         rovib_X,
         rovib_Y,
@@ -100,40 +56,25 @@ def run_diatom_diatom(
     )
 
     def Vgrid(radial_points: float | Sequence[float] | NDArray[np.float64]) -> NDArray[np.float64]:
-        """Evaluate PES grids, returning (*grid_shape,) or (n_R, *grid_shape)."""
+        """Evaluate the diatom-diatom PES grid."""
         return get_Vgrid_diatom_diatom(pes, radial_points, rovib_X.grids, rovib_Y.grids, theta_X, theta_Y, phi)
 
     def Vmat(radial_points: float | Sequence[float] | NDArray[np.float64]) -> NDArray[np.float64]:
-        """Contract PES grids into shape (n_channel, n_channel), optionally preceded by n_R."""
-        return get_Vmat_BF(V_basis, Vgrid(radial_points))
+        """Contract the PES grid into the channel basis."""
+        return contract(V_basis, Vgrid(radial_points))
 
-    message = f"Running diatom-diatom block J={Jtot}, parity={system_parity:+d}, channels={basis.n_channel}, energies={energies.size}"
-    logger.info(message)
-    if approx is not Approx.EXACT:
-        return run_coupled_states_BF(
-            basis=basis,
-            V_basis=V_basis,
-            Vgrid=Vgrid,
-            Etot=energies,
-            reduced_mass=reduced_mass,
-            radial_boundaries=radial_boundaries,
-            radial_half_steps=radial_half_steps,
-            approx=approx,
-            K_delta=K_delta,
-            mode=mode,
-            memory_limit_mb=memory_limit_mb,
-        )
+    def V_blocks(
+        radial_points: NDArray[np.float64],
+        channel_blocks: tuple[tuple[int, ...], ...],
+    ) -> tuple[NDArray[np.float64], ...]:
+        """Contract one shared PES grid into several channel blocks."""
+        potential_grid = Vgrid(radial_points)
+        return tuple(contract(V_basis, potential_grid, indices) for indices in channel_blocks)
 
-    Y_BF = propagate_BF(
+    return ScattHamiltonian(
+        system=system,
         basis=basis,
-        Vmat=Vmat,
-        Etot=energies,
-        reduced_mass=reduced_mass,
-        radial_boundaries=radial_boundaries,
-        radial_half_steps=radial_half_steps,
-        mode=mode,
-        batch_Vmat=True,
-        memory_limit_mb=memory_limit_mb,
+        interaction=Vmat,
+        block_interaction=V_blocks,
         potential_grid_size=prod(V_basis.grid_shape),
     )
-    return finalize_scattering(basis, np.asarray(Y_BF), energies, reduced_mass, float(radial_boundaries[-1]))

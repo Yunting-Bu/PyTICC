@@ -1,82 +1,42 @@
 from collections.abc import Sequence
 from math import prod
-from typing import Literal
 
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+import pyticc.matrix.interaction.atom_triatom as vmat
 from pyticc.basis.angle import gauss_legendre_dvr
 from pyticc.basis.channel import ChannelBuilder, TruncSpec
 from pyticc.basis.monomer import AtomSpec
 from pyticc.basis.triatom import TriatomBasis
-from pyticc.energy import EnergyInput, get_Etot
-from pyticc.match.finalize import finalize_scattering
-from pyticc.matrix.atom_triatom import prepare_Vmat_BF_atom_triatom
-from pyticc.matrix.interaction import get_Vmat_BF
+from pyticc.matrix.interaction import contract
 from pyticc.pes.wrapper import PESWrapper, get_Vgrid_atom_triatom
-from pyticc.propagation.runner import propagate_BF
-from pyticc.result import CoupledStatesResult, ScatteringResult
-from pyticc.scattering.coupled_states import run_coupled_states_BF
-from pyticc.system import Approx, ScattSystem
+from pyticc.scattering.hamiltonian import ScattHamiltonian
+from pyticc.system import ScattSystem
 
 
 # ----------------------------------------------------------------------------------------
-def run_atom_triatom(
-    triatom: TriatomBasis,
-    pes: PESWrapper,
+def build_hamiltonian(
+    system: ScattSystem,
     *,
-    Jtot: int,
-    system_parity: int,
-    Etot: EnergyInput,
-    reduced_mass: float,
-    radial_boundaries: Sequence[float],
-    radial_half_steps: Sequence[float],
     trunc: TruncSpec | None = None,
     n_theta_1: int | None = None,
     n_theta_2: int = 16,
     n_phi: int = 16,
-    mode: Literal["inelastic", "capture"] = "inelastic",
-    approx: Approx = Approx.EXACT,
-    K_delta: int = 1,
-    memory_limit_mb: float = 512.0,
-) -> ScatteringResult | CoupledStatesResult:
-    """
-    Run one field-free atom-triatom scattering block from channels through matching.
+) -> ScattHamiltonian:
+    """Build an atom-triatom scattering Hamiltonian."""
+    if not isinstance(system.monomer_X, AtomSpec) or not isinstance(system.monomer_Y, TriatomBasis):
+        message = "Atom-triatom Hamiltonian requires AtomSpec as monomer_X and TriatomBasis as monomer_Y"
+        logger.error(message)
+        raise TypeError(message)
+    if not isinstance(system.potential, PESWrapper):
+        message = "Atom-triatom Hamiltonian requires a PESWrapper"
+        logger.error(message)
+        raise TypeError(message)
 
-    ``triatom`` must have been solved for the same value of
-    ``system_parity * (-1)**Jtot``. By default, the interaction integral reuses its
-    monomer bending quadrature; ``n_theta_1`` may request a separate quadrature.
-
-    Inputs:
-        triatom: TriatomBasis - contracted triatomic eigenstates and PODVR data
-        pes: PESWrapper - atom-triatom interaction potential interface
-        Jtot: int - total angular momentum
-        system_parity: int - field-free parity block, -1 or 1
-        Etot: EnergyInput - total energies with shape (n_energy,) in atomic units,
-            or a one-column text file
-        reduced_mass: float - atom-triatom collision reduced mass in atomic units
-        radial_boundaries: Sequence[float] - radial interval boundaries with shape
-            (n_interval + 1,) in atomic units
-        radial_half_steps: Sequence[float] - nominal LDMD half-step for each radial
-            interval, shape (n_interval,)
-        trunc: TruncSpec | None - channel-energy and helicity truncations
-        n_theta_1: int | None - optional interaction quadrature size for the
-            triatomic bend; None reuses the monomer quadrature
-        n_theta_2: int - Gauss-Legendre points for the external polar angle
-        n_phi: int - Gauss-Legendre points for the dihedral angle on [0, pi]
-        mode: Literal["inelastic", "capture"] - inner-boundary condition
-        approx: Approx - exact CC, CS, or NNCC propagation
-        K_delta: int - neighboring K range retained on each side in NNCC
-        memory_limit_mb: float - target transient-memory limit in MiB
-
-    Returns:
-        result: ScatteringResult | CoupledStatesResult - exact result containing
-            arrays with shape (n_energy, n_channel, n_channel), or separated
-            CS/NNCC block arrays with their corresponding block dimensions
-    """
-    energies = get_Etot(Etot)
-    system = ScattSystem(AtomSpec(), triatom, Jtot=Jtot, system_parity=system_parity, approx=approx)
+    triatom = system.monomer_Y
+    pes = system.potential
     basis = ChannelBuilder(system, TruncSpec() if trunc is None else trunc).build()
 
     if n_theta_1 is None:
@@ -93,7 +53,7 @@ def run_atom_triatom(
     phi, phi_weights = gauss_legendre_dvr(0.0, np.pi, n_phi)
     theta_1 = np.arccos(cos_theta_1)
     theta_2 = np.arccos(cos_theta_2)
-    V_basis = prepare_Vmat_BF_atom_triatom(
+    V_basis = vmat.prepare(
         basis,
         triatom,
         cos_theta_1,
@@ -112,48 +72,25 @@ def run_atom_triatom(
         raise ValueError(message)
 
     def Vgrid(radial_points: float | Sequence[float] | NDArray[np.float64]) -> NDArray[np.float64]:
-        """Evaluate PES grids, returning (*grid_shape,) or (n_R, *grid_shape)."""
-        return get_Vgrid_atom_triatom(
-            pes,
-            radial_points,
-            radial_1.grids,
-            radial_2.grids,
-            theta_1,
-            theta_2,
-            phi,
-        )
+        """Evaluate the atom-triatom PES grid."""
+        return get_Vgrid_atom_triatom(pes, radial_points, radial_1.grids, radial_2.grids, theta_1, theta_2, phi)
 
     def Vmat(radial_points: float | Sequence[float] | NDArray[np.float64]) -> NDArray[np.float64]:
-        """Contract PES grids into shape (n_channel, n_channel), optionally preceded by n_R."""
-        return get_Vmat_BF(V_basis, Vgrid(radial_points))
+        """Contract the PES grid into the channel basis."""
+        return contract(V_basis, Vgrid(radial_points))
 
-    message = f"Running atom-triatom block Jtot={Jtot}, parity={system_parity:+d}, channels={basis.n_channel}, energies={energies.size}"
-    logger.info(message)
-    if approx is not Approx.EXACT:
-        return run_coupled_states_BF(
-            basis=basis,
-            V_basis=V_basis,
-            Vgrid=Vgrid,
-            Etot=energies,
-            reduced_mass=reduced_mass,
-            radial_boundaries=radial_boundaries,
-            radial_half_steps=radial_half_steps,
-            approx=approx,
-            K_delta=K_delta,
-            mode=mode,
-            memory_limit_mb=memory_limit_mb,
-        )
+    def V_blocks(
+        radial_points: NDArray[np.float64],
+        channel_blocks: tuple[tuple[int, ...], ...],
+    ) -> tuple[NDArray[np.float64], ...]:
+        """Contract one shared PES grid into several channel blocks."""
+        potential_grid = Vgrid(radial_points)
+        return tuple(contract(V_basis, potential_grid, indices) for indices in channel_blocks)
 
-    Y_BF = propagate_BF(
+    return ScattHamiltonian(
+        system=system,
         basis=basis,
-        Vmat=Vmat,
-        Etot=energies,
-        reduced_mass=reduced_mass,
-        radial_boundaries=radial_boundaries,
-        radial_half_steps=radial_half_steps,
-        mode=mode,
-        batch_Vmat=True,
-        memory_limit_mb=memory_limit_mb,
+        interaction=Vmat,
+        block_interaction=V_blocks,
         potential_grid_size=prod(V_basis.grid_shape),
     )
-    return finalize_scattering(basis, np.asarray(Y_BF), energies, reduced_mass, float(radial_boundaries[-1]))

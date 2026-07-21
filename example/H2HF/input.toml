@@ -3,8 +3,8 @@
 type = "diatom-diatom"
 diatom_X = ["H", "H"]
 diatom_Y = ["H", "F"]
-J = 0
-parity = 1
+Jtot = 0
+system_parity = 1
 energies_cm = [100.0, 300.0, 500.0]
 
 [approximation]

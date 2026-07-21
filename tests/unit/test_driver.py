@@ -13,8 +13,8 @@ def test_run_reads_compact_atom_diatom_input(tmp_path: Path) -> None:
 type = "atom-diatom"
 atom = "Ar"
 diatom = ["H", "F"]
-J = 1
-parity = -1
+Jtot = 1
+system_parity = -1
 energies_cm = "energies.dat"
 
 [approximation]
@@ -57,6 +57,65 @@ mode = "inelastic"
     assert result.Etot.shape == (2,)
     np.testing.assert_allclose(result.Etot * ticc.AU2CM, [100.0, 200.0])
     assert len(result.blocks) == 2
+    assert result.timing is not None
+    assert result.timing.wall_seconds >= 0.0
+    assert result.timing.cpu_seconds >= 0.0
+
+
+def test_run_reads_diabatic_atom_diatom_input(tmp_path: Path) -> None:
+    input_file = tmp_path / "input.toml"
+    input_file.write_text(
+        """
+type = "diabatic-atom-diatom"
+atom = "H"
+diatom = ["O", "O"]
+Jtot = 0
+system_parity = 1
+energies_cm = [100.0]
+
+[approximation]
+method = "exact"
+
+[basis]
+r = [1.2, 5.0]
+n_dvr = 20
+n_podvr = [1, 1]
+vmin = [0, 0]
+vmax = [0, 0]
+jmax = [0, 0]
+jpar = [1, 1]
+
+[quadrature]
+n_theta = 3
+
+[truncation]
+E_Y_cut_cm = 1000.0
+K_cut = "none"
+
+[propagation]
+radial_boundaries = [3.0, 3.2]
+radial_half_steps = [0.1]
+mode = "inelastic"
+""",
+        encoding="utf-8",
+    )
+
+    def monomer(r: np.ndarray) -> np.ndarray:
+        return np.zeros((r.size, 2))
+
+    def interaction(RR: float, coordinates: np.ndarray) -> np.ndarray:
+        return np.zeros((coordinates.shape[1], 2, 2))
+
+    result = ticc.run(
+        input_file,
+        pes=ticc.DiabaticPESWrapper(n_state=2, monomer=monomer, interaction=interaction),
+    )
+
+    assert isinstance(result, ticc.ScatteringResult)
+    assert result.basis.n_channel == 2
+    assert {channel.mis_Y.electronic_state for channel in result.basis} == {0, 1}
+    np.testing.assert_allclose(result.Etot * ticc.AU2CM, [100.0])
+    np.testing.assert_allclose(result.Smat[0].conj().T @ result.Smat[0], np.eye(2), atol=1.0e-12)
 
 
 def test_run_reads_diatom_diatom_input(tmp_path: Path) -> None:
@@ -66,8 +125,8 @@ def test_run_reads_diatom_diatom_input(tmp_path: Path) -> None:
 type = "diatom-diatom"
 diatom_X = ["H", "H"]
 diatom_Y = ["H", "F"]
-J = 0
-parity = 1
+Jtot = 0
+system_parity = 1
 energies_cm = [100.0]
 
 [approximation]

@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 
 import pyticc as ticc
+from pyticc.scattering import atom_diatom
 
 
 def main() -> None:
@@ -38,27 +39,43 @@ def main() -> None:
         mass=reduced_mass_HF,
     )
 
-    Eint_HF = rovib_HF.E_vj - rovib_HF.E_vj[0, 0]
-    diatom_HF = ticc.DiatomSpec(Eint=Eint_HF, vmax=0, jmax=4)
+    diatom_HF = ticc.DiatomBasis(
+        rovib=rovib_HF,
+        energy_zero=float(rovib_HF.E_vj[0, 0]),
+        vmax=0,
+        jmax=4,
+    )
     total_energies = np.array([100.0, 300.0, 500.0]) * ticc.CM2AU
 
-    result = ticc.run_atom_diatom(
+    system = ticc.ScattSystem(
+        ticc.AtomSpec(),
         diatom_HF,
-        rovib_HF,
-        pes,
         Jtot=0,
         system_parity=1,
-        Etot=total_energies,
+        potential=pes,
         reduced_mass=reduced_mass_ArHF,
-        radial_boundaries=[4.5, 6.5, 8.0, 12.0],
-        radial_half_steps=[0.05, 0.08, 0.10],
+    )
+    hamiltonian = atom_diatom.build_hamiltonian(
+        system,
         trunc=ticc.TruncSpec(E_Y_cut=2000.0 * ticc.CM2AU, K_cut=None),
         n_theta=35,
-        mode="inelastic",
-        approx=ticc.Approx.EXACT,
-        memory_limit_mb=512.0,
     )
-    result.print_summary()
+    result = ticc.solve(
+        hamiltonian,
+        total_energies,
+        ticc.Propagation(
+            boundaries=(4.5, 6.5, 8.0, 12.0),
+            half_steps=(0.05, 0.08, 0.10),
+        ),
+    )
+    print("\nChannels:")
+    print(ticc.report.channels(hamiltonian.basis))
+    print("\nOpen/closed channels: ")
+    print(ticc.report.open_closed(result.basis, result.Etot))
+    print("\nEvj: ")
+    print(ticc.report.rovib_levels(diatom_HF))
+    print("\nS-matrix: ")
+    print(ticc.report.smatrix(result))
 
 
 if __name__ == "__main__":

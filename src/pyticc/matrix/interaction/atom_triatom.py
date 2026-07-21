@@ -1,3 +1,5 @@
+"""Atom-triatom interaction-matrix basis."""
+
 from math import prod
 from typing import cast
 
@@ -78,7 +80,7 @@ def _triatom_grid_wavefunction(
 
 
 # ----------------------------------------------------------------------------------------
-def prepare_Vmat_BF_atom_triatom(
+def prepare(
     basis: ChannelBasis,
     triatom: TriatomBasis,
     cos_theta_1: NDArray[np.float64],

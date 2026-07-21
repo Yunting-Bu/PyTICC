@@ -2,14 +2,15 @@ import numpy as np
 from scipy.special import roots_legendre
 
 import pyticc as ticc
+import pyticc.matrix.interaction.atom_triatom as vmat
 from pyticc.basis.angle import norm_reduced_wigner_d
 from pyticc.basis.channel import ChannelBuilder, TruncSpec
 from pyticc.basis.monomer import AtomSpec
 from pyticc.basis.podvr import VibPODVR
 from pyticc.basis.triatom import TriatomBasis, TriatomBlock
-from pyticc.matrix.atom_triatom import prepare_Vmat_BF_atom_triatom
-from pyticc.matrix.interaction import get_Vmat_BF
+from pyticc.matrix.interaction import contract
 from pyticc.pes.wrapper import PESWrapper, get_Vgrid_atom_triatom
+from pyticc.scattering import atom_triatom
 from pyticc.system import ScattSystem
 
 
@@ -61,7 +62,7 @@ def test_constant_potential_is_identity_for_atom_triatom_basis() -> None:
     assert triatom.cos_theta is not None
     assert triatom.theta_weights is not None
 
-    V_basis = prepare_Vmat_BF_atom_triatom(
+    V_basis = vmat.prepare(
         basis,
         triatom,
         triatom.cos_theta,
@@ -71,7 +72,7 @@ def test_constant_potential_is_identity_for_atom_triatom_basis() -> None:
         phi,
         phi_weights,
     )
-    Vmat = get_Vmat_BF(V_basis, np.full(V_basis.grid_shape, 1.75))
+    Vmat = contract(V_basis, np.full(V_basis.grid_shape, 1.75))
 
     assert V_basis.grid_shape == (1, 1, 6, 6, 8)
     np.testing.assert_allclose(Vmat, 1.75 * np.eye(basis.n_channel), atol=1.0e-13)
@@ -98,25 +99,27 @@ def test_atom_triatom_pes_grid_accepts_radial_batch() -> None:
     np.testing.assert_allclose(grid[1, 0, 0, 0, 1, 0], 5.0 + 1.0 + 6.0 + 0.1 + 0.3 + 0.4)
 
 
-def test_run_atom_triatom_completes_minimal_exact_calculation() -> None:
+def test_solve_atom_triatom_completes_minimal_exact_calculation() -> None:
     triatom = make_triatom()
 
     def interaction(R: float, coordinates: np.ndarray) -> np.ndarray:
         return np.zeros(coordinates.shape[1])
 
-    result = ticc.run_atom_triatom(
+    system = ScattSystem(
+        AtomSpec(),
         triatom,
-        PESWrapper(interaction=interaction),
         Jtot=0,
         system_parity=1,
-        Etot=np.array([0.02]),
+        potential=PESWrapper(interaction=interaction),
         reduced_mass=1000.0,
-        radial_boundaries=[4.0, 4.2],
-        radial_half_steps=[0.05],
+    )
+    hamiltonian = atom_triatom.build_hamiltonian(
+        system,
         trunc=TruncSpec(E_Y_cut=0.005),
         n_theta_2=4,
         n_phi=4,
     )
+    result = ticc.solve(hamiltonian, np.array([0.02]), ticc.Propagation((4.0, 4.2), (0.05,)))
 
     assert isinstance(result, ticc.ScatteringResult)
     assert result.basis.n_channel == 1

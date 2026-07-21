@@ -77,7 +77,7 @@ class Channel:
             f"X({electronic_X}{qn_X}, j={self.mis_X.j}) "
             f"Y({electronic_Y}{qn_Y}, j={self.mis_Y.j}) "
             f"j_couple={self.j_couple} K={self.K} Jtot={self.Jtot} "
-            f"parity={self.system_parity:+d} E_int={self.E_int:.10f} a.u."
+            f"system_parity={self.system_parity:+d} E_int={self.E_int:.10f} a.u."
         )
 
 
@@ -200,51 +200,51 @@ class ClosedShellParity:
 class ChannelBuilder:
     """Construct and energy-order one field-free channel basis."""
 
-    sys: ScattSystem
+    system: ScattSystem
     trunc: TruncSpec
 
     def build(self) -> ChannelBasis:
         """Enumerate channels allowed by angular momentum, parity, energy, and helicity."""
-        if self.sys.Jtot is None or self.sys.system_parity is None:
+        if self.system.Jtot is None or self.system.system_parity is None:
             message = "Field-free channel construction requires Jtot and system_parity"
             logger.error(message)
             raise ValueError(message)
 
-        parity = ClosedShellParity(self.sys.system_parity, self.sys.Jtot)
-        monomer_types = (self.sys.monomer_X.type, self.sys.monomer_Y.type)
+        parity_rule = ClosedShellParity(self.system.system_parity, self.system.Jtot)
+        monomer_types = (self.system.monomer_X.type, self.system.monomer_Y.type)
         atom_triatom = monomer_types in (
             (MonomerType.ATOM, MonomerType.TRIATOM),
             (MonomerType.TRIATOM, MonomerType.ATOM),
         )
-        parity_block_sign = self.sys.system_parity * (-1) ** self.sys.Jtot
+        parity_block_sign = self.system.system_parity * (-1) ** self.system.Jtot
         if atom_triatom:
-            triatom = self.sys.monomer_X if self.sys.monomer_X.type is MonomerType.TRIATOM else self.sys.monomer_Y
+            triatom = self.system.monomer_X if self.system.monomer_X.type is MonomerType.TRIATOM else self.system.monomer_Y
             if getattr(triatom, "parity_block_sign", parity_block_sign) != parity_block_sign:
                 message = "Triatomic basis parity_block_sign does not match system_parity*(-1)^Jtot"
                 logger.error(message)
                 raise ValueError(message)
         channels: list[Channel] = []
 
-        for mis_X in self.sys.monomer_X.mis_iter(self.trunc.E_X_cut):
-            for mis_Y in self.sys.monomer_Y.mis_iter(self.trunc.E_Y_cut):
+        for mis_X in self.system.monomer_X.mis_iter(self.trunc.E_X_cut):
+            for mis_Y in self.system.monomer_Y.mis_iter(self.trunc.E_Y_cut):
                 for j_couple in range(abs(mis_X.j - mis_Y.j), mis_X.j + mis_Y.j + 1):
-                    Kmax = set_Kmax(j_couple, self.sys.Jtot, self.trunc.K_cut)
+                    Kmax = set_Kmax(j_couple, self.system.Jtot, self.trunc.K_cut)
                     for K in range(Kmax + 1):
-                        if not self.sys.monomer_X.allows_K(mis_X, K) or not self.sys.monomer_Y.allows_K(mis_Y, K):
+                        if not self.system.monomer_X.allows_K(mis_X, K) or not self.system.monomer_Y.allows_K(mis_Y, K):
                             continue
                         if K == 0:
-                            if not atom_triatom and not parity.allow_K0(mis_X, mis_Y, j_couple):
+                            if not atom_triatom and not parity_rule.allow_K0(mis_X, mis_Y, j_couple):
                                 continue
 
-                        E_int = float(self.sys.monomer_X.energy(mis_X, K) + self.sys.monomer_Y.energy(mis_Y, K))
+                        E_int = float(self.system.monomer_X.energy(mis_X, K) + self.system.monomer_Y.energy(mis_Y, K))
                         channels.append(
                             Channel(
                                 mis_X=mis_X,
                                 mis_Y=mis_Y,
                                 j_couple=j_couple,
                                 K=K,
-                                Jtot=self.sys.Jtot,
-                                system_parity=self.sys.system_parity,
+                                Jtot=self.system.Jtot,
+                                system_parity=self.system.system_parity,
                                 E_int=E_int,
                             )
                         )
@@ -252,38 +252,3 @@ class ChannelBuilder:
         channels.sort(key=lambda channel: channel.E_int)
         indexed_channels = tuple(replace(channel, index=index) for index, channel in enumerate(channels))
         return ChannelBasis(channels=indexed_channels)
-
-
-# ----------------------------------------------------------------------------------------
-if __name__ == "__main__":
-    import numpy as np
-
-    from pyticc.basis.monomer import AtomSpec, DiatomSpec
-    from pyticc.system import ScattSystem
-
-    def A_plus_BC() -> None:
-        """Print a minimal atom-diatom channel example."""
-        atom = AtomSpec()
-        diatom = DiatomSpec(Eint=np.array([[0.0, 0.01, 0.03]]), vmax=0, jmax=2)
-
-        system = ScattSystem(monomer_X=atom, monomer_Y=diatom, Jtot=1, system_parity=-1)
-        channels = ChannelBuilder(system, TruncSpec()).build()
-
-        for channel in channels:
-            print(channel)
-
-    def AB_plus_CD() -> None:
-        """Print a minimal diatom-diatom channel example."""
-        diatom_X = DiatomSpec(Eint=np.array([[0.0, 0.01]]), vmax=0, jmax=1, jpar=-1)
-        diatom_Y = DiatomSpec(Eint=np.array([[0.0, 0.02]]), vmax=0, jmax=1, jpar=-1)
-
-        system = ScattSystem(monomer_X=diatom_X, monomer_Y=diatom_Y, Jtot=1, system_parity=1)
-        channels = ChannelBuilder(system, TruncSpec()).build()
-
-        for channel in channels:
-            print(channel)
-
-    print("Test case: A + BC")
-    A_plus_BC()
-    print("\nTest case: AB + CD")
-    AB_plus_CD()

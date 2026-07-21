@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 
 import pyticc as ticc
+from pyticc.scattering import diatom_diatom
 
 
 def main() -> None:
@@ -56,24 +57,34 @@ def main() -> None:
         mass=reduced_mass_HF,
     )
 
-    Eint_H2 = rovib_H2.E_vj - rovib_H2.E_vj[0, 0]
-    Eint_HF = rovib_HF.E_vj - rovib_HF.E_vj[0, 0]
-    diatom_H2 = ticc.DiatomSpec(Eint=Eint_H2, vmin=0, vmax=0, jmax=2, jpar=1)
-    diatom_HF = ticc.DiatomSpec(Eint=Eint_HF, vmin=0, vmax=0, jmax=2, jpar=0)
+    diatom_H2 = ticc.DiatomBasis(
+        rovib=rovib_H2,
+        energy_zero=float(rovib_H2.E_vj[0, 0]),
+        vmin=0,
+        vmax=0,
+        jmax=2,
+        jpar=1,
+    )
+    diatom_HF = ticc.DiatomBasis(
+        rovib=rovib_HF,
+        energy_zero=float(rovib_HF.E_vj[0, 0]),
+        vmin=0,
+        vmax=0,
+        jmax=2,
+        jpar=0,
+    )
     total_energies = np.array([100.0, 300.0, 500.0]) * ticc.CM2AU
 
-    result = ticc.run_diatom_diatom(
+    system = ticc.ScattSystem(
         diatom_H2,
-        rovib_H2,
         diatom_HF,
-        rovib_HF,
-        pes,
         Jtot=0,
         system_parity=1,
-        Etot=total_energies,
+        potential=pes,
         reduced_mass=reduced_mass_H2HF,
-        radial_boundaries=[4.5, 6.5, 10.5, 20.5],
-        radial_half_steps=[0.10, 0.20, 0.50],
+    )
+    hamiltonian = diatom_diatom.build_hamiltonian(
+        system,
         trunc=ticc.TruncSpec(
             E_X_cut=1000.0 * ticc.CM2AU,
             E_Y_cut=1000.0 * ticc.CM2AU,
@@ -82,11 +93,16 @@ def main() -> None:
         n_theta_X=10,
         n_theta_Y=10,
         n_phi=10,
-        mode="inelastic",
-        approx=ticc.Approx.EXACT,
-        memory_limit_mb=512.0,
     )
-    result.print_summary()
+    result = ticc.solve(
+        hamiltonian,
+        total_energies,
+        ticc.Propagation(
+            boundaries=(4.5, 6.5, 10.5, 20.5),
+            half_steps=(0.10, 0.20, 0.50),
+        ),
+    )
+    print(ticc.report.open_closed(result.basis, result.Etot))
 
 
 if __name__ == "__main__":

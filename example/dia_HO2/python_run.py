@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 
 import pyticc as ticc
+from pyticc.scattering import diabatic_atom_diatom
 
 
 def main() -> None:
@@ -40,21 +41,30 @@ def main() -> None:
     total_energies = np.array([17.38631, 18.18561, 18.46362, 18.77639]) * ticc.CM2AU
 
     try:
-        result = ticc.run_diabatic_atom_diatom(
+        system = ticc.ScattSystem(
+            ticc.AtomSpec(),
             diatom_O2,
-            pes,
             Jtot=0,
             system_parity=1,
-            Etot=total_energies,
+            potential=pes,
             reduced_mass=reduced_mass_HO2,
-            radial_boundaries=[0.8, 2.5, 6.0, 30.0],
-            radial_half_steps=[0.002, 0.005, 0.3],
+        )
+        hamiltonian = diabatic_atom_diatom.build_hamiltonian(
+            system,
             trunc=ticc.TruncSpec(E_Y_cut=38000.0 * ticc.CM2AU),
             n_theta=30,
-            mode="inelastic",
-            memory_limit_mb=4096.0,
         )
-        result.print_summary()
+        result = ticc.solve(
+            hamiltonian,
+            total_energies,
+            ticc.Propagation(
+                boundaries=(0.8, 2.5, 6.0, 30.0),
+                half_steps=(0.002, 0.005, 0.3),
+                memory_mb=4096.0,
+            ),
+        )
+        print(ticc.report.open_closed(result.basis, result.Etot))
+        print(ticc.report.smatrix(result))
     finally:
         pes.close()
 

@@ -3,15 +3,12 @@ import pytest
 from numpy.typing import NDArray
 from scipy.special import roots_legendre
 
+import pyticc.matrix.interaction.atom_diatom as scalar_vmat
+import pyticc.matrix.interaction.diabatic_atom_diatom as vmat
 from pyticc.basis.channel import Channel, ChannelBasis
-from pyticc.basis.diabatic import DiabaticDiatomBasis, build_DiabaticDiatomBasis
 from pyticc.basis.dvr import build_SineDVR
-from pyticc.matrix.diabatic import (
-    get_DiabaticVgrid_BF_atom_diatom,
-    get_DiabaticVmat_BF,
-    prepare_DiabaticVmat_BF_atom_diatom,
-)
-from pyticc.matrix.interaction import get_Vmat_BF, prepare_Vmat_BF_atom_diatom
+from pyticc.basis.monomer import DiabaticDiatomBasis, build_DiabaticDiatomBasis
+from pyticc.matrix.interaction import contract as contract_scalar
 from pyticc.pes.diabatic import DiabaticPESWrapper
 from pyticc.system import MolInnerState
 
@@ -30,7 +27,7 @@ def _diabatic_basis(n_state: int = 2) -> DiabaticDiatomBasis:
         vmax=0,
         jmax=1,
         mass=900.0,
-        energy_reference=0.0,
+        energy_zero=0.0,
     )
 
 
@@ -68,7 +65,7 @@ def test_diabatic_interaction_uses_state_specific_diagonal_and_shared_coupling_g
     diabatic_basis = _diabatic_basis()
     channels = _channels()
     cos_theta, weights = roots_legendre(6)
-    V_basis = prepare_DiabaticVmat_BF_atom_diatom(channels, diabatic_basis, cos_theta, weights)
+    V_basis = vmat.prepare(channels, diabatic_basis, cos_theta, weights)
 
     assert tuple(grid.size for grid in V_basis.diagonal_grids) == (6, 6)
     assert V_basis.coupling_grid.size == 24
@@ -80,12 +77,12 @@ def test_diabatic_interaction_contracts_diagonal_and_offdiagonal_blocks() -> Non
     diabatic_basis = _diabatic_basis()
     channels = _channels()
     cos_theta, weights = roots_legendre(6)
-    V_basis = prepare_DiabaticVmat_BF_atom_diatom(channels, diabatic_basis, cos_theta, weights)
+    V_basis = vmat.prepare(channels, diabatic_basis, cos_theta, weights)
     coupling = 0.4
     pes = _constant_pes(np.array([[2.0, coupling], [coupling, 3.0]]))
 
-    potential = get_DiabaticVgrid_BF_atom_diatom(pes, 5.0, V_basis)
-    Vmat = get_DiabaticVmat_BF(V_basis, potential)
+    potential = vmat.sample(pes, 5.0, V_basis)
+    Vmat = vmat.contract(V_basis, potential)
 
     radial_overlap_j0 = diabatic_basis.state(0).rovib_dvr.WF_vj[:, 0, 0] @ diabatic_basis.state(1).rovib_dvr.WF_vj[:, 0, 0]
     radial_overlap_j1 = diabatic_basis.state(0).rovib_dvr.WF_vj[:, 0, 1] @ diabatic_basis.state(1).rovib_dvr.WF_vj[:, 0, 1]
@@ -102,10 +99,10 @@ def test_diabatic_interaction_zero_coupling_separates_electronic_states() -> Non
     diabatic_basis = _diabatic_basis()
     channels = _channels()
     cos_theta, weights = roots_legendre(5)
-    V_basis = prepare_DiabaticVmat_BF_atom_diatom(channels, diabatic_basis, cos_theta, weights)
-    potential = get_DiabaticVgrid_BF_atom_diatom(_constant_pes(np.diag([1.5, 2.5])), 6.0, V_basis)
+    V_basis = vmat.prepare(channels, diabatic_basis, cos_theta, weights)
+    potential = vmat.sample(_constant_pes(np.diag([1.5, 2.5])), 6.0, V_basis)
 
-    Vmat = get_DiabaticVmat_BF(V_basis, potential)
+    Vmat = vmat.contract(V_basis, potential)
 
     np.testing.assert_allclose(Vmat, np.diag([1.5, 2.5, 1.5, 2.5]), atol=1.0e-12)
 
@@ -114,7 +111,7 @@ def test_diabatic_interaction_radial_batch_matches_scalar_and_preserves_selectio
     diabatic_basis = _diabatic_basis()
     channels = _channels()
     cos_theta, weights = roots_legendre(5)
-    V_basis = prepare_DiabaticVmat_BF_atom_diatom(channels, diabatic_basis, cos_theta, weights)
+    V_basis = vmat.prepare(channels, diabatic_basis, cos_theta, weights)
 
     def monomer(r: NDArray[np.float64]) -> NDArray[np.float64]:
         return np.zeros((r.size, 2))
@@ -126,8 +123,8 @@ def test_diabatic_interaction_radial_batch_matches_scalar_and_preserves_selectio
     pes = DiabaticPESWrapper(n_state=2, monomer=monomer, interaction=interaction)
     radial_points = np.array([4.0, 5.0])
     selected = (3, 0, 1)
-    batched = get_DiabaticVmat_BF(V_basis, get_DiabaticVgrid_BF_atom_diatom(pes, radial_points, V_basis), selected)
-    scalar = np.stack([get_DiabaticVmat_BF(V_basis, get_DiabaticVgrid_BF_atom_diatom(pes, R, V_basis), selected) for R in radial_points])
+    batched = vmat.contract(V_basis, vmat.sample(pes, radial_points, V_basis), selected)
+    scalar = np.stack([vmat.contract(V_basis, vmat.sample(pes, R, V_basis), selected) for R in radial_points])
 
     assert batched.shape == (2, len(selected), len(selected))
     np.testing.assert_allclose(batched, scalar, atol=1.0e-13)
@@ -137,7 +134,7 @@ def test_diabatic_interaction_samples_all_state_grids_in_one_radial_batch() -> N
     diabatic_basis = _diabatic_basis()
     channels = _channels()
     cos_theta, weights = roots_legendre(5)
-    V_basis = prepare_DiabaticVmat_BF_atom_diatom(channels, diabatic_basis, cos_theta, weights)
+    V_basis = vmat.prepare(channels, diabatic_basis, cos_theta, weights)
     calls = 0
 
     def monomer(r: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -152,7 +149,7 @@ def test_diabatic_interaction_samples_all_state_grids_in_one_radial_batch() -> N
         return np.zeros((R.size, coordinates.shape[1], 2, 2))
 
     pes = DiabaticPESWrapper(n_state=2, monomer=monomer, interaction=interaction, interaction_many=interaction_many)
-    potential = get_DiabaticVgrid_BF_atom_diatom(pes, np.array([4.0, 5.0]), V_basis)
+    potential = vmat.sample(pes, np.array([4.0, 5.0]), V_basis)
 
     assert calls == 1
     assert tuple(values.shape for values in potential.diagonal) == ((2, 6, 5), (2, 6, 5))
@@ -164,8 +161,8 @@ def test_one_state_diabatic_contraction_reduces_to_scalar_interaction() -> None:
     channels = _channels(n_state=1)
     cos_theta, weights = roots_legendre(6)
     theta = np.arccos(cos_theta)
-    new_basis = prepare_DiabaticVmat_BF_atom_diatom(channels, diabatic_basis, cos_theta, weights)
-    old_basis = prepare_Vmat_BF_atom_diatom(channels, diabatic_basis.state(0).rovib, cos_theta, weights)
+    new_basis = vmat.prepare(channels, diabatic_basis, cos_theta, weights)
+    old_basis = scalar_vmat.prepare(channels, diabatic_basis.state(0).rovib, cos_theta, weights)
 
     def monomer(r: NDArray[np.float64]) -> NDArray[np.float64]:
         return np.zeros((r.size, 1))
@@ -175,10 +172,10 @@ def test_one_state_diabatic_contraction_reduces_to_scalar_interaction() -> None:
         return (R + 0.2 * r + np.cos(angle))[:, None, None]
 
     pes = DiabaticPESWrapper(n_state=1, monomer=monomer, interaction=interaction)
-    potential = get_DiabaticVgrid_BF_atom_diatom(pes, 5.0, new_basis)
-    new_Vmat = get_DiabaticVmat_BF(new_basis, potential)
+    potential = vmat.sample(pes, 5.0, new_basis)
+    new_Vmat = vmat.contract(new_basis, potential)
     r_grid = diabatic_basis.state(0).rovib.grids
     scalar_grid = 5.0 + 0.2 * r_grid[:, None] + np.cos(theta)[None, :]
-    old_Vmat = get_Vmat_BF(old_basis, scalar_grid)
+    old_Vmat = contract_scalar(old_basis, scalar_grid)
 
     np.testing.assert_allclose(new_Vmat, old_Vmat, atol=1.0e-13)

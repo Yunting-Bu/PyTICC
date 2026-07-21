@@ -6,7 +6,7 @@ import pyticc as ticc
 def main() -> None:
     input_file = Path(__file__).with_name("input.toml")
     result = ticc.run(input_file)
-    result.print_summary()
+    print(ticc.report.open_closed(result.basis, result.Etot))
 
 
 if __name__ == "__main__":
