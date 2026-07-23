@@ -9,6 +9,7 @@ from loguru import logger
 from numpy.typing import NDArray
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class VBasisBF:
     """PES-independent body-fixed basis used to contract a scalar interaction."""
@@ -21,6 +22,10 @@ class VBasisBF:
     normalization: float = 1.0
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _contract_block(
     B_real: NDArray[np.float64],
     B_imag: NDArray[np.float64] | None,
@@ -37,6 +42,10 @@ def _contract_block(
     return 0.5 * (Vmat + Vmat.T)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def contract(
     basis: VBasisBF,
     potential: NDArray[np.float64],
@@ -87,3 +96,6 @@ def contract(
             Vmat[radial_index][np.ix_(output_positions, output_positions)] = block
 
     return Vmat if batched else Vmat[0]
+
+
+# ----------------------------------------------------------------------------------------

@@ -20,6 +20,7 @@ def ho2_pes() -> DiabaticPESWrapper:
         [PES_DIR / "ho2-dpme.f", PES_DIR / "long_range_H_O2.f"],
         PES_DIR / "pyticc_wrapper.f90",
         workdir=PES_DIR,
+        lapack=True,
     )
     yield pes
     pes.close()
@@ -73,6 +74,7 @@ def test_ho2_adapter_initializes_independently_in_worker_processes(ho2_pes: Diab
         PES_DIR / "pyticc_wrapper.f90",
         workdir=PES_DIR,
         processes=2,
+        lapack=True,
     )
     try:
         actual = get_diabatic_potential_grid_atom_diatom(parallel_pes, radial_points, r_oo, theta)

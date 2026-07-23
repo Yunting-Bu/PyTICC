@@ -14,6 +14,7 @@ from pyticc.scattering.hamiltonian import ScattHamiltonian
 from pyticc.system import Approx
 
 
+# ----------------------------------------------------------------------------------------
 def solve(
     hamiltonian: ScattHamiltonian,
     Etot: EnergyInput,
@@ -47,7 +48,8 @@ def solve(
             propagation.half_steps,
             mode=propagation.mode,
             memory_limit_mb=propagation.memory_mb,
-            progress_every_sectors=propagation.progress_every_sectors,
+            print_verbose=propagation.print_verbose,
+            device=propagation.device,
         )
         result: ScatteringResult | CoupledStatesResult = finalize_scattering(
             hamiltonian.basis,
@@ -71,7 +73,8 @@ def solve(
             propagation.mode,
             propagation.memory_mb,
             hamiltonian.potential_grid_size,
-            propagation.progress_every_sectors,
+            print_verbose=propagation.print_verbose,
+            device=propagation.device,
         )
         results = tuple(
             finalize_K_block(
@@ -97,6 +100,10 @@ def solve(
     return replace(result, timing=timing)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def build_k_blocks(hamiltonian: ScattHamiltonian) -> tuple[KBlock, ...]:
     """Build CS or NNCC propagation blocks for one Hamiltonian."""
     approximation = hamiltonian.system.approx
@@ -108,3 +115,6 @@ def build_k_blocks(hamiltonian: ScattHamiltonian) -> tuple[KBlock, ...]:
     message = f"Coupled-states blocks require approx='cs' or 'nncc', but got {approximation.value!r}"
     logger.error(message)
     raise ValueError(message)
+
+
+# ----------------------------------------------------------------------------------------

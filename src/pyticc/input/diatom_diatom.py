@@ -6,7 +6,7 @@ import pyticc.scattering.diatom_diatom as geometry
 from pyticc.basis.channel import TruncSpec
 from pyticc.constants import CM2AU
 from pyticc.input.common import TomlTable, approximation, build_diatom, diatom_symbols, energies, k_cut, propagation, required, section
-from pyticc.pes.wrapper import PESWrapper
+from pyticc.pes.adiabatic import PESWrapper
 from pyticc.result import CoupledStatesResult, ScatteringResult
 from pyticc.scattering.solver import solve
 from pyticc.system import ScattSystem, reduced_mass

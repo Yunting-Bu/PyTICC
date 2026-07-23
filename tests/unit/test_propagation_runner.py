@@ -31,9 +31,11 @@ def test_propagate_BF_builds_radial_matrices_and_caches_shared_points() -> None:
         reduced_mass=2.0,
         radial_boundaries=[3.0, 3.4],
         radial_half_steps=[0.1],
+        device="cpu",
     )
 
     assert result.shape == (2, basis.n_channel, basis.n_channel)
+    assert {device.platform for device in result.devices()} == {"cpu"}
     np.testing.assert_allclose(evaluated_R, [3.0, 3.1, 3.2, 3.3, 3.4])
 
 
@@ -145,7 +147,7 @@ def test_propagate_BF_logs_completed_sector_count_radius_and_wall_time() -> None
             reduced_mass=2.0,
             radial_boundaries=[3.0, 3.4],
             radial_half_steps=[0.1],
-            progress_every_sectors=0,
+            print_verbose=True,
         )
     finally:
         logger.remove(sink)

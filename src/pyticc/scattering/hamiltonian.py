@@ -13,6 +13,7 @@ Interaction = Callable[[float | NDArray[np.float64]], NDArray[np.float64]]
 BlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[NDArray[np.float64], ...]]
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ScattHamiltonian:
     """Scattering Hamiltonian projected onto one body-fixed channel basis.
@@ -131,3 +132,6 @@ class ScattHamiltonian:
         diagonal = np.diag_indices(matrix.shape[0])
         matrix[diagonal] -= 2.0 * self.reduced_mass * Etot
         return matrix
+
+
+# ----------------------------------------------------------------------------------------

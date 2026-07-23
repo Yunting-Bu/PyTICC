@@ -9,6 +9,7 @@ from pyticc.basis.podvr import RovibPODVR, build_RovibPODVR
 from pyticc.system import MolInnerState, MonomerType, set_j_parity
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiatomSpec:
     """Lightweight diatomic state table used by channel internals."""
@@ -65,6 +66,10 @@ class DiatomSpec:
         return True
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiatomBasis:
     """Complete adiabatic diatomic basis for channels and PES projection."""
@@ -122,6 +127,10 @@ class DiatomBasis:
         return self._states.allows_K(mis, K)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def build_DiatomBasis(
     dvr: SineDVR,
     *,
@@ -137,3 +146,6 @@ def build_DiatomBasis(
     rovib = build_RovibPODVR(dvr, n_podvr, vmax, jmax, mass)
     zero = float(rovib.E_vj[0, 0]) if energy_zero is None else float(energy_zero)
     return DiatomBasis(rovib=rovib, energy_zero=zero, vmax=vmax, jmax=jmax, vmin=vmin, jpar=jpar)
+
+
+# ----------------------------------------------------------------------------------------

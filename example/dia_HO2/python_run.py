@@ -13,6 +13,7 @@ def main() -> None:
         pes_dir / "pyticc_wrapper.f90",
         workdir=pes_dir,
         processes=4,
+        lapack=True,
     )
 
     mass_O, mass_H = ticc.element_masses_au("O", "H")
@@ -61,6 +62,7 @@ def main() -> None:
                 boundaries=(0.8, 2.5, 6.0, 30.0),
                 half_steps=(0.002, 0.005, 0.3),
                 memory_mb=4096.0,
+                device="auto",
             ),
         )
         print(ticc.report.open_closed(result.basis, result.Etot))

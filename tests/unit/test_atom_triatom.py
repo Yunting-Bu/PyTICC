@@ -9,7 +9,7 @@ from pyticc.basis.monomer import AtomSpec
 from pyticc.basis.podvr import VibPODVR
 from pyticc.basis.triatom import TriatomBasis, TriatomBlock
 from pyticc.matrix.interaction import contract
-from pyticc.pes.wrapper import PESWrapper, get_Vgrid_atom_triatom
+from pyticc.pes.adiabatic import PESWrapper, get_Vgrid_atom_triatom
 from pyticc.scattering import atom_triatom
 from pyticc.system import ScattSystem
 

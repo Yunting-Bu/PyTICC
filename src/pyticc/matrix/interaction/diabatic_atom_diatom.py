@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from math import prod
 from typing import cast
@@ -14,6 +15,7 @@ from pyticc.pes.diabatic import DiabaticPESWrapper, RadialInput, get_diabatic_po
 from pyticc.system import MolInnerState
 
 ElectronicK = tuple[int, int]
+_MAX_CONTRACTION_WORKERS = 3
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,18 @@ class DiabaticVGridBF:
 
     diagonal: tuple[NDArray[np.float64], ...]
     coupling: NDArray[np.float64]
+
+
+@dataclass(frozen=True)
+class _ContractionTask:
+    """One independent electronic-K block contraction."""
+
+    left: NDArray[np.float64]
+    weights: NDArray[np.float64]
+    right: NDArray[np.float64]
+    row_positions: NDArray[np.int64]
+    column_positions: NDArray[np.int64]
+    symmetric: bool
 
 
 def _diatomic_inner_state(channel: Channel) -> MolInnerState:
@@ -203,8 +217,24 @@ def _contract_weighted_basis(
     right_transpose = right.T
     for batch_index, batch_weights in enumerate(weights):
         np.multiply(left, batch_weights, out=weighted_left)
-        result[batch_index] = weighted_left @ right_transpose
+        np.matmul(weighted_left, right_transpose, out=result[batch_index])
     return result
+
+
+def _evaluate_contraction_task(task: _ContractionTask) -> NDArray[np.float64]:
+    """Evaluate one electronic-K contraction and enforce diagonal-block symmetry."""
+    block = _contract_weighted_basis(task.left, task.weights, task.right)
+    return 0.5 * (block + np.swapaxes(block, -2, -1)) if task.symmetric else block
+
+
+def _evaluate_contraction_tasks(tasks: Sequence[_ContractionTask], batched: bool) -> tuple[NDArray[np.float64], ...]:
+    """Evaluate independent electronic-K blocks concurrently for radial batches."""
+    if not batched or len(tasks) < 2:
+        return tuple(_evaluate_contraction_task(task) for task in tasks)
+
+    worker_count = min(_MAX_CONTRACTION_WORKERS, len(tasks))
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="pyticc-vmat") as executor:
+        return tuple(executor.map(_evaluate_contraction_task, tasks))
 
 
 def contract(
@@ -262,6 +292,7 @@ def contract(
     selected_indices = {global_index: local_index for local_index, global_index in enumerate(indices)}
     n_batch = next(iter(batch_sizes))
     Vmat = np.zeros((n_batch, len(indices), len(indices)), dtype=np.float64)
+    tasks: list[_ContractionTask] = []
 
     for key, group_indices in V_basis.channel_indices.items():
         electronic_state, _ = key
@@ -269,9 +300,16 @@ def contract(
         if rows.size == 0:
             continue
         B = V_basis.B_diagonal[key][rows]
-        block = _contract_weighted_basis(B, diagonal_batches[electronic_state], B)
-        block = 0.5 * (block + np.swapaxes(block, -2, -1))
-        Vmat[:, positions[:, None], positions[None, :]] = block
+        tasks.append(
+            _ContractionTask(
+                left=B,
+                weights=diagonal_batches[electronic_state],
+                right=B,
+                row_positions=positions,
+                column_positions=positions,
+                symmetric=True,
+            )
+        )
 
     K_values = sorted({K for _, K in V_basis.channel_indices})
     coupling_flat = coupling_batch.reshape(n_batch, prod(coupling_batch.shape[1:-2]), V_basis.n_state, V_basis.n_state)
@@ -292,8 +330,23 @@ def contract(
                     continue
                 B_a = V_basis.B_coupling[key_a][rows_a]
                 B_b = V_basis.B_coupling[key_b][rows_b]
-                block = _contract_weighted_basis(B_a, coupling_flat[:, :, state_a, state_b], B_b)
-                Vmat[:, positions_a[:, None], positions_b[None, :]] = block
-                Vmat[:, positions_b[:, None], positions_a[None, :]] = np.swapaxes(block, -2, -1)
+                tasks.append(
+                    _ContractionTask(
+                        left=B_a,
+                        weights=coupling_flat[:, :, state_a, state_b],
+                        right=B_b,
+                        row_positions=positions_a,
+                        column_positions=positions_b,
+                        symmetric=False,
+                    )
+                )
+
+    blocks = _evaluate_contraction_tasks(tasks, batched=batched_flags[0])
+    for task, block in zip(tasks, blocks, strict=True):
+        rows = task.row_positions
+        columns = task.column_positions
+        Vmat[:, rows[:, None], columns[None, :]] = block
+        if not task.symmetric:
+            Vmat[:, columns[:, None], rows[None, :]] = np.swapaxes(block, -2, -1)
 
     return Vmat if batched_flags[0] else Vmat[0]

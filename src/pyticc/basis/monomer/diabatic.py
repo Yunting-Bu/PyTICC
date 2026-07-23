@@ -10,6 +10,7 @@ from pyticc.basis.podvr import RovibPODVR, build_RovibPODVR
 from pyticc.system import MolInnerState, MonomerType
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiabaticDiatomState:
     """One diabatic electronic state's primitive and contracted bases."""
@@ -39,6 +40,10 @@ class DiabaticDiatomState:
             raise ValueError(message)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiabaticDiatomBasis:
     """Diatomic basis spanning several diabatic electronic states."""
@@ -110,6 +115,10 @@ class DiabaticDiatomBasis:
         return self.state(mis.electronic_state).spec.allows_K(mis, K)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _per_state(value: int | Sequence[int], n_state: int, name: str) -> tuple[int, ...]:
     values = (value,) * n_state if isinstance(value, int) else tuple(value)
     if len(values) != n_state:
@@ -119,6 +128,10 @@ def _per_state(value: int | Sequence[int], n_state: int, name: str) -> tuple[int
     return values
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def build_DiabaticDiatomBasis(
     dvrs: Sequence[SineDVR],
     *,
@@ -177,6 +190,10 @@ def build_DiabaticDiatomBasis(
     return DiabaticDiatomBasis(states=states, energy_zero=zero)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 if __name__ == "__main__":
     from pathlib import Path
 
@@ -190,6 +207,7 @@ if __name__ == "__main__":
         [pes_dir / "ho2-dpme.f", pes_dir / "long_range_H_O2.f"],
         pes_dir / "pyticc_wrapper.f90",
         workdir=pes_dir,
+        lapack=True,
     )
     try:
         ho2_dvrs = tuple(build_SineDVR(1.2, 5.0, 135, oxygen_reduced_mass, pes.monomer_state(state)) for state in range(2))
@@ -224,3 +242,4 @@ if __name__ == "__main__":
         print("All HO2 level checks passed.")
     finally:
         pes.close()
+# ----------------------------------------------------------------------------------------

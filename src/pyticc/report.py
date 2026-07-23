@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from numbers import Integral
 from typing import TypeAlias
 
 import numpy as np
@@ -16,6 +15,7 @@ QuantumSelection: TypeAlias = int | range | Sequence[int] | None
 EnergySelection: TypeAlias = int | slice | Sequence[int] | None
 
 
+# ----------------------------------------------------------------------------------------
 def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     widths = [len(header) for header in headers]
     for row in rows:
@@ -28,8 +28,23 @@ def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     return "\n".join((header, separator, *body))
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def rovib_levels(basis: DiatomBasis | DiabaticDiatomBasis) -> str:
-    """Return retained diatomic rovibrational levels in cm-1."""
+    """
+    Format the retained diatomic rovibrational levels as a text table.
+
+    Electronic-state labels are included for a diabatic basis. Levels are
+    sorted by internal energy, and energies are converted to cm-1.
+
+    Inputs:
+        basis: DiatomBasis | DiabaticDiatomBasis - diatomic basis to report
+
+    Returns:
+        output: str - formatted rovibrational-level table
+    """
     states = sorted(basis.mis_iter(float("inf")), key=lambda state: state.Eint)
     include_electronic_state = isinstance(basis, DiabaticDiatomBasis)
     headers = ["state", "v", "j", "E_int/cm-1"] if include_electronic_state else ["v", "j", "E_int/cm-1"]
@@ -43,10 +58,18 @@ def rovib_levels(basis: DiatomBasis | DiabaticDiatomBasis) -> str:
     return _table(headers, rows)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _is_atom_state(state: MolInnerState) -> bool:
     return state.v is None and state.t is None and state.electronic_state is None and state.j == 0
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _state_columns(states: Sequence[MolInnerState], suffix: str = "") -> list[tuple[str, str]]:
     columns: list[tuple[str, str]] = []
     if any(state.electronic_state is not None for state in states):
@@ -59,13 +82,32 @@ def _state_columns(states: Sequence[MolInnerState], suffix: str = "") -> list[tu
     return columns
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _state_value(state: MolInnerState, attribute: str) -> str:
     value = getattr(state, attribute)
     return "-" if value is None else str(value)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def channels(basis: ChannelBasis) -> str:
-    """Return the channel quantum-number table with energies in cm-1."""
+    """
+    Format the channel quantum numbers and internal energies as a text table.
+
+    Only quantum numbers belonging to active monomers are included. Electronic
+    states are shown when present, while Jtot and parity are omitted.
+
+    Inputs:
+        basis: ChannelBasis - channel basis to report
+
+    Returns:
+        output: str - formatted channel table with energies in cm-1
+    """
     if basis.n_channel == 0:
         return _table(("n", "K", "E_int/cm-1"), ())
 
@@ -103,8 +145,22 @@ def channels(basis: ChannelBasis) -> str:
     return _table(headers, rows)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def open_closed(basis: ChannelBasis, energies: EnergyInput) -> str:
-    """Return open and closed channel counts at each total energy in cm-1."""
+    """
+    Format open and closed channel counts at each total energy.
+
+    Inputs:
+        basis: ChannelBasis - channel basis used to classify thresholds
+        energies: EnergyInput - total energies in atomic units, or a path to a
+            one-column energy file
+
+    Returns:
+        output: str - formatted channel-count table with energies in cm-1
+    """
     values = get_Etot(energies)
     counts = basis.open_closed(values)
     rows = [
@@ -117,8 +173,21 @@ def open_closed(basis: ChannelBasis, energies: EnergyInput) -> str:
     return _table(("n", "Etot/cm-1", "open", "closed"), rows)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def k_blocks(blocks: Sequence[KBlock | KBlockResult]) -> str:
-    """Return CS or NNCC K-block membership and ownership information."""
+    """
+    Format CS or NNCC K-block membership and ownership information.
+
+    Inputs:
+        blocks: Sequence[KBlock | KBlockResult] - K blocks or completed block
+            results to report
+
+    Returns:
+        output: str - formatted K-block table
+    """
     values = [item.block if isinstance(item, KBlockResult) else item for item in blocks]
     rows = [
         [
@@ -134,28 +203,40 @@ def k_blocks(blocks: Sequence[KBlock | KBlockResult]) -> str:
     return _table(("block", "center_K", "K_values", "channels", "owned_K", "owned_channels"), rows)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _selection(value: QuantumSelection, name: str) -> set[int] | None:
     if value is None:
         return None
-    if isinstance(value, Integral) and not isinstance(value, bool):
-        return {int(value)}
+    if isinstance(value, bool):
+        raise TypeError(f"{name} must be an integer, range, integer sequence, or None")
+    if isinstance(value, int):
+        return {value}
     if isinstance(value, str | bytes):
         raise TypeError(f"{name} must be an integer, range, integer sequence, or None")
     try:
         values = tuple(value)
     except TypeError as error:
         raise TypeError(f"{name} must be an integer, range, integer sequence, or None") from error
-    if any(not isinstance(item, Integral) or isinstance(item, bool) for item in values):
+    if any(not isinstance(item, int) or isinstance(item, bool) for item in values):
         raise TypeError(f"{name} must contain only integers")
-    return {int(item) for item in values}
+    return set(values)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _energy_indices(selection: EnergySelection, size: int) -> tuple[int, ...]:
     available = np.arange(size, dtype=np.int64)
     if selection is None:
         return tuple(int(index) for index in available)
-    if isinstance(selection, Integral) and not isinstance(selection, bool):
-        selection = [int(selection)]
+    if isinstance(selection, bool):
+        raise TypeError("energy_indices must be an integer, slice, integer sequence, or None")
+    if isinstance(selection, int):
+        selection = [selection]
     if isinstance(selection, str | bytes):
         raise TypeError("energy_indices must be an integer, slice, integer sequence, or None")
     try:
@@ -165,6 +246,10 @@ def _energy_indices(selection: EnergySelection, size: int) -> tuple[int, ...]:
     return tuple(int(index) for index in selected)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _internal_state(channel: Channel) -> MolInnerState:
     states = tuple(state for state in (channel.mis_X, channel.mis_Y) if not _is_atom_state(state))
     if len(states) != 1 or states[0].v is None:
@@ -172,10 +257,18 @@ def _internal_state(channel: Channel) -> MolInnerState:
     return states[0]
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _matches(state: MolInnerState, electronic: set[int] | None, v: set[int] | None, j: set[int] | None) -> bool:
     return (electronic is None or state.electronic_state in electronic) and (v is None or state.v in v) and (j is None or state.j in j)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _orbital_angular_momentum(value: float) -> str:
     rounded = round(value)
     if not np.isclose(value, rounded, rtol=0.0, atol=1.0e-8):
@@ -183,6 +276,10 @@ def _orbital_angular_momentum(value: float) -> str:
     return str(rounded)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def smatrix(
     result: ScatteringResult | CoupledStatesResult,
     *,
@@ -195,7 +292,31 @@ def smatrix(
     j_prime: QuantumSelection = None,
     block_index: int | None = None,
 ) -> str:
-    """Return selected atom-diatom S-matrix elements with energies in cm-1."""
+    """
+    Format selected atom-diatom S-matrix elements as a text table.
+
+    Initial-state filters select matrix columns and final-state filters select
+    matrix rows, following ``S[out, in]``. A filter may be one integer, a range,
+    an integer sequence, or None to retain every available value. The complex
+    S-matrix elements are written with 16 digits after the decimal point.
+
+    Inputs:
+        result: ScatteringResult | CoupledStatesResult - completed scattering
+            calculation to report
+        energy_indices: EnergySelection - integer indices, slice, or integer
+            sequence selecting total-energy entries; None selects all entries
+        state: QuantumSelection - initial electronic-state filter
+        v: QuantumSelection - initial vibrational-state filter
+        j: QuantumSelection - initial rotational-state filter
+        state_prime: QuantumSelection - final electronic-state filter
+        v_prime: QuantumSelection - final vibrational-state filter
+        j_prime: QuantumSelection - final rotational-state filter
+        block_index: int | None - coupled-states K-block result to report; may be
+            omitted only when the result contains one block
+
+    Returns:
+        output: str - formatted S-matrix table with total energies in cm-1
+    """
     state_values = _selection(state, "state")
     v_values = _selection(v, "v")
     j_values = _selection(j, "j")
@@ -271,3 +392,6 @@ def smatrix(
                 )
                 rows.append(row)
     return _table(headers, rows)
+
+
+# ----------------------------------------------------------------------------------------

@@ -7,12 +7,13 @@ from pyticc.basis.channel import TruncSpec
 from pyticc.basis.monomer import AtomSpec
 from pyticc.constants import CM2AU
 from pyticc.input.common import TomlTable, approximation, build_diatom, diatom_symbols, energies, k_cut, propagation, required, section
-from pyticc.pes.wrapper import PESWrapper
+from pyticc.pes.adiabatic import PESWrapper
 from pyticc.result import CoupledStatesResult, ScatteringResult
 from pyticc.scattering.solver import solve
 from pyticc.system import ScattSystem, element_masses_au, reduced_mass
 
 
+# ----------------------------------------------------------------------------------------
 def run(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | CoupledStatesResult:
     """Run an atom-diatom calculation from parsed TOML data."""
     potential = pes.monomer_Y
@@ -46,3 +47,6 @@ def run(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | Co
         n_theta=int(required(quadrature, "n_theta")),
     )
     return solve(hamiltonian, energies(required(config, "energies_cm"), base), propagation(config))
+
+
+# ----------------------------------------------------------------------------------------

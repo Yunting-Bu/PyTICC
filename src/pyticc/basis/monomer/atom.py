@@ -1,6 +1,7 @@
 from pyticc.system import MolInnerState, MonomerType
 
 
+# ----------------------------------------------------------------------------------------
 class AtomSpec:
     """Structureless atomic monomer with one zero-energy internal state."""
 
@@ -18,3 +19,6 @@ class AtomSpec:
     def allows_K(self, mis: MolInnerState, K: int) -> bool:
         """Allow every system helicity because the atomic monomer has j=0."""
         return True
+
+
+# ----------------------------------------------------------------------------------------

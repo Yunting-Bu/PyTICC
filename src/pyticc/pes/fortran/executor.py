@@ -15,8 +15,8 @@ import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pyticc.pes.adiabatic import MonomerPES, PESWrapper
 from pyticc.pes.diabatic import DiabaticPESWrapper
-from pyticc.pes.wrapper import MonomerPES, PESWrapper
 
 
 @dataclass(frozen=True)

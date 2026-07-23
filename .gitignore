@@ -5,9 +5,11 @@ build/
 dist/
 wheels/
 *.egg-info
+tests/
 
 # Virtual environments
 .venv
+.venv-mkl
 
 # Local files
 .help

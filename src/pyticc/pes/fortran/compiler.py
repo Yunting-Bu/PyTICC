@@ -18,36 +18,38 @@ _INCLUDE_PATTERN = re.compile(r"^\s*include\s*['\"]([^'\"]+)['\"]", re.IGNORECAS
 
 
 # ----------------------------------------------------------------------------------------
-def prepare_extension(sources: tuple[Path, ...], wrapper: Path) -> tuple[str, Path]:
+def prepare_extension(sources: tuple[Path, ...], wrapper: Path, *, lapack: bool = False) -> tuple[str, Path]:
     """
     Return a cached or newly compiled Fortran PES extension.
 
     Inputs:
         sources: tuple[Path, ...] - Fortran PES source files
         wrapper: Path - source implementing the PyTICC grid routines
+        lapack: bool - whether the PES requires LAPACK
 
     Returns:
         module_name: str - hash-qualified Python extension name
         extension: Path - compiled platform-specific extension path
     """
-    return _prepare_extension(sources, wrapper, "scalar")
+    return _prepare_extension(sources, wrapper, "scalar", lapack)
 
 
 # ----------------------------------------------------------------------------------------
-def prepare_diabatic_extension(sources: tuple[Path, ...], wrapper: Path) -> tuple[str, Path]:
+def prepare_diabatic_extension(sources: tuple[Path, ...], wrapper: Path, *, lapack: bool = False) -> tuple[str, Path]:
     """Return a cached or newly compiled diabatic PES extension."""
-    return _prepare_extension(sources, wrapper, "diabatic")
+    return _prepare_extension(sources, wrapper, "diabatic", lapack)
 
 
 # ----------------------------------------------------------------------------------------
-def _prepare_extension(sources: tuple[Path, ...], wrapper: Path, abi: PESABI) -> tuple[str, Path]:
+def _prepare_extension(sources: tuple[Path, ...], wrapper: Path, abi: PESABI, lapack: bool) -> tuple[str, Path]:
     """Compile one scalar or diabatic Fortran PES ABI."""
     routines = _find_routines(wrapper, abi)
-    module_name = f"pyticc_pes_{_source_digest(sources, wrapper, abi)[:12]}"
+    compiler_selection = os.environ.get("FC", "auto")
+    module_name = f"pyticc_pes_{_source_digest(sources, wrapper, abi, lapack=lapack, compiler=compiler_selection)[:12]}"
     build_dir = _cache_dir() / module_name
     extension = _find_extension(build_dir, module_name)
     if extension is None:
-        extension = _compile_extension(build_dir, module_name, sources, wrapper, routines, abi, _require_build_tools())
+        extension = _compile_extension(build_dir, module_name, sources, wrapper, routines, abi, _require_build_tools(), lapack)
     return module_name, extension
 
 
@@ -65,13 +67,22 @@ def _cache_dir() -> Path:
 
 
 # ----------------------------------------------------------------------------------------
-def _source_digest(sources: tuple[Path, ...], wrapper: Path, abi: PESABI = "scalar") -> str:
+def _source_digest(
+    sources: tuple[Path, ...],
+    wrapper: Path,
+    abi: PESABI = "scalar",
+    *,
+    lapack: bool = False,
+    compiler: str = "auto",
+) -> str:
     """Hash PES sources and the active Python/NumPy runtime for cache invalidation."""
     digest = hashlib.sha256()
     for path in _source_dependencies((*sources, wrapper)):
         digest.update(path.name.encode())
         digest.update(path.read_bytes())
     digest.update(abi.encode())
+    digest.update(f"lapack={lapack}".encode())
+    digest.update(f"compiler={compiler}".encode())
     digest.update(sys.version.encode())
     digest.update(np.__version__.encode())
     return digest.hexdigest()
@@ -158,7 +169,7 @@ def _find_routines(wrapper: Path, abi: PESABI = "scalar") -> set[str]:
     source = wrapper.read_text(errors="ignore")
     supported = _SCALAR_ROUTINES if abi == "scalar" else _DIABATIC_ROUTINES
     routines = {name for name in supported if re.search(rf"^\s*subroutine\s+{name}\b", source, re.IGNORECASE | re.MULTILINE)}
-    required = {"pyticc_interaction_grid"} if abi == "scalar" else set(_DIABATIC_ROUTINES)
+    required: set[str] = {"pyticc_interaction_grid"} if abi == "scalar" else set(_DIABATIC_ROUTINES)
     missing = required - routines
     if missing:
         message = f"Fortran {abi} wrapper must define {', '.join(sorted(missing))}: {wrapper}"
@@ -225,6 +236,7 @@ def _compile_extension(
     routines: set[str],
     abi: PESABI,
     compiler: str,
+    lapack: bool,
 ) -> Path:
     """Compile a Fortran PES extension with f2py/Meson and return its shared library."""
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -245,17 +257,94 @@ def _compile_extension(
         f"--f77flags=-O3 {include_flags}",
         f"--f90flags=-O3 {include_flags}",
     ]
-    environment = os.environ.copy()
-    environment["FC"] = compiler
-    result = subprocess.run(command, cwd=build_dir, env=environment, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    dependencies, link_args = _lapack_options(compiler, lapack)
+    result = _run_f2py(command, build_dir, compiler, dependencies, link_args)
+    build_attempts = [_build_configuration(compiler, lapack, dependencies, link_args) + result.stdout]
+    if result.returncode != 0 and dependencies == ("lapack",):
+        dependencies = ()
+        link_args = _lapack_fallback_link_args()
+        result = _run_f2py(command, build_dir, compiler, dependencies, link_args)
+        build_attempts.append(_build_configuration(compiler, lapack, dependencies, link_args) + result.stdout)
     build_log = build_dir / "build.log"
-    build_log.write_text(result.stdout)
+    build_log.write_text("\n\n===== LAPACK fallback build =====\n\n".join(build_attempts))
     extension = _find_extension(build_dir, module_name)
     if result.returncode != 0 or extension is None:
         message = f"Failed to build Fortran PES. Build log: {build_log}"
         logger.error(message)
         raise RuntimeError(message)
     return extension
+
+
+def _run_f2py(
+    command: list[str],
+    build_dir: Path,
+    compiler: str,
+    dependencies: tuple[str, ...],
+    link_args: tuple[str, ...],
+) -> subprocess.CompletedProcess[str]:
+    """Run one f2py build attempt with the selected dependencies and linker flags."""
+    build_command = command.copy()
+    for dependency in dependencies:
+        build_command.extend(("--dep", dependency))
+    environment = os.environ.copy()
+    environment["FC"] = compiler
+    if link_args:
+        environment["LDFLAGS"] = " ".join((*environment.get("LDFLAGS", "").split(), *link_args))
+    return subprocess.run(
+        build_command,
+        cwd=build_dir,
+        env=environment,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+
+def _build_configuration(
+    compiler: str,
+    lapack: bool,
+    dependencies: tuple[str, ...],
+    link_args: tuple[str, ...],
+) -> str:
+    """Format the effective compiler and LAPACK configuration for the build log."""
+    return (
+        f"compiler={compiler}\n"
+        f"lapack={str(lapack).lower()}\n"
+        f"dependencies={','.join(dependencies) or 'none'}\n"
+        f"link_args={' '.join(link_args) or 'none'}\n\n"
+    )
+
+
+def _lapack_options(compiler: str, lapack: bool) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return Meson dependencies and linker flags for an optional LAPACK requirement."""
+    if not lapack:
+        return (), ()
+    compiler_name = Path(compiler).stem.lower()
+    if compiler_name in {"ifort", "ifx"}:
+        return (), (("/Qmkl:sequential" if os.name == "nt" else "-qmkl=sequential"),)
+    return ("lapack",), ()
+
+
+def _lapack_fallback_link_args() -> tuple[str, ...]:
+    """Return portable fallback flags, preferring MKL from the active Python environment."""
+    library_names = ("libmkl_rt.so", "libmkl_rt.dylib", "mkl_rt.lib")
+    roots = [Path(sys.base_prefix), Path(sys.prefix)]
+    for variable in ("CONDA_PREFIX", "MKLROOT"):
+        value = os.environ.get(variable)
+        if value is not None:
+            roots.append(Path(value))
+    directories: list[Path] = []
+    for root in roots:
+        directories.extend((root / "lib", root / "lib" / "intel64", root / "Library" / "lib"))
+    for directory in dict.fromkeys(directories):
+        if any((directory / name).is_file() for name in library_names):
+            flags = [f"-L{directory}"]
+            if os.name != "nt":
+                flags.append(f"-Wl,-rpath,{directory}")
+            flags.append("-lmkl_rt")
+            return tuple(flags)
+    return ("-llapack", "-lblas")
 
 
 # ----------------------------------------------------------------------------------------
@@ -270,3 +359,6 @@ def _find_extension(build_dir: Path, module_name: str) -> Path | None:
             return extension
     candidates = sorted(build_dir.glob(f"{module_name}*.so")) + sorted(build_dir.glob(f"{module_name}*.pyd"))
     return candidates[0] if candidates else None
+
+
+# ----------------------------------------------------------------------------------------

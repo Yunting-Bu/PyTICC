@@ -14,6 +14,7 @@ from pyticc.basis.channel import ChannelBasis
 from pyticc.energy import EnergyInput, get_Etot
 from pyticc.matrix.centrifugal import get_Umat_BF
 from pyticc.matrix.radial import get_Wmat
+from pyticc.propagation.device import resolve_device
 from pyticc.propagation.grid import build_radial_sectors, iter_radial_windows
 from pyticc.propagation.logd import initialize_logD_capture, initialize_logD_inelastic, propagate_logD
 
@@ -24,6 +25,7 @@ VmatCallback = Callable[[float], NDArray[np.float64]] | Callable[[NDArray[np.flo
 InteractionProvider = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[NDArray[np.float64], ...]]
 
 
+# ----------------------------------------------------------------------------------------
 def propagate(
     hamiltonian: ScattHamiltonian,
     Etot: EnergyInput,
@@ -31,7 +33,8 @@ def propagate(
     radial_half_steps: Sequence[float],
     mode: Literal["inelastic", "capture"] = "inelastic",
     memory_limit_mb: float = 512.0,
-    progress_every_sectors: int | None = None,
+    print_verbose: bool = False,
+    device: str = "auto",
 ) -> jax.Array:
     """Propagate one scattering Hamiltonian to the final radial boundary.
 
@@ -42,8 +45,7 @@ def propagate(
         radial_half_steps: Sequence[float] - LDMD half-step for every interval
         mode: Literal["inelastic", "capture"] - inner-boundary condition
         memory_limit_mb: float - target transient-memory limit in MiB
-        progress_every_sectors: int | None - INFO-log interval in completed sectors;
-            None selects an automatic interval and zero disables intermediate logs
+        print_verbose: bool - whether to emit INFO-level propagation progress
 
     Returns:
         Y_final: jax.Array - final body-fixed log-derivative matrices
@@ -59,8 +61,12 @@ def propagate(
         batch_Vmat=hamiltonian.batched,
         memory_limit_mb=memory_limit_mb,
         potential_grid_size=hamiltonian.potential_grid_size,
-        progress_every_sectors=progress_every_sectors,
+        print_verbose=print_verbose,
+        device=device,
     )
+
+
+# ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------
@@ -75,7 +81,8 @@ def propagate_BF_blocks(
     mode: Literal["inelastic", "capture"],
     memory_limit_mb: float,
     potential_grid_size: int,
-    progress_every_sectors: int | None = None,
+    print_verbose: bool = False,
+    device: str = "auto",
 ) -> tuple[jax.Array, ...]:
     """
     Propagate one or more body-fixed channel blocks through shared radial windows.
@@ -101,8 +108,8 @@ def propagate_BF_blocks(
         memory_limit_mb: float - target transient-memory limit in MiB
         potential_grid_size: int - internal PES grid points per R used by the
             memory estimator
-        progress_every_sectors: int | None - INFO-log interval in completed sectors;
-            None selects an automatic interval and zero disables intermediate logs
+        print_verbose: bool - whether to emit INFO-level propagation progress
+        device: str - auto, CPU, or GPU propagation-device request
 
     Returns:
         Y_blocks: tuple[jax.Array, ...] - final log derivatives; each array has
@@ -112,7 +119,7 @@ def propagate_BF_blocks(
         message = f"mode must be 'inelastic' or 'capture', but got {mode!r}"
         logger.error(message)
         raise ValueError(message)
-
+    selected_device = resolve_device(device)
     blocks = tuple(tuple(indices) for indices in channel_blocks)
     if not blocks or any(not indices for indices in blocks):
         message = "At least one non-empty channel block is required for propagation"
@@ -137,11 +144,13 @@ def propagate_BF_blocks(
         state_matrix_elements=sum(size**2 for size in block_sizes),
     )
     n_sector = len(sectors)
-    progress_interval = max(1, ceil(n_sector / 10)) if progress_every_sectors is None else progress_every_sectors
+    progress_interval = max(1, ceil(n_sector / 10))
     next_progress = progress_interval
     completed_sectors = 0
     propagation_start = perf_counter()
-    logger.info(f"Propagation started: blocks={len(blocks)}, sectors={n_sector}, channels={max(block_sizes)}, energies={energies.size}")
+    logger.info(f"Propagation device: {selected_device.label}, x64={jax.config.jax_enable_x64}")
+    if print_verbose:
+        logger.info(f"Propagation started: blocks={len(blocks)}, sectors={n_sector}, channels={max(block_sizes)}, energies={energies.size}")
 
     Y_states: list[jax.Array | None] = [None] * len(blocks)
     cached_R: float | None = None
@@ -186,9 +195,9 @@ def propagate_BF_blocks(
                 identity = np.eye(n_channel, dtype=np.float64)
                 W_initial = W_base_start[0][None, :, :] - 2.0 * reduced_mass * energies[:, None, None] * identity
                 if mode == "inelastic":
-                    Y_current = initialize_logD_inelastic(W_initial)
+                    Y_current = initialize_logD_inelastic(jax.device_put(W_initial, selected_device.device))
                 else:
-                    Y_current = initialize_logD_capture(W_initial)
+                    Y_current = initialize_logD_capture(jax.device_put(W_initial, selected_device.device))
 
             Y_states[block_index] = propagate_logD(
                 Y_current,
@@ -198,19 +207,20 @@ def propagate_BF_blocks(
                 W_base_start,
                 W_base_mid,
                 W_base_end,
+                device=selected_device.device,
             )
             cached_interactions[block_index] = interactions[-1].copy()
 
         cached_R = float(radial_points[-1])
         completed_sectors += len(window)
-        if completed_sectors == n_sector or (progress_interval > 0 and completed_sectors >= next_progress):
+        if print_verbose and (completed_sectors == n_sector or completed_sectors >= next_progress):
             for Y_state in Y_states:
                 if Y_state is not None:
                     Y_state.block_until_ready()
             logger.info(
                 f"Propagation: {completed_sectors}/{n_sector} sectors, R={cached_R:.6f} bohr, wall={perf_counter() - propagation_start:.3f} s"
             )
-            while progress_interval > 0 and next_progress <= completed_sectors:
+            while next_progress <= completed_sectors:
                 next_progress += progress_interval
         logger.trace(f"Completed radial window {window_index + 1}")
 
@@ -237,7 +247,8 @@ def propagate_BF(
     batch_Vmat: bool = False,
     memory_limit_mb: float = 512.0,
     potential_grid_size: int = 0,
-    progress_every_sectors: int | None = None,
+    print_verbose: bool = False,
+    device: str = "auto",
 ) -> jax.Array:
     r"""
     Propagate one body-fixed log-derivative block with the LDMD method.
@@ -265,8 +276,8 @@ def propagate_BF(
         memory_limit_mb: float - target transient-memory limit in MiB
         potential_grid_size: int - internal PES grid points per R used by the memory
             estimator
-        progress_every_sectors: int | None - INFO-log interval in completed sectors;
-            None selects an automatic interval and zero disables intermediate logs
+        print_verbose: bool - whether to emit INFO-level propagation progress
+        device: str - auto, CPU, or GPU propagation-device request
 
     Returns:
         Y_final: jax.Array - final log-derivative matrices with shape
@@ -296,5 +307,9 @@ def propagate_BF(
         mode,
         memory_limit_mb,
         potential_grid_size,
-        progress_every_sectors,
+        print_verbose=print_verbose,
+        device=device,
     )[0]
+
+
+# ----------------------------------------------------------------------------------------

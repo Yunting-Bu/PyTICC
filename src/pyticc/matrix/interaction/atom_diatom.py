@@ -12,6 +12,7 @@ from pyticc.basis.podvr import RovibPODVR
 from pyticc.matrix.interaction import VBasisBF
 
 
+# ----------------------------------------------------------------------------------------
 def prepare(
     basis: ChannelBasis,
     rovib: RovibPODVR,
@@ -48,3 +49,6 @@ def prepare(
         B_real=B_real,
         B_imag=None,
     )
+
+
+# ----------------------------------------------------------------------------------------

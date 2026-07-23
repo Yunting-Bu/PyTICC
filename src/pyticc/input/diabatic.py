@@ -14,6 +14,7 @@ from pyticc.scattering.solver import solve
 from pyticc.system import Approx, ScattSystem, element_masses_au, reduced_mass
 
 
+# ----------------------------------------------------------------------------------------
 def run(config: TomlTable, base: Path, pes: DiabaticPESWrapper) -> ScatteringResult:
     """Run a diabatic atom-diatom calculation from parsed TOML data."""
     approx, _ = approximation(config)
@@ -69,3 +70,6 @@ def run(config: TomlTable, base: Path, pes: DiabaticPESWrapper) -> ScatteringRes
         logger.error(message)
         raise TypeError(message)
     return result
+
+
+# ----------------------------------------------------------------------------------------

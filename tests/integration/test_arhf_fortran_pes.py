@@ -52,6 +52,38 @@ subroutine pyticc_monomer_y_grid(r, V, n_grid)
 end subroutine pyticc_monomer_y_grid
 """
 
+LAPACK_SOURCE = """
+subroutine lowest_eigenvalue(RR, coupling, value)
+    implicit none
+    real(8), intent(in) :: RR, coupling
+    real(8), intent(out) :: value
+    real(8) :: matrix(2, 2), eigenvalues(2), work(6)
+    integer :: info
+
+    matrix(1, 1) = RR
+    matrix(1, 2) = coupling
+    matrix(2, 1) = coupling
+    matrix(2, 2) = RR + 2.0d0
+    call dsyev('N', 'U', 2, matrix, 2, eigenvalues, work, 6, info)
+    if (info /= 0) stop "DSYEV failed"
+    value = eigenvalues(1)
+end subroutine lowest_eigenvalue
+"""
+
+LAPACK_WRAPPER = """
+subroutine pyticc_interaction_grid(RR, coordinates, V, n_coordinate, n_grid)
+    implicit none
+    integer, intent(in) :: n_coordinate, n_grid
+    real(8), intent(in) :: RR, coordinates(n_coordinate, n_grid)
+    real(8), intent(out) :: V(n_grid)
+    integer :: i
+
+    do i = 1, n_grid
+        call lowest_eigenvalue(RR, coordinates(1, i), V(i))
+    end do
+end subroutine pyticc_interaction_grid
+"""
+
 
 @pytest.mark.skipif(not all(compiler_module._build_tools()), reason="Fortran f2py/Meson toolchain is unavailable")
 def test_ArHF_fortran_wrapper_compiles_and_evaluates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -92,3 +124,24 @@ def test_ArHF_fortran_wrapper_compiles_and_evaluates(tmp_path: Path, monkeypatch
     np.testing.assert_allclose(parallel_values, parallel_expected)
     np.testing.assert_allclose(get_Vgrid_atom_diatom(parallel_pes, np.array([8.0]), r, theta)[0], 8.0 + 2.0 * r[:, None] + theta[None, :] / np.pi)
     parallel_pes.close()
+
+
+@pytest.mark.skipif(not all(compiler_module._build_tools()), reason="Fortran f2py/Meson toolchain is unavailable")
+def test_fortran_pes_links_and_executes_lapack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "lapack_pes.f90"
+    wrapper = tmp_path / "pyticc_wrapper.f90"
+    config = tmp_path / "lapack.toml"
+    source.write_text(LAPACK_SOURCE)
+    wrapper.write_text(LAPACK_WRAPPER)
+    config.write_text("\n".join(('sources = ["lapack_pes.f90"]', 'wrapper = "pyticc_wrapper.f90"', "lapack = true")))
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("PYTICC_CACHE_DIR", str(cache))
+
+    pes = load_fortran_pes(config)
+    coupling = np.array([0.0, 0.5])
+    values = get_Vgrid_atom_diatom(pes, R=3.0, r=coupling, theta=np.array([0.0]))[:, 0]
+
+    np.testing.assert_allclose(values, 4.0 - np.sqrt(1.0 + coupling**2))
+    build_log = next(cache.glob("pyticc_pes_*/build.log")).read_text()
+    assert "lapack=true" in build_log
+    assert "dependencies=lapack" in build_log

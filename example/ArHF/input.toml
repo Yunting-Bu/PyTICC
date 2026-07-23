@@ -36,3 +36,4 @@ radial_boundaries = [4.5, 6.5, 7.94, 11.94]
 radial_half_steps = [0.05, 0.08, 0.10]
 mode = "inelastic"
 memory_limit_mb = 512.0
+device = "auto"

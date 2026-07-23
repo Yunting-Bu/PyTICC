@@ -9,13 +9,14 @@ from pyticc.basis.dvr import build_SineDVR
 from pyticc.basis.monomer import DiatomBasis, build_DiatomBasis
 from pyticc.constants import CM2AU
 from pyticc.energy import EnergyInput, get_Etot
-from pyticc.pes.wrapper import MonomerPES
+from pyticc.pes.adiabatic import MonomerPES
 from pyticc.propagation.config import Propagation, PropagationMode
 from pyticc.system import Approx, element_masses_au, reduced_mass
 
 TomlTable = dict[str, Any]
 
 
+# ----------------------------------------------------------------------------------------
 def required(table: TomlTable, key: str) -> Any:
     """Read a required TOML value."""
     try:
@@ -26,6 +27,10 @@ def required(table: TomlTable, key: str) -> Any:
         raise ValueError(message) from error
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def section(config: TomlTable, name: str) -> TomlTable:
     """Read and type-check one required TOML table."""
     value = required(config, name)
@@ -36,18 +41,30 @@ def section(config: TomlTable, name: str) -> TomlTable:
     return value
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def resolve_path(base: Path, value: str | Path) -> Path:
     """Resolve a user path relative to the input file."""
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (base / path).resolve()
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def energies(value: Any, base: Path) -> NDArray[np.float64]:
     """Read total energies in cm-1 and convert them to atomic units."""
     source = resolve_path(base, value) if isinstance(value, str | Path) else value
     return get_Etot(cast(EnergyInput, source)) * CM2AU
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def k_cut(values: TomlTable) -> int | None:
     """Parse a non-negative helicity cutoff or the literal ``none``."""
     value = required(values, "K_cut")
@@ -61,6 +78,10 @@ def k_cut(values: TomlTable) -> int | None:
     raise ValueError(message)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def approximation(config: TomlTable) -> tuple[Approx, int]:
     """Parse the exact, CS, or NNCC method and its neighboring-K range."""
     values = config.get("approximation", {"method": "exact"})
@@ -85,6 +106,10 @@ def approximation(config: TomlTable) -> tuple[Approx, int]:
     return approx, K_delta
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def propagation(config: TomlTable) -> Propagation:
     """Parse the radial propagation settings."""
     values = section(config, "propagation")
@@ -93,10 +118,15 @@ def propagation(config: TomlTable) -> Propagation:
         half_steps=tuple(float(value) for value in required(values, "radial_half_steps")),
         mode=cast(PropagationMode, required(values, "mode")),
         memory_mb=float(values.get("memory_limit_mb", 512.0)),
-        progress_every_sectors=values.get("progress_every_sectors"),
+        device=values.get("device", "auto"),
+        print_verbose=values.get("print_verbose", False),
     )
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def diatom_symbols(config: TomlTable, key: str) -> tuple[str, str]:
     """Read exactly two element symbols for one diatomic monomer."""
     symbols = tuple(str(symbol) for symbol in required(config, key))
@@ -107,6 +137,10 @@ def diatom_symbols(config: TomlTable, key: str) -> tuple[str, str]:
     return cast(tuple[str, str], symbols)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def state_int(values: TomlTable, key: str, n_state: int, default: int | None = None) -> int | tuple[int, ...]:
     """Read one integer shared by all electronic states or one per state."""
     value = values.get(key, default) if default is not None else required(values, key)
@@ -119,6 +153,10 @@ def state_int(values: TomlTable, key: str, n_state: int, default: int | None = N
     return tuple(value)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def build_diatom(symbols: tuple[str, str], values: TomlTable, potential: MonomerPES) -> tuple[DiatomBasis, float]:
     """Build an adiabatic diatomic basis and return its total mass."""
     interval = tuple(float(value) for value in required(values, "r"))
@@ -143,3 +181,6 @@ def build_diatom(symbols: tuple[str, str], values: TomlTable, potential: Monomer
         jpar=int(values.get("jpar", 0)),
     )
     return basis, total_mass
+
+
+# ----------------------------------------------------------------------------------------

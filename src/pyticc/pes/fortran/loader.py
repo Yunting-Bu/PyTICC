@@ -4,10 +4,10 @@ from pathlib import Path
 
 from loguru import logger
 
+from pyticc.pes.adiabatic import PESWrapper
 from pyticc.pes.diabatic import DiabaticPESWrapper
 from pyticc.pes.fortran.compiler import prepare_diabatic_extension, prepare_extension
 from pyticc.pes.fortran.executor import create_diabatic_pes_wrapper, create_pes_wrapper
-from pyticc.pes.wrapper import PESWrapper
 
 
 # ----------------------------------------------------------------------------------------
@@ -17,6 +17,7 @@ def load_fortran_pes(
     *,
     workdir: str | Path | None = None,
     processes: int = 1,
+    lapack: bool = False,
 ) -> PESWrapper:
     """
     Compile or load fixed-interface Fortran potential-energy surfaces.
@@ -30,13 +31,15 @@ def load_fortran_pes(
         wrapper: str | Path | None - source implementing the PyTICC grid routines
         workdir: str | Path | None - directory containing PES runtime data files
         processes: int - worker processes used when several R values are evaluated
+        lapack: bool - whether the PES requires LAPACK
 
     Returns:
         pes: PESWrapper - compiled monomer and interaction potential interfaces
     """
 
-    source_paths, wrapper_path, runtime_dir = _resolve_inputs(sources, wrapper, workdir)
-    module_name, extension = prepare_extension(source_paths, wrapper_path)
+    requested_lapack = _require_lapack(lapack)
+    source_paths, wrapper_path, runtime_dir, configured_lapack = _resolve_inputs(sources, wrapper, workdir)
+    module_name, extension = prepare_extension(source_paths, wrapper_path, lapack=requested_lapack or configured_lapack)
     return create_pes_wrapper(module_name, extension, runtime_dir, processes)
 
 
@@ -51,6 +54,7 @@ def load_fortran_diabatic_pes(
     n_state: int = 2,
     workdir: str | Path | None = None,
     processes: int = 1,
+    lapack: bool = False,
 ) -> DiabaticPESWrapper:
     """
     Compile or load fixed-interface Fortran diabatic potential-energy matrices.
@@ -66,6 +70,7 @@ def load_fortran_diabatic_pes(
         n_state: int - number of diabatic electronic states
         workdir: str | Path | None - directory containing PES runtime data files
         processes: int - worker processes used for batched radial evaluation
+        lapack: bool - whether the PES requires LAPACK
 
     Returns:
         pes: DiabaticPESWrapper - compiled monomer potentials and diabatic interaction matrix
@@ -74,8 +79,9 @@ def load_fortran_diabatic_pes(
         message = f"n_state must be positive, but got {n_state}"
         logger.error(message)
         raise ValueError(message)
-    source_paths, wrapper_path, runtime_dir = _resolve_inputs(sources, wrapper, workdir)
-    module_name, extension = prepare_diabatic_extension(source_paths, wrapper_path)
+    requested_lapack = _require_lapack(lapack)
+    source_paths, wrapper_path, runtime_dir, configured_lapack = _resolve_inputs(sources, wrapper, workdir)
+    module_name, extension = prepare_diabatic_extension(source_paths, wrapper_path, lapack=requested_lapack or configured_lapack)
     return create_diabatic_pes_wrapper(module_name, extension, runtime_dir, processes, n_state)
 
 
@@ -87,10 +93,11 @@ def _resolve_inputs(
     sources: Sequence[str | Path] | str | Path,
     wrapper: str | Path | None,
     workdir: str | Path | None,
-) -> tuple[tuple[Path, ...], Path, Path | None]:
+) -> tuple[tuple[Path, ...], Path, Path | None, bool]:
     """Resolve direct or TOML-configured PES sources, wrapper, and runtime directory."""
     base = Path.cwd()
     source_values: Sequence[str | Path]
+    configured_lapack = False
 
     if wrapper is None:
         if not isinstance(sources, str | Path):
@@ -103,6 +110,7 @@ def _resolve_inputs(
             values = tomllib.load(file)
         source_values = values.get("sources", ())
         wrapper = values.get("wrapper")
+        configured_lapack = _require_lapack(values.get("lapack", False))
         if workdir is None:
             workdir = values.get("workdir")
     else:
@@ -126,7 +134,7 @@ def _resolve_inputs(
         message = f"Fortran PES workdir does not exist: {runtime_dir}"
         logger.error(message)
         raise FileNotFoundError(message)
-    return source_paths, wrapper_path, runtime_dir
+    return source_paths, wrapper_path, runtime_dir, configured_lapack
 
 
 # ----------------------------------------------------------------------------------------
@@ -137,3 +145,12 @@ def _resolve_path(path: str | Path, base: Path) -> Path:
     """Resolve an absolute or base-relative filesystem path."""
     value = Path(path).expanduser()
     return value.resolve() if value.is_absolute() else (base / value).resolve()
+
+
+def _require_lapack(value: object) -> bool:
+    """Return a validated LAPACK switch."""
+    if not isinstance(value, bool):
+        message = f"lapack must be a boolean, but got {value!r}"
+        logger.error(message)
+        raise ValueError(message)
+    return value

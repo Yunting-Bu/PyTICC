@@ -10,8 +10,8 @@ from loguru import logger
 from pyticc.constants import AMU2AU
 
 if TYPE_CHECKING:
+    from pyticc.pes.adiabatic import PESWrapper
     from pyticc.pes.diabatic import DiabaticPESWrapper
-    from pyticc.pes.wrapper import PESWrapper
 
 # ----------------------------------------------------------------------------------------
 # Mass
@@ -35,6 +35,7 @@ ELEMENT_MASS_AU: dict[str, float] = {symbol: mass * AMU2AU for symbol, mass in E
 SUPPORTED_ELEMENT_SYMBOLS = tuple(ELEMENT_MASS_AU)
 
 
+# ----------------------------------------------------------------------------------------
 def set_j_parity(jpar: int) -> tuple[int, int]:
     """Return the first allowed rotational j and its increment."""
     try:
@@ -43,6 +44,9 @@ def set_j_parity(jpar: int) -> tuple[int, int]:
         message = f"jpar must be -1, 0, or 1, but got jpar={jpar}"
         logger.error(message)
         raise ValueError(message) from error
+
+
+# ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------

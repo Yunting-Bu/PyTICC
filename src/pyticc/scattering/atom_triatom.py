@@ -11,7 +11,7 @@ from pyticc.basis.channel import ChannelBuilder, TruncSpec
 from pyticc.basis.monomer import AtomSpec
 from pyticc.basis.triatom import TriatomBasis
 from pyticc.matrix.interaction import contract
-from pyticc.pes.wrapper import PESWrapper, get_Vgrid_atom_triatom
+from pyticc.pes.adiabatic import PESWrapper, get_Vgrid_atom_triatom
 from pyticc.scattering.hamiltonian import ScattHamiltonian
 from pyticc.system import ScattSystem
 

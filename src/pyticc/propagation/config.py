@@ -4,7 +4,16 @@ from typing import Literal
 import numpy as np
 from loguru import logger
 
+from pyticc.propagation.device import normalize_device_spec
+
 PropagationMode = Literal["inelastic", "capture"]
+
+
+def _validate_print_verbose(value: object) -> None:
+    if not isinstance(value, bool):
+        message = f"Propagation print_verbose must be a boolean, but got {value!r}"
+        logger.error(message)
+        raise ValueError(message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,21 +25,23 @@ class Propagation:
         half_steps: tuple[float, ...] - nominal LDMD half-step in each interval
         mode: PropagationMode - inner-boundary condition
         memory_mb: float - target transient-memory limit in MiB
-        progress_every_sectors: int | None - INFO-log interval in completed sectors;
-            None selects an automatic interval and zero disables intermediate logs
+        device: str - auto, CPU, or GPU propagation-device request
+        print_verbose: bool - whether to emit INFO-level propagation progress
     """
 
     boundaries: tuple[float, ...]
     half_steps: tuple[float, ...]
     mode: PropagationMode = "inelastic"
     memory_mb: float = 512.0
-    progress_every_sectors: int | None = None
+    device: str = "auto"
+    print_verbose: bool = False
 
     def __post_init__(self) -> None:
         boundaries = tuple(float(value) for value in self.boundaries)
         half_steps = tuple(float(value) for value in self.half_steps)
         object.__setattr__(self, "boundaries", boundaries)
         object.__setattr__(self, "half_steps", half_steps)
+        object.__setattr__(self, "device", normalize_device_spec(self.device))
 
         if len(boundaries) != len(half_steps) + 1 or not half_steps:
             message = f"Propagation boundaries and half_steps must have sizes N+1 and N, but got {len(boundaries)} and {len(half_steps)}"
@@ -52,12 +63,7 @@ class Propagation:
             message = f"Propagation memory_mb must be positive, but got {self.memory_mb}"
             logger.error(message)
             raise ValueError(message)
-        if self.progress_every_sectors is not None and (
-            not isinstance(self.progress_every_sectors, int) or isinstance(self.progress_every_sectors, bool) or self.progress_every_sectors < 0
-        ):
-            message = f"Propagation progress_every_sectors must be a non-negative integer or None, but got {self.progress_every_sectors!r}"
-            logger.error(message)
-            raise ValueError(message)
+        _validate_print_verbose(self.print_verbose)
 
     @property
     def Rmatch(self) -> float:

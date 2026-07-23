@@ -2,11 +2,17 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from loguru import logger
-from numpy.typing import NDArray
+from numpy.typing import DTypeLike, NDArray
 
 jax.config.update("jax_enable_x64", True)
 
 LogDInput = jax.Array | NDArray[np.float64] | NDArray[np.complex128]
+
+
+def _device_array(value: LogDInput | float, device: jax.Device | None, dtype: DTypeLike | None = None) -> jax.Array:
+    """Place one input directly on the requested device and optionally cast it there."""
+    array = jax.device_put(value, device)
+    return jnp.asarray(array, dtype=dtype)
 
 
 # ----------------------------------------------------------------------------------------
@@ -85,9 +91,9 @@ def initialize_logD_capture(Wmat: LogDInput) -> jax.Array:
 
 
 # ----------------------------------------------------------------------------------------
-def _reference_matrices(radial_half_step: jax.Array, W_mid: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
+def _reference_values(radial_half_step: jax.Array, reference_values: jax.Array) -> tuple[jax.Array, jax.Array]:
     r"""
-    Build diagonal LDMD reference matrices from the sector-midpoint potential.
+    Build diagonal LDMD reference values from the sector-midpoint potential.
 
     Formula:
         p_j^2 >= 0 :
@@ -99,17 +105,12 @@ def _reference_matrices(radial_half_step: jax.Array, W_mid: jax.Array) -> tuple[
 
     Inputs:
         radial_half_step: jax.Array - scalar half-sector step, shape ()
-        W_mid: jax.Array - midpoint radial matrix, shape (n_channel, n_channel)
+        reference_values: jax.Array - midpoint diagonal, shape (n_channel,)
 
     Returns:
-        y1: jax.Array - diagonal same-end reference log derivative, shape
-            (n_channel, n_channel)
-        y2: jax.Array - diagonal cross-end reference log derivative, shape
-            (n_channel, n_channel)
-        reference: jax.Array - diagonal reference potential, shape
-            (n_channel, n_channel)
+        y1_values: jax.Array - same-end reference diagonal, shape (n_channel,)
+        y2_values: jax.Array - cross-end reference diagonal, shape (n_channel,)
     """
-    reference_values = jnp.real(jnp.diag(W_mid))
     magnitude = jnp.sqrt(jnp.abs(reference_values))
     argument = magnitude * radial_half_step
     small = jnp.abs(argument) < 1.0e-5
@@ -124,8 +125,66 @@ def _reference_matrices(radial_half_step: jax.Array, W_mid: jax.Array) -> tuple[
 
     y1_values = jnp.where(small, y1_series, jnp.where(reference_values >= 0.0, y1_positive, y1_negative))
     y2_values = jnp.where(small, y2_series, jnp.where(reference_values >= 0.0, y2_positive, y2_negative))
-    reference = jnp.diag(reference_values.astype(W_mid.dtype))
-    return jnp.diag(y1_values.astype(W_mid.dtype)), jnp.diag(y2_values.astype(W_mid.dtype)), reference
+    return y1_values, y2_values
+
+
+def _add_diagonal(matrix: jax.Array, diagonal: jax.Array) -> jax.Array:
+    """Add one vector to the trailing matrix diagonal without materializing a diagonal matrix."""
+    indices = jnp.diag_indices(matrix.shape[-1])
+    return matrix.at[..., indices[0], indices[1]].add(diagonal)
+
+
+def _correction_matrices(
+    radial_half_step: jax.Array,
+    W_start: jax.Array,
+    W_mid: jax.Array,
+    W_end: jax.Array,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Build energy-independent LDMD correction matrices for one sector."""
+    dtype = jnp.result_type(W_start.dtype, W_mid.dtype, W_end.dtype)
+    W_start = W_start.astype(dtype)
+    W_mid = W_mid.astype(dtype)
+    W_end = W_end.astype(dtype)
+    n_channel = W_mid.shape[-1]
+    identity = jnp.eye(n_channel, dtype=dtype)
+    reference_values = jnp.real(jnp.diag(W_mid))
+    reference = jnp.diag(reference_values.astype(dtype))
+    T_start = W_start - reference
+    T_mid = W_mid - reference
+    T_end = W_end - reference
+    Q_start = radial_half_step * T_start / 3.0
+    Q_mid = 4.0 / radial_half_step * (jnp.linalg.solve(identity - radial_half_step**2 * T_mid / 6.0, identity) - identity)
+    Q_end = radial_half_step * T_end / 3.0
+    return reference_values, Q_start, Q_mid, Q_end
+
+
+def _propagate_with_corrections(
+    Ymat: jax.Array,
+    radial_half_step: jax.Array,
+    reference_values: jax.Array,
+    Q_start: jax.Array,
+    Q_mid: jax.Array,
+    Q_end: jax.Array,
+) -> jax.Array:
+    """Propagate one energy using precomputed energy-independent sector corrections."""
+    dtype = jnp.result_type(Ymat.dtype, Q_start.dtype, Q_mid.dtype, Q_end.dtype)
+    Ymat = Ymat.astype(dtype)
+    Q_start = Q_start.astype(dtype)
+    Q_mid = Q_mid.astype(dtype)
+    Q_end = Q_end.astype(dtype)
+    y1_values, y2_values = _reference_values(radial_half_step, reference_values)
+    y1_values = y1_values.astype(dtype)
+    y2_values = y2_values.astype(dtype)
+    y2 = _diagonal_matrix(y2_values)
+
+    start_matrix = _add_diagonal(Ymat + Q_start, y1_values)
+    start_solution = jnp.linalg.solve(start_matrix, y2)
+    Y_mid = _add_diagonal(Q_mid, y1_values) - y2_values[:, None] * start_solution
+
+    mid_matrix = _add_diagonal(Y_mid + Q_mid, y1_values)
+    mid_solution = jnp.linalg.solve(mid_matrix, y2)
+    Y_end = _add_diagonal(Q_end, y1_values) - y2_values[:, None] * mid_solution
+    return 0.5 * (Y_end + Y_end.T)
 
 
 # ----------------------------------------------------------------------------------------
@@ -152,25 +211,8 @@ def _propagate_logD_sector_jax(
         Q_mid = 4 / h [I - (I - h^2 T_mid / 6)^{-1}]
         Q_end = h T_end / 3
     """
-    dtype = jnp.result_type(Ymat.dtype, W_start.dtype, W_mid.dtype, W_end.dtype)
-    Ymat = Ymat.astype(dtype)
-    W_start = W_start.astype(dtype)
-    W_mid = W_mid.astype(dtype)
-    W_end = W_end.astype(dtype)
-    n_channel = Ymat.shape[-1]
-    identity = jnp.eye(n_channel, dtype=dtype)
-    y1, y2, reference = _reference_matrices(radial_half_step, W_mid)
-
-    T_start = W_start - reference
-    T_mid = W_mid - reference
-    T_end = W_end - reference
-    Q_start = radial_half_step * T_start / 3.0
-    Q_mid = 4.0 / radial_half_step * (jnp.linalg.solve(identity - radial_half_step**2 * T_mid / 6.0, identity) - identity)
-    Q_end = radial_half_step * T_end / 3.0
-
-    Y_mid = y1 + Q_mid - y2 @ jnp.linalg.solve(Ymat + y1 + Q_start, y2)
-    Y_end = y1 + Q_end - y2 @ jnp.linalg.solve(Y_mid + y1 + Q_mid, y2)
-    return 0.5 * (Y_end + Y_end.T)
+    reference_values, Q_start, Q_mid, Q_end = _correction_matrices(radial_half_step, W_start, W_mid, W_end)
+    return _propagate_with_corrections(Ymat, radial_half_step, reference_values, Q_start, Q_mid, Q_end)
 
 
 # ----------------------------------------------------------------------------------------
@@ -186,6 +228,8 @@ def propagate_logD_sector(
     W_start: LogDInput,
     W_mid: LogDInput,
     W_end: LogDInput,
+    *,
+    device: jax.Device | None = None,
 ) -> jax.Array:
     r"""
     Propagate a log-derivative matrix through one Manolopoulos LDMD sector.
@@ -204,6 +248,7 @@ def propagate_logD_sector(
             (n_channel, n_channel)
         W_end: LogDInput - radial equation matrix at the sector end, shape
             (n_channel, n_channel)
+        device: jax.Device | None - optional explicit JAX execution device
 
     Returns:
         Y_end: jax.Array - log-derivative matrix at the sector end, shape
@@ -221,11 +266,11 @@ def propagate_logD_sector(
             raise ValueError(message)
 
     return _propagate_logD_sector_compiled(
-        jnp.asarray(Ymat),
-        jnp.asarray(radial_half_step, dtype=jnp.float64),
-        jnp.asarray(W_start),
-        jnp.asarray(W_mid),
-        jnp.asarray(W_end),
+        _device_array(Ymat, device),
+        _device_array(radial_half_step, device, jnp.float64),
+        _device_array(W_start, device),
+        _device_array(W_mid, device),
+        _device_array(W_end, device),
     )
 
 
@@ -249,17 +294,21 @@ def _propagate_logD_jax(
     (n_energy,), half-steps have shape (n_sector,), and each W_base array has shape
     (n_sector, n_channel, n_channel). The return shape matches ``Y_initial``.
     """
-    n_channel = Y_initial.shape[-1]
-    identity = jnp.eye(n_channel, dtype=W_base_start.dtype)
-    energy_shift = 2.0 * reduced_mass * total_energies[:, None, None] * identity
+    energy_shift = 2.0 * reduced_mass * total_energies[:, None]
 
     def scan_sector(Ymat: jax.Array, sector: tuple[jax.Array, jax.Array, jax.Array, jax.Array]) -> tuple[jax.Array, None]:
         """Advance a Y batch with shape (n_energy, n_channel, n_channel) by one sector."""
         radial_half_step, base_start, base_mid, base_end = sector
-        W_start = base_start[None, :, :] - energy_shift
-        W_mid = base_mid[None, :, :] - energy_shift
-        W_end = base_end[None, :, :] - energy_shift
-        Y_end = jax.vmap(_propagate_logD_sector_jax, in_axes=(0, None, 0, 0, 0))(Ymat, radial_half_step, W_start, W_mid, W_end)
+        reference_values, Q_start, Q_mid, Q_end = _correction_matrices(radial_half_step, base_start, base_mid, base_end)
+        energy_reference_values = reference_values[None, :] - energy_shift
+        Y_end = jax.vmap(_propagate_with_corrections, in_axes=(0, None, 0, None, None, None))(
+            Ymat,
+            radial_half_step,
+            energy_reference_values,
+            Q_start,
+            Q_mid,
+            Q_end,
+        )
         return Y_end, None
 
     Y_final, _ = jax.lax.scan(scan_sector, Y_initial, (radial_half_steps, W_base_start, W_base_mid, W_base_end))
@@ -281,6 +330,8 @@ def propagate_logD(
     W_base_start: LogDInput,
     W_base_mid: LogDInput,
     W_base_end: LogDInput,
+    *,
+    device: jax.Device | None = None,
 ) -> jax.Array:
     r"""
     Propagate all total energies through a sequence of LDMD sectors with JAX.
@@ -307,6 +358,7 @@ def propagate_logD(
             shape (n_sector, n_channel, n_channel)
         W_base_end: LogDInput - energy-independent matrices at sector ends, shape
             (n_sector, n_channel, n_channel)
+        device: jax.Device | None - optional explicit JAX execution device
 
     Returns:
         Y_final: jax.Array - final log-derivative matrices, shape
@@ -320,13 +372,13 @@ def propagate_logD(
         raise ValueError(message)
 
     return _propagate_logD_compiled(
-        jnp.asarray(Y_initial),
-        jnp.asarray(total_energies, dtype=jnp.float64),
-        jnp.asarray(reduced_mass, dtype=jnp.float64),
-        jnp.asarray(radial_half_steps, dtype=jnp.float64),
-        jnp.asarray(W_base_start, dtype=jnp.float64),
-        jnp.asarray(W_base_mid, dtype=jnp.float64),
-        jnp.asarray(W_base_end, dtype=jnp.float64),
+        _device_array(Y_initial, device),
+        _device_array(total_energies, device, jnp.float64),
+        _device_array(reduced_mass, device, jnp.float64),
+        _device_array(radial_half_steps, device, jnp.float64),
+        _device_array(W_base_start, device, jnp.float64),
+        _device_array(W_base_mid, device, jnp.float64),
+        _device_array(W_base_end, device, jnp.float64),
     )
 
 

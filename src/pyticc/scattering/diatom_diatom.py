@@ -10,7 +10,7 @@ from pyticc.basis.angle import gauss_legendre_dvr
 from pyticc.basis.channel import ChannelBuilder, TruncSpec
 from pyticc.basis.monomer import DiatomBasis
 from pyticc.matrix.interaction import contract
-from pyticc.pes.wrapper import PESWrapper, get_Vgrid_diatom_diatom
+from pyticc.pes.adiabatic import PESWrapper, get_Vgrid_diatom_diatom
 from pyticc.scattering.hamiltonian import ScattHamiltonian
 from pyticc.system import ScattSystem
 
