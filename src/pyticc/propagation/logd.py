@@ -295,23 +295,31 @@ def _propagate_logD_jax(
     (n_sector, n_channel, n_channel). The return shape matches ``Y_initial``.
     """
     energy_shift = 2.0 * reduced_mass * total_energies[:, None]
+    reference_values, Q_start, Q_mid, Q_end = jax.vmap(_correction_matrices)(
+        radial_half_steps,
+        W_base_start,
+        W_base_mid,
+        W_base_end,
+    )
 
-    def scan_sector(Ymat: jax.Array, sector: tuple[jax.Array, jax.Array, jax.Array, jax.Array]) -> tuple[jax.Array, None]:
+    def scan_sector(
+        Ymat: jax.Array,
+        sector: tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array],
+    ) -> tuple[jax.Array, None]:
         """Advance a Y batch with shape (n_energy, n_channel, n_channel) by one sector."""
-        radial_half_step, base_start, base_mid, base_end = sector
-        reference_values, Q_start, Q_mid, Q_end = _correction_matrices(radial_half_step, base_start, base_mid, base_end)
-        energy_reference_values = reference_values[None, :] - energy_shift
+        radial_half_step, sector_reference, sector_Q_start, sector_Q_mid, sector_Q_end = sector
+        energy_reference_values = sector_reference[None, :] - energy_shift
         Y_end = jax.vmap(_propagate_with_corrections, in_axes=(0, None, 0, None, None, None))(
             Ymat,
             radial_half_step,
             energy_reference_values,
-            Q_start,
-            Q_mid,
-            Q_end,
+            sector_Q_start,
+            sector_Q_mid,
+            sector_Q_end,
         )
         return Y_end, None
 
-    Y_final, _ = jax.lax.scan(scan_sector, Y_initial, (radial_half_steps, W_base_start, W_base_mid, W_base_end))
+    Y_final, _ = jax.lax.scan(scan_sector, Y_initial, (radial_half_steps, reference_values, Q_start, Q_mid, Q_end))
     return Y_final
 
 

@@ -130,6 +130,19 @@ def test_diabatic_interaction_radial_batch_matches_scalar_and_preserves_selectio
     np.testing.assert_allclose(batched, scalar, atol=1.0e-13)
 
 
+def test_diabatic_weighted_contraction_chunks_radial_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    rng = np.random.default_rng(42)
+    left = rng.normal(size=(3, 7))
+    weights = rng.normal(size=(5, 7))
+    right = rng.normal(size=(4, 7))
+    expected = np.stack([(left * radial_weights) @ right.T for radial_weights in weights])
+    monkeypatch.setattr(vmat, "_MAX_CONTRACTION_WORKSPACE_BYTES", 2 * left.nbytes)
+
+    result = vmat._contract_weighted_basis(left, weights, right)
+
+    np.testing.assert_allclose(result, expected, rtol=1.0e-14, atol=1.0e-14)
+
+
 def test_diabatic_interaction_samples_all_state_grids_in_one_radial_batch() -> None:
     diabatic_basis = _diabatic_basis()
     channels = _channels()

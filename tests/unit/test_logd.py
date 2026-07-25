@@ -93,3 +93,52 @@ def test_propagate_logD_uses_vmap_over_energies_and_scan_over_sectors() -> None:
     expected = np.array([[_constant_logD(1.25, W.item(), total_length)] for W in W_initial]).reshape(2, 1, 1)
 
     np.testing.assert_allclose(result, expected, rtol=1.0e-12, atol=1.0e-12)
+
+
+def test_propagate_logD_matches_sequential_coupled_sector_updates() -> None:
+    total_energies = np.array([0.03, 0.07])
+    reduced_mass = 1.7
+    radial_half_steps = np.array([0.04, 0.06, 0.05])
+    W_base_start = np.array(
+        [
+            [[1.8, 0.10], [0.10, 2.3]],
+            [[1.9, 0.12], [0.12, 2.2]],
+            [[2.0, 0.08], [0.08, 2.1]],
+        ]
+    )
+    W_base_mid = W_base_start + np.array([[[0.05, 0.02], [0.02, -0.03]]])
+    W_base_end = W_base_start + np.array([[[0.09, -0.01], [-0.01, -0.06]]])
+    Y_initial = np.broadcast_to(np.array([[1.2, 0.03], [0.03, 1.5]]), (total_energies.size, 2, 2)).copy()
+
+    result = propagate_logD(
+        Y_initial,
+        total_energies,
+        reduced_mass,
+        radial_half_steps,
+        W_base_start,
+        W_base_mid,
+        W_base_end,
+    )
+
+    expected = []
+    identity = np.eye(2)
+    for energy, initial in zip(total_energies, Y_initial, strict=True):
+        Y_current = initial
+        energy_shift = 2.0 * reduced_mass * energy * identity
+        for half_step, W_start, W_mid, W_end in zip(
+            radial_half_steps,
+            W_base_start,
+            W_base_mid,
+            W_base_end,
+            strict=True,
+        ):
+            Y_current = propagate_logD_sector(
+                Y_current,
+                half_step,
+                W_start - energy_shift,
+                W_mid - energy_shift,
+                W_end - energy_shift,
+            )
+        expected.append(np.asarray(Y_current))
+
+    np.testing.assert_allclose(result, np.stack(expected), rtol=1.0e-12, atol=1.0e-12)

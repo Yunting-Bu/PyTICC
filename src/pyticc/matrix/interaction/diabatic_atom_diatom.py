@@ -16,6 +16,7 @@ from pyticc.system import MolInnerState
 
 ElectronicK = tuple[int, int]
 _MAX_CONTRACTION_WORKERS = 3
+_MAX_CONTRACTION_WORKSPACE_BYTES = 64 * 1024**2
 
 
 @dataclass(frozen=True)
@@ -211,13 +212,18 @@ def _contract_weighted_basis(
     weights: NDArray[np.float64],
     right: NDArray[np.float64],
 ) -> NDArray[np.float64]:
-    """Contract radial batches with reusable workspace and BLAS matrix products."""
+    """Contract radial batches as memory-bounded large BLAS matrix products."""
     result = np.empty((weights.shape[0], left.shape[0], right.shape[0]), dtype=np.float64)
-    weighted_left = np.empty_like(left)
     right_transpose = right.T
-    for batch_index, batch_weights in enumerate(weights):
-        np.multiply(left, batch_weights, out=weighted_left)
-        np.matmul(weighted_left, right_transpose, out=result[batch_index])
+    bytes_per_batch = left.size * left.itemsize
+    chunk_size = max(1, _MAX_CONTRACTION_WORKSPACE_BYTES // bytes_per_batch)
+
+    for start in range(0, weights.shape[0], chunk_size):
+        stop = min(start + chunk_size, weights.shape[0])
+        weighted_left = np.multiply(left[None, :, :], weights[start:stop, None, :])
+        weighted_rows = weighted_left.reshape(-1, left.shape[1])
+        result_rows = result[start:stop].reshape(-1, right.shape[0])
+        np.matmul(weighted_rows, right_transpose, out=result_rows)
     return result
 
 

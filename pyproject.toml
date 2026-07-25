@@ -7,7 +7,6 @@ authors = [{ name = "Yunting-Bu", email = "byt@smail.nju.edu.cn" }]
 requires-python = ">=3.11"
 dependencies = [
     "jax>=0.4.30",
-    "jaxlib>=0.4.30",
     "numpy>=1.26",
     "loguru>=0.7",
     "scipy>=1.13",
@@ -16,6 +15,16 @@ dependencies = [
 
 [project.optional-dependencies]
 fortran = ["meson>=1.1", "ninja>=1.11"]
+cuda12 = ["jax[cuda12]>=0.4.30; sys_platform == 'linux'"]
+cuda13 = ["jax[cuda13]>=0.4.30; sys_platform == 'linux'"]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cuda12" },
+        { extra = "cuda13" },
+    ],
+]
 
 [build-system]
 requires = ["uv_build>=0.11.25,<0.12.0"]
