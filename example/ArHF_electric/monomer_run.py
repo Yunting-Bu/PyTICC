@@ -12,7 +12,7 @@ REFERENCE_ABS_M1_CM = np.array([81.723, 212.784, 342.942, 504.401, 706.960])
 
 def _peshf_reference(r: np.ndarray) -> np.ndarray:
     r"""
-    Get the zero-field HF potential used by rovib.f::peshf.
+    Get the zero-field HF potential.
 
     Formula:
         With Delta r = 0.529177249 r - 0.9168 in angstrom,

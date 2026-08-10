@@ -119,6 +119,41 @@ def get_Vgrid_atom_diatom(
 
 
 # ----------------------------------------------------------------------------------------
+def get_Vgrid_atom_diatom_electric_sf(
+    pes: PESWrapper,
+    R: RadialInput,
+    r: NDArray[np.float64],
+    gamma: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """
+    Evaluate an atom-diatom interaction PES on an SF angular geometry grid.
+
+    Inputs:
+        pes: PESWrapper - atom-diatom potential-energy surfaces
+        R: RadialInput - scalar separation or separations with shape (n_R,)
+            in atomic units
+        r: NDArray[np.float64] - diatomic PODVR bond-length grids in atomic
+            units, shape (n_r,)
+        gamma: NDArray[np.float64] - Jacobi angles in radians with arbitrary
+            angular tensor shape (n_theta_r,n_theta_R,n_delta)
+
+    Returns:
+        V: NDArray[np.float64] - interaction grid with shape
+            (n_r,*gamma.shape) for scalar R, or the same shape preceded by n_R
+    """
+    radial_grid = np.asarray(r, dtype=np.float64)
+    angle_grid = np.asarray(gamma, dtype=np.float64)
+    grid_shape = (radial_grid.size, *angle_grid.shape)
+    radial_coordinates = np.broadcast_to(radial_grid.reshape((-1, *(1 for _ in angle_grid.shape))), grid_shape)
+    angular_coordinates = np.broadcast_to(angle_grid[None, ...], grid_shape)
+    coordinates = np.asfortranarray(np.stack((radial_coordinates.reshape(-1), angular_coordinates.reshape(-1))))
+    return _evaluate(pes, R, coordinates, grid_shape)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def get_Vgrid_atom_triatom(
     pes: PESWrapper,
     R: RadialInput,

@@ -36,7 +36,18 @@ def propagate(
     print_verbose: bool = False,
     device: str = "auto",
 ) -> jax.Array:
-    """Propagate one scattering Hamiltonian to the final radial boundary.
+    r"""
+    Propagate one exact scattering Hamiltonian to the final radial boundary.
+
+    Formula:
+        In the Hamiltonian's channel representation,
+
+        W(R;E_tot)
+          = U/R^2
+            + 2 mu_R [V(R)+diag(E_int-E_tot)].
+
+        U is supplied by ScattHamiltonian and is therefore the BF Coriolis
+        matrix for a field-free basis or diag[l(l+1)] for an Electric-SF basis.
 
     Inputs:
         hamiltonian: ScattHamiltonian - projected channel Hamiltonian
@@ -48,31 +59,45 @@ def propagate(
         print_verbose: bool - whether to emit INFO-level propagation progress
 
     Returns:
-        Y_final: jax.Array - final body-fixed log-derivative matrices
+        Y_final: jax.Array - final log-derivative matrices in the propagated
+            channel representation
     """
-    return propagate_BF(
-        basis=hamiltonian.basis,
-        Vmat=hamiltonian.interaction,
-        Etot=Etot,
-        reduced_mass=hamiltonian.reduced_mass,
-        radial_boundaries=radial_boundaries,
-        radial_half_steps=radial_half_steps,
-        mode=mode,
-        batch_Vmat=hamiltonian.batched,
-        memory_limit_mb=memory_limit_mb,
-        potential_grid_size=hamiltonian.potential_grid_size,
+    energies = get_Etot(Etot)
+    indices = tuple(range(hamiltonian.basis.n_channel))
+
+    def interaction_provider(radial_points: NDArray[np.float64], blocks: tuple[tuple[int, ...], ...]) -> tuple[NDArray[np.float64], ...]:
+        """Evaluate the complete exact interaction matrix at new R points."""
+        if hamiltonian.batched:
+            interactions = hamiltonian.V(radial_points)
+        else:
+            interactions = np.stack([hamiltonian.V(float(radial_point)) for radial_point in radial_points])
+        return (interactions,)
+
+    return _propagate_blocks(
+        (indices,),
+        (hamiltonian.E_int,),
+        (hamiltonian.U,),
+        interaction_provider,
+        energies,
+        hamiltonian.reduced_mass,
+        radial_boundaries,
+        radial_half_steps,
+        mode,
+        memory_limit_mb,
+        hamiltonian.potential_grid_size,
         print_verbose=print_verbose,
         device=device,
-    )
+    )[0]
 
 
 # ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------
-def propagate_BF_blocks(
-    basis: ChannelBasis,
-    channel_blocks: Sequence[Sequence[int]],
+def _propagate_blocks(
+    blocks: tuple[tuple[int, ...], ...],
+    E_int_blocks: tuple[NDArray[np.float64], ...],
+    Umat_blocks: tuple[NDArray[np.float64], ...],
     interaction_provider: InteractionProvider,
     energies: NDArray[np.float64],
     reduced_mass: float,
@@ -85,16 +110,19 @@ def propagate_BF_blocks(
     device: str = "auto",
 ) -> tuple[jax.Array, ...]:
     """
-    Propagate one or more body-fixed channel blocks through shared radial windows.
+    Propagate prepared channel blocks through shared radial windows.
 
     The provider evaluates only new radial points. The interaction matrix at each
     window boundary is retained and reused by the next window. All blocks therefore
     share the same radial traversal while keeping independent log derivatives.
 
     Inputs:
-        basis: ChannelBasis - complete field-free channel basis
-        channel_blocks: Sequence[Sequence[int]] - complete-basis positions for each
-            propagation block, each with shape (n_channel_block,)
+        blocks: tuple[tuple[int, ...], ...] - complete-basis positions for each
+            channel block
+        E_int_blocks: tuple[NDArray[np.float64], ...] - channel thresholds for
+            every block
+        Umat_blocks: tuple[NDArray[np.float64], ...] - dimensionless
+            centrifugal matrix for every block
         interaction_provider: InteractionProvider - maps new radial points with
             shape (n_new_R,) and channel blocks to one interaction batch per block;
             each batch has shape (n_new_R, n_channel_block, n_channel_block)
@@ -120,18 +148,10 @@ def propagate_BF_blocks(
         logger.error(message)
         raise ValueError(message)
     selected_device = resolve_device(device)
-    blocks = tuple(tuple(indices) for indices in channel_blocks)
     if not blocks or any(not indices for indices in blocks):
         message = "At least one non-empty channel block is required for propagation"
         logger.error(message)
         raise ValueError(message)
-
-    E_int_blocks: list[NDArray[np.float64]] = []
-    Umat_blocks: list[NDArray[np.float64]] = []
-    for indices in blocks:
-        positions = np.asarray(indices, dtype=np.int64)
-        E_int_blocks.append(basis.E_int[positions])
-        Umat_blocks.append(get_Umat_BF(basis, indices))
 
     sectors = build_radial_sectors(radial_boundaries, radial_half_steps)
     block_sizes = tuple(len(indices) for indices in blocks)
@@ -148,7 +168,7 @@ def propagate_BF_blocks(
     next_progress = progress_interval
     completed_sectors = 0
     propagation_start = perf_counter()
-    logger.info(f"Propagation device: {selected_device.label}, x64={jax.config.jax_enable_x64}")
+    logger.info(f"Propagation device: {selected_device.label}, x64={jax.config.read('jax_enable_x64')}")
     if print_verbose:
         logger.info(f"Propagation started: blocks={len(blocks)}, sectors={n_sector}, channels={max(block_sizes)}, energies={energies.size}")
 
@@ -229,6 +249,74 @@ def propagate_BF_blocks(
         logger.error(message)
         raise RuntimeError(message)
     return tuple(cast(jax.Array, Y_state) for Y_state in Y_states)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def propagate_BF_blocks(
+    basis: ChannelBasis,
+    channel_blocks: Sequence[Sequence[int]],
+    interaction_provider: InteractionProvider,
+    energies: NDArray[np.float64],
+    reduced_mass: float,
+    radial_boundaries: Sequence[float],
+    radial_half_steps: Sequence[float],
+    mode: Literal["inelastic", "capture"],
+    memory_limit_mb: float,
+    potential_grid_size: int,
+    print_verbose: bool = False,
+    device: str = "auto",
+) -> tuple[jax.Array, ...]:
+    r"""
+    Propagate one or more field-free BF channel blocks.
+
+    Formula:
+        For block b,
+
+        W_b(R;E_tot)
+          = U_b^BF/R^2
+            + 2 mu_R [V_b(R)+diag(E_int,b-E_tot)].
+
+    Inputs:
+        basis: ChannelBasis - complete field-free channel basis
+        channel_blocks: Sequence[Sequence[int]] - complete-basis positions for
+            each propagation block
+        interaction_provider: InteractionProvider - interaction matrices for
+            all requested blocks at new radial points
+        energies: NDArray[np.float64] - total energies in atomic units
+        reduced_mass: float - collision reduced mass in atomic units
+        radial_boundaries: Sequence[float] - radial interval boundaries
+        radial_half_steps: Sequence[float] - LDMD half-step for each interval
+        mode: Literal["inelastic", "capture"] - inner-boundary condition
+        memory_limit_mb: float - target transient-memory limit in MiB
+        potential_grid_size: int - internal PES grid points per radial point
+        print_verbose: bool - whether to emit propagation progress
+        device: str - propagation-device request
+
+    Returns:
+        Y_blocks: tuple[jax.Array, ...] - final BF log derivatives, one array
+            per block
+    """
+    blocks = tuple(tuple(indices) for indices in channel_blocks)
+    E_int_blocks = tuple(basis.E_int[np.asarray(indices, dtype=np.int64)] for indices in blocks)
+    Umat_blocks = tuple(get_Umat_BF(basis, indices) for indices in blocks)
+    return _propagate_blocks(
+        blocks,
+        E_int_blocks,
+        Umat_blocks,
+        interaction_provider,
+        energies,
+        reduced_mass,
+        radial_boundaries,
+        radial_half_steps,
+        mode,
+        memory_limit_mb,
+        potential_grid_size,
+        print_verbose=print_verbose,
+        device=device,
+    )
 
 
 # ----------------------------------------------------------------------------------------

@@ -1,9 +1,9 @@
 from collections.abc import Sequence
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 import numpy as np
 
-from pyticc.basis.channel import Channel, ChannelBasis
+from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.kblock import KBlock
 from pyticc.basis.monomer import DiabaticDiatomBasis, DiatomBasis
 from pyticc.constants import AU2CM
@@ -95,7 +95,7 @@ def _state_value(state: MolInnerState, attribute: str) -> str:
 
 
 # ----------------------------------------------------------------------------------------
-def channels(basis: ChannelBasis) -> str:
+def channels(basis: ChannelBasis | ChannelBasisElectricSF) -> str:
     """
     Format the channel quantum numbers and internal energies as a text table.
 
@@ -103,11 +103,25 @@ def channels(basis: ChannelBasis) -> str:
     states are shown when present, while Jtot and parity are omitted.
 
     Inputs:
-        basis: ChannelBasis - channel basis to report
+        basis: ChannelBasis | ChannelBasisElectricSF - channel basis to report
 
     Returns:
         output: str - formatted channel table with energies in cm-1
     """
+    if isinstance(basis, ChannelBasisElectricSF):
+        rows = [
+            [
+                str(index),
+                str(channel.alpha),
+                str(channel.m),
+                str(channel.l),
+                str(channel.m_l),
+                f"{channel.E_int * AU2CM:.6f}",
+            ]
+            for index, channel in enumerate(basis, start=1)
+        ]
+        return _table(("n", "alpha", "m", "l", "m_l", "E_int/cm-1"), rows)
+
     if basis.n_channel == 0:
         return _table(("n", "K", "E_int/cm-1"), ())
 
@@ -149,12 +163,13 @@ def channels(basis: ChannelBasis) -> str:
 
 
 # ----------------------------------------------------------------------------------------
-def open_closed(basis: ChannelBasis, energies: EnergyInput) -> str:
+def open_closed(basis: ChannelBasis | ChannelBasisElectricSF, energies: EnergyInput) -> str:
     """
     Format open and closed channel counts at each total energy.
 
     Inputs:
-        basis: ChannelBasis - channel basis used to classify thresholds
+        basis: ChannelBasis | ChannelBasisElectricSF - channel basis used to
+            classify thresholds
         energies: EnergyInput - total energies in atomic units, or a path to a
             one-column energy file
 
@@ -280,6 +295,39 @@ def _orbital_angular_momentum(value: float) -> str:
 
 
 # ----------------------------------------------------------------------------------------
+def _smatrix_electric(result: ScatteringResult, energy_indices: EnergySelection) -> str:
+    basis = cast(ChannelBasisElectricSF, result.basis)
+    rows: list[list[str]] = []
+    for energy_index in _energy_indices(energy_indices, result.Etot.size):
+        indices = result.open_channel_indices[energy_index]
+        matrix = result.Smat[energy_index]
+        for incoming, incoming_global in enumerate(indices):
+            initial = basis[int(incoming_global)]
+            for outgoing, outgoing_global in enumerate(indices):
+                final = basis[int(outgoing_global)]
+                value = matrix[outgoing, incoming]
+                rows.append(
+                    [
+                        f"{result.Etot[energy_index] * AU2CM:.8f}",
+                        str(initial.alpha),
+                        str(initial.m),
+                        str(initial.l),
+                        str(initial.m_l),
+                        str(final.alpha),
+                        str(final.m),
+                        str(final.l),
+                        str(final.m_l),
+                        f"{value.real:.16E}",
+                        f"{value.imag:.16E}",
+                    ]
+                )
+    return _table(("Etot/cm-1", "alpha", "m", "l", "m_l", "alpha'", "m'", "l'", "m_l'", "Re(S)", "Im(S)"), rows)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def smatrix(
     result: ScatteringResult | CoupledStatesResult,
     *,
@@ -317,13 +365,19 @@ def smatrix(
     Returns:
         output: str - formatted S-matrix table with total energies in cm-1
     """
+    if isinstance(result, ScatteringResult) and isinstance(result.basis, ChannelBasisElectricSF):
+        if any(value is not None for value in (state, v, j, state_prime, v_prime, j_prime, block_index)):
+            raise ValueError("Electronic, vibrational, rotational, and K-block filters do not apply to Electric-SF results")
+        return _smatrix_electric(result, energy_indices)
+
     state_values = _selection(state, "state")
     v_values = _selection(v, "v")
     j_values = _selection(j, "j")
     state_prime_values = _selection(state_prime, "state_prime")
     v_prime_values = _selection(v_prime, "v_prime")
     j_prime_values = _selection(j_prime, "j_prime")
-    internal_states = tuple(_internal_state(channel) for channel in result.basis)
+    basis = cast(ChannelBasis, result.basis)
+    internal_states = tuple(_internal_state(channel) for channel in basis)
 
     if not any(_matches(value, state_values, v_values, j_values) for value in internal_states):
         raise ValueError("The initial-state selection does not match any channel")

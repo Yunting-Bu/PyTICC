@@ -123,6 +123,6 @@ def test_solve_atom_triatom_completes_minimal_exact_calculation() -> None:
 
     assert isinstance(result, ticc.ScatteringResult)
     assert result.basis.n_channel == 1
-    assert result.Y_BF.shape == (1, 1, 1)
+    assert result.Y_propagated.shape == (1, 1, 1)
     assert result.Smat[0].shape == (1, 1)
     assert np.all(np.isfinite(result.Smat))

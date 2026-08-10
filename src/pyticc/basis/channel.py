@@ -8,6 +8,7 @@ import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis
 from pyticc.energy import EnergyInput, get_Etot
 from pyticc.system import MolInnerState, MonomerType, ScattSystem
 
@@ -173,6 +174,193 @@ class ChannelBasis(Sequence[Channel]):
 
 
 # ----------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ChannelElectricSF:
+    r"""
+    One electric-field atom-diatom channel in the space-fixed representation.
+
+    Formula:
+        The channel function is
+
+        |eta; M> = |phi_{alpha m}> |l m_l>,
+
+        where
+
+        M = m + m_l,    |m_l| <= l.
+
+        M is a property of ChannelBasisElectricSF rather than one monomer state.
+
+    Members:
+        alpha: int - zero-based dressed-monomer eigenstate index within the
+            fixed-m block
+        m: int - SF projection of the dressed diatomic angular momentum
+        l: int - end-over-end angular momentum
+        m_l: int - SF projection of the end-over-end angular momentum
+        E_int: float - channel internal energy relative to the common monomer
+            energy zero, in atomic units
+        index: int - zero-based position in the energy-ordered complete basis
+    """
+
+    alpha: int
+    m: int
+    l: int  # noqa: E741 - l is the conventional end-over-end angular momentum.
+    m_l: int
+    E_int: float
+    index: int = -1
+
+    def __str__(self) -> str:
+        return f"ChannelElectricSF[{self.index}] alpha={self.alpha} m={self.m} l={self.l} m_l={self.m_l} E_int={self.E_int:.10f} a.u."
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ChannelBasisElectricSF(Sequence[ChannelElectricSF]):
+    r"""
+    Complete channel basis for one electric-field SF scattering block.
+
+    Formula:
+        Every retained channel eta satisfies
+
+        M = m_eta + m_{l,eta}.
+
+        Channels are ordered by increasing internal threshold energy
+        epsilon_{alpha m}.
+
+    Members:
+        channels: tuple[ChannelElectricSF, ...] - energy-ordered
+            electric-field SF channels
+        M: int - conserved total projection on the electric-field axis
+    """
+
+    channels: tuple[ChannelElectricSF, ...]
+    M: int
+
+    @property
+    def n_channel(self) -> int:
+        """Return the number of SF channels in this basis."""
+        return len(self.channels)
+
+    @property
+    def E_int(self) -> NDArray[np.float64]:
+        """Return channel internal energies in atomic units, shape (n_channel,)."""
+        return np.asarray([channel.E_int for channel in self.channels], dtype=np.float64)
+
+    @property
+    def m_values(self) -> tuple[int, ...]:
+        """Return the retained monomer projections in ascending order."""
+        return tuple(sorted({channel.m for channel in self.channels}))
+
+    def __len__(self) -> int:
+        return self.n_channel
+
+    @overload
+    def __getitem__(self, index: int) -> ChannelElectricSF: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[ChannelElectricSF, ...]: ...
+
+    def __getitem__(self, index: int | slice) -> ChannelElectricSF | tuple[ChannelElectricSF, ...]:
+        return self.channels[index]
+
+    def open_closed(self, total_energies: EnergyInput) -> OpenClosedChannels:
+        """
+        Classify SF channels as open or closed at each total energy.
+
+        Inputs:
+            total_energies: EnergyInput - total-energy array with shape
+                (n_energy,), or a one-column text file in atomic units
+
+        Returns:
+            result: OpenClosedChannels - energies and counts with shape
+                (n_energy,), and an open-channel mask with shape
+                (n_energy, n_channel)
+        """
+        energies = get_Etot(total_energies)
+        open_mask = self.E_int[np.newaxis, :] < energies[:, np.newaxis]
+        n_open = np.asarray(np.sum(open_mask, axis=1), dtype=np.int64)
+        n_closed = np.asarray(self.n_channel - n_open, dtype=np.int64)
+        return OpenClosedChannels(
+            total_energies=energies,
+            open_mask=open_mask,
+            n_open=n_open,
+            n_closed=n_closed,
+        )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def build_ChannelBasisElectricSF(
+    monomer_basis: DiatomElectricBasis,
+    *,
+    M: int,
+    lmax: int,
+    E_cut: float = math.inf,
+) -> ChannelBasisElectricSF:
+    r"""
+    Build one energy-ordered electric-field SF channel basis.
+
+    Formula:
+        For each
+
+        l = 0, ..., lmax,    m_l = -l, ..., l,
+
+        the monomer projection is determined rather than independently
+        enumerated:
+
+        m = M - m_l.
+
+        A channel is retained when |m| <= jmax and
+
+        epsilon_{alpha m}
+          = E_{alpha m} - E_zero
+          <= E_cut.
+
+        No field-free total-J or parity restriction is applied. A dc electric
+        field aligned with SF-Z conserves M, but in general mixes j and parity.
+
+    Inputs:
+        monomer_basis: DiatomElectricBasis - electric-field-dressed monomer
+            eigenstates grouped by fixed m
+        M: int - conserved total SF projection
+        lmax: int - largest retained end-over-end angular momentum
+        E_cut: float - largest retained relative monomer threshold in atomic
+            units; infinity retains every available alpha state
+
+    Returns:
+        basis: ChannelBasisElectricSF - channels ordered by increasing E_int
+    """
+    channels: list[ChannelElectricSF] = []
+    for ell in range(lmax + 1):
+        for m_l in range(-ell, ell + 1):
+            m = M - m_l
+            if abs(m) > monomer_basis.jmax:
+                continue
+            for alpha, E_int in enumerate(monomer_basis.relative_energies(m)):
+                if E_int <= E_cut:
+                    channels.append(
+                        ChannelElectricSF(
+                            alpha=alpha,
+                            m=m,
+                            l=ell,
+                            m_l=m_l,
+                            E_int=float(E_int),
+                        )
+                    )
+
+    channels.sort(key=lambda channel: (channel.E_int, channel.l, channel.m_l, channel.alpha))
+    indexed_channels = tuple(replace(channel, index=index) for index, channel in enumerate(channels))
+    return ChannelBasisElectricSF(channels=indexed_channels, M=M)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 class ParityRule(Protocol):
     def allow_K0(self, mis_X: MolInnerState, mis_Y: MolInnerState, j_couple: int) -> bool:
         """Return whether one coupled monomer state is allowed at K=0."""
@@ -205,6 +393,10 @@ class ChannelBuilder:
 
     def build(self) -> ChannelBasis:
         """Enumerate channels allowed by angular momentum, parity, energy, and helicity."""
+        if isinstance(self.system.monomer_Y, DiatomElectricBasis):
+            message = "Field-free channel construction does not accept a dressed electric monomer basis"
+            logger.error(message)
+            raise TypeError(message)
         if self.system.Jtot is None or self.system.system_parity is None:
             message = "Field-free channel construction requires Jtot and system_parity"
             logger.error(message)

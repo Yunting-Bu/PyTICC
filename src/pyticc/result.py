@@ -3,11 +3,12 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from pyticc.basis.channel import ChannelBasis, OpenClosedChannels
+from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF, OpenClosedChannels
 from pyticc.basis.kblock import KBlock
 from pyticc.system import Approx
 
 LogDArray = NDArray[np.float64] | NDArray[np.complex128]
+ScatteringBasis = ChannelBasis | ChannelBasisElectricSF
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,33 +26,35 @@ class Timing:
 @dataclass(frozen=True)
 class ScatteringResult:
     """
-    Field-free scattering result for one Jtot and system-parity block.
+    Exact scattering result in one conserved-quantity block.
 
     Members:
-        basis: ChannelBasis - complete body-fixed channel basis
+        basis: ChannelBasis | ChannelBasisElectricSF - propagated channel basis
         Etot: NDArray[np.float64] - total energies in atomic units, shape
             (n_energy,)
         open_closed: OpenClosedChannels - open and closed channels at each energy
-        Y_BF: NDArray - final body-fixed log-derivative matrices, shape
+        Y_propagated: NDArray - final log-derivative matrices in the propagated
+            channel representation, shape
             (n_energy, n_channel, n_channel)
-        Bmat: NDArray[np.float64] - body-fixed to space-fixed transformation, shape
-            (n_channel, n_channel)
-        L: NDArray[np.float64] - space-fixed orbital angular momenta, shape
+        asymptotic_transform: NDArray[np.float64] - propagated-to-asymptotic
+            orthogonal transformation, shape (n_channel,n_channel)
+        L: NDArray[np.float64] - asymptotic orbital angular momenta, shape
             (n_channel,)
-        Y_SF: NDArray - final space-fixed log-derivative matrices, shape
+        Y_asymptotic: NDArray - final log-derivative matrices in the asymptotic
+            channel representation, shape
             (n_energy, n_channel, n_channel)
         Smat: tuple[NDArray[np.complex128], ...] - one matrix per energy; element i
             has shape (n_open[i], n_open[i])
         timing: Timing | None - elapsed solver or end-to-end run time
     """
 
-    basis: ChannelBasis
+    basis: ScatteringBasis
     Etot: NDArray[np.float64]
     open_closed: OpenClosedChannels
-    Y_BF: LogDArray
-    Bmat: NDArray[np.float64]
+    Y_propagated: LogDArray
+    asymptotic_transform: NDArray[np.float64]
     L: NDArray[np.float64]
-    Y_SF: LogDArray
+    Y_asymptotic: LogDArray
     Smat: tuple[NDArray[np.complex128], ...]
     timing: Timing | None = None
 

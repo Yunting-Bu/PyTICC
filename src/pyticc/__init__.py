@@ -1,9 +1,30 @@
-from pyticc.basis.channel import Channel, ChannelBasis, OpenClosedChannels, TruncSpec
+from pyticc.basis.channel import (
+    Channel,
+    ChannelBasis,
+    ChannelBasisElectricSF,
+    ChannelElectricSF,
+    OpenClosedChannels,
+    TruncSpec,
+    build_ChannelBasisElectricSF,
+)
 from pyticc.basis.dvr import RovibDVR, SineDVR, build_RovibDVR, build_SineDVR
-from pyticc.basis.monomer import AtomSpec, DiabaticDiatomBasis, DiabaticDiatomState, DiatomBasis, build_DiabaticDiatomBasis, build_DiatomBasis
+from pyticc.basis.monomer import (
+    AtomSpec,
+    DiabaticDiatomBasis,
+    DiabaticDiatomState,
+    DiatomBasis,
+    DiatomElectricBasis,
+    DiatomElectricBlock,
+    build_DiabaticDiatomBasis,
+    build_DiatomBasis,
+    build_DiatomElectricBasis,
+    diatom_electric_amplitude,
+    required_m_values,
+)
 from pyticc.basis.podvr import RovibPODVR, VibPODVR, build_RovibPODVR, build_VibPODVR
 from pyticc.basis.triatom import TriatomBasis, TriatomBlock, build_TriatomBasis
 from pyticc.constants import ANG2AU, AU2ANG, AU2CM, CM2AU
+from pyticc.electric import ElectricResponseTable, ElectricResponseValues, load_electric_response_csv
 from pyticc.pes import DiabaticPESWrapper, PESWrapper, load_fortran_diabatic_pes, load_fortran_pes
 from pyticc.propagation import Propagation
 from pyticc.result import CoupledStatesResult, ScatteringResult, Timing
@@ -20,12 +41,18 @@ __all__ = [
     "AU2CM",
     "Channel",
     "ChannelBasis",
+    "ChannelBasisElectricSF",
+    "ChannelElectricSF",
     "CM2AU",
     "CoupledStatesResult",
     "DiabaticDiatomBasis",
     "DiabaticDiatomState",
     "DiabaticPESWrapper",
     "DiatomBasis",
+    "DiatomElectricBasis",
+    "DiatomElectricBlock",
+    "ElectricResponseTable",
+    "ElectricResponseValues",
     "MolInnerState",
     "MonomerType",
     "OpenClosedChannels",
@@ -44,6 +71,8 @@ __all__ = [
     "VibPODVR",
     "build_DiabaticDiatomBasis",
     "build_DiatomBasis",
+    "build_DiatomElectricBasis",
+    "build_ChannelBasisElectricSF",
     "build_k_blocks",
     "build_RovibDVR",
     "build_RovibPODVR",
@@ -52,10 +81,13 @@ __all__ = [
     "build_SineDVR",
     "element_mass_au",
     "element_masses_au",
+    "diatom_electric_amplitude",
     "load_fortran_diabatic_pes",
     "load_fortran_pes",
+    "load_electric_response_csv",
     "reduced_mass",
     "report",
+    "required_m_values",
     "run",
     "set_j_parity",
     "solve",

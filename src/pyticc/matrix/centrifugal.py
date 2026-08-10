@@ -4,7 +4,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from pyticc.basis.angle import lambda_plus
-from pyticc.basis.channel import Channel, ChannelBasis
+from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF
 from pyticc.system import MolInnerState
 
 CentrifugalKey = tuple[MolInnerState, MolInnerState, int]
@@ -74,6 +74,50 @@ def get_Umat_BF(
             Umat[next_index, local_index] = coupling
 
     return Umat
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def get_Umat_ElectricSF(
+    basis: ChannelBasisElectricSF,
+    channel_indices: Sequence[int] | None = None,
+) -> NDArray[np.float64]:
+    r"""
+    Get the dimensionless centrifugal matrix in the space-fixed representation.
+
+    Formula:
+        For the SF channel
+
+        |eta; M> = |phi_{alpha m}> |l m_l>,
+
+        the end-over-end operator is diagonal:
+
+        U_{eta' eta}^{SF}
+          = <eta'|L^2|eta>
+          = l(l+1) delta_{eta' eta}.
+
+        There are no Coriolis off-diagonal elements in this uncoupled SF basis.
+        Row and column order follows channel_indices, or the complete channel
+        basis when channel_indices is None.
+
+    Inputs:
+        basis: ChannelBasisElectricSF - complete electric-field SF channel basis
+        channel_indices: Sequence[int] | None - selected complete-basis
+            positions, shape (n_selected_channel,)
+
+    Returns:
+        Umat: NDArray[np.float64] - dimensionless diagonal SF centrifugal
+            matrix, shape (n_selected_channel, n_selected_channel)
+    """
+    if channel_indices is None:
+        indices = tuple(range(basis.n_channel))
+    else:
+        indices = tuple(channel_indices)
+
+    diagonal = np.asarray([basis[index].l * (basis[index].l + 1) for index in indices], dtype=np.float64)
+    return np.diag(diagonal)
 
 
 # ----------------------------------------------------------------------------------------

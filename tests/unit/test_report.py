@@ -1,7 +1,7 @@
 import numpy as np
 
 from pyticc import report
-from pyticc.basis.channel import Channel, ChannelBasis
+from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF, ChannelElectricSF
 from pyticc.basis.kblock import KBlock
 from pyticc.basis.monomer import DiatomBasis
 from pyticc.basis.podvr import RovibPODVR
@@ -43,11 +43,32 @@ def _result() -> ScatteringResult:
         basis=basis,
         Etot=energies,
         open_closed=basis.open_closed(energies),
-        Y_BF=matrices,
-        Bmat=np.eye(3),
+        Y_propagated=matrices,
+        asymptotic_transform=np.eye(3),
         L=np.array([0.0, 2.0, 1.0]),
-        Y_SF=matrices,
+        Y_asymptotic=matrices,
         Smat=(first, second),
+    )
+
+
+def _electric_result() -> ScatteringResult:
+    basis = ChannelBasisElectricSF(
+        channels=(
+            ChannelElectricSF(alpha=0, m=0, l=0, m_l=0, E_int=0.001, index=0),
+            ChannelElectricSF(alpha=1, m=-1, l=1, m_l=1, E_int=0.002, index=1),
+        ),
+        M=0,
+    )
+    matrices = np.zeros((1, 2, 2))
+    return ScatteringResult(
+        basis=basis,
+        Etot=np.array([0.01]),
+        open_closed=basis.open_closed([0.01]),
+        Y_propagated=matrices,
+        asymptotic_transform=np.eye(2),
+        L=np.array([0.0, 1.0]),
+        Y_asymptotic=matrices,
+        Smat=(np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.complex128),),
     )
 
 
@@ -87,6 +108,13 @@ def test_open_closed_uses_cm_inverse() -> None:
     assert "Etot/cm-1" in output
     assert f"{0.01 * 219474.6313705:.8f}" in output
     assert output.splitlines()[-1].split()[-2:] == ["3", "0"]
+
+
+def test_electric_channels_reports_alpha_m_l_and_m_l() -> None:
+    output = report.channels(_electric_result().basis)
+
+    assert output.splitlines()[0].split() == ["n", "alpha", "m", "l", "m_l", "E_int/cm-1"]
+    assert output.splitlines()[-1].split()[1:5] == ["1", "-1", "1", "1"]
 
 
 def test_k_blocks_reports_membership_without_writing_or_printing() -> None:
@@ -136,6 +164,13 @@ def test_smatrix_uses_outgoing_row_and_incoming_column() -> None:
 
     output = report.smatrix(result, energy_indices=0, state=0, v=0, j=1, state_prime=0, v_prime=0, j_prime=3)
 
+    assert "3.0000000000000000E+00" in output
+
+
+def test_electric_smatrix_uses_sf_channel_quantum_numbers() -> None:
+    output = report.smatrix(_electric_result())
+
+    assert output.splitlines()[0].split()[1:9] == ["alpha", "m", "l", "m_l", "alpha'", "m'", "l'", "m_l'"]
     assert "3.0000000000000000E+00" in output
 
 

@@ -72,7 +72,7 @@ def test_solve_atom_diatom_returns_complete_scattering_result() -> None:
 
     assert isinstance(result, ticc.ScatteringResult)
     assert result.basis.n_channel == 1
-    assert result.Y_BF.shape == (2, 1, 1)
+    assert result.Y_propagated.shape == (2, 1, 1)
     assert len(result.Smat) == 2
     assert result.open_channel_indices[0].tolist() == [0]
     assert result.timing is not None
@@ -122,7 +122,7 @@ def test_solve_diatom_diatom_returns_complete_scattering_result() -> None:
 
     assert isinstance(result, ticc.ScatteringResult)
     assert result.basis.n_channel == 1
-    assert result.Y_SF.shape == (1, 1, 1)
+    assert result.Y_asymptotic.shape == (1, 1, 1)
     assert result.Smat[0].shape == (1, 1)
     np.testing.assert_allclose(np.abs(result.Smat[0]), 1.0, atol=1.0e-13)
 

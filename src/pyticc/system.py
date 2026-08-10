@@ -10,6 +10,7 @@ from loguru import logger
 from pyticc.constants import AMU2AU
 
 if TYPE_CHECKING:
+    from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis
     from pyticc.pes.adiabatic import PESWrapper
     from pyticc.pes.diabatic import DiabaticPESWrapper
 
@@ -164,13 +165,19 @@ class MonomerSpec(Protocol):
 # ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ScattSystem:
-    """Physical definition of one field-free scattering block.
+    """Physical definition of one scattering block.
 
     Members:
         monomer_X: MonomerSpec - first monomer internal-state model
-        monomer_Y: MonomerSpec - second monomer internal-state model
-        Jtot: int | None - total angular momentum
-        system_parity: int | None - total system parity, -1 or 1
+        monomer_Y: MonomerSpec | DiatomElectricBasis - second monomer
+            internal-state model; an electric-field calculation stores its
+            dressed diatomic basis directly
+        Jtot: int | None - conserved total angular momentum for a field-free
+            calculation
+        system_parity: int | None - conserved total parity for a field-free
+            calculation, -1 or 1
+        M: int | None - conserved projection on the SF electric-field axis for
+            an electric-field calculation
         approx: Approx - exact CC, CS, or NNCC approximation
         K_delta: int - neighboring-K range used by NNCC
         potential: PESWrapper | DiabaticPESWrapper | None - interaction PES
@@ -178,9 +185,10 @@ class ScattSystem:
     """
 
     monomer_X: MonomerSpec
-    monomer_Y: MonomerSpec
+    monomer_Y: MonomerSpec | DiatomElectricBasis
     Jtot: int | None = None
     system_parity: int | None = None
+    M: int | None = None
     approx: Approx = Approx.EXACT
     K_delta: int = 1
     potential: PESWrapper | DiabaticPESWrapper | None = None

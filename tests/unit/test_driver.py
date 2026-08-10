@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 import pyticc as ticc
 
@@ -62,6 +63,90 @@ mode = "inelastic"
     assert result.timing.cpu_seconds >= 0.0
 
 
+def test_run_reads_electric_atom_diatom_input(tmp_path: Path) -> None:
+    response_file = tmp_path / "electric.csv"
+    response_file.write_text(
+        "\n".join(
+            (
+                "r,mu_z,alpha_xx,alpha_zz,beta_zzz,beta_xxz",
+                "1.0,0.5,1.0,1.5,0.0,0.0",
+                "3.0,0.5,1.0,1.5,0.0,0.0",
+            )
+        ),
+        encoding="utf-8",
+    )
+    input_file = tmp_path / "input.toml"
+    input_file.write_text(
+        """
+type = "electric-atom-diatom"
+atom = "Ar"
+diatom = ["H", "F"]
+M = 0
+energies_cm = [300.0]
+
+[basis]
+r = [1.0, 3.0]
+n_dvr = 20
+n_podvr = 1
+jmax = 0
+lmax = 0
+n_alpha = 1
+
+[electric]
+strength_au = 1.0e-3
+response_csv = "electric.csv"
+
+[quadrature]
+n_theta_r = 3
+n_theta_R = 3
+n_delta = 4
+delta_symmetry = true
+
+[truncation]
+E_Y_cut_cm = 1000.0
+
+[propagation]
+radial_boundaries = [3.0, 3.2]
+radial_half_steps = [0.1]
+mode = "inelastic"
+""",
+        encoding="utf-8",
+    )
+    pes = ticc.PESWrapper(
+        interaction=lambda RR, coordinates: np.zeros(coordinates.shape[1]),
+        monomer_Y=lambda r: np.zeros_like(r),
+    )
+
+    result = ticc.run(input_file, pes=pes)
+
+    assert isinstance(result, ticc.ScatteringResult)
+    assert isinstance(result.basis, ticc.ChannelBasisElectricSF)
+    assert result.basis.M == 0
+    assert result.basis.n_channel == 1
+    np.testing.assert_allclose(result.Etot * ticc.AU2CM, [300.0])
+    np.testing.assert_allclose(np.abs(result.Smat[0]), 1.0, atol=1.0e-13)
+
+
+def test_electric_atom_diatom_input_rejects_coupled_states(tmp_path: Path) -> None:
+    input_file = tmp_path / "input.toml"
+    input_file.write_text(
+        """
+type = "electric-atom-diatom"
+
+[approximation]
+method = "cs"
+""",
+        encoding="utf-8",
+    )
+    pes = ticc.PESWrapper(
+        interaction=lambda RR, coordinates: np.zeros(coordinates.shape[1]),
+        monomer_Y=lambda r: np.zeros_like(r),
+    )
+
+    with pytest.raises(ValueError, match="require exact coupled channels"):
+        ticc.run(input_file, pes=pes)
+
+
 def test_run_reads_diabatic_atom_diatom_input(tmp_path: Path) -> None:
     input_file = tmp_path / "input.toml"
     input_file.write_text(
@@ -112,6 +197,7 @@ mode = "inelastic"
     )
 
     assert isinstance(result, ticc.ScatteringResult)
+    assert isinstance(result.basis, ticc.ChannelBasis)
     assert result.basis.n_channel == 2
     assert {channel.mis_Y.electronic_state for channel in result.basis} == {0, 1}
     np.testing.assert_allclose(result.Etot * ticc.AU2CM, [100.0])

@@ -65,10 +65,10 @@ def _assert_exact_matches_single_block(exact: ticc.ScatteringResult, approximate
     assert len(approximate.blocks) == 1
     block = approximate.blocks[0]
     assert block.block.channel_indices == tuple(range(exact.basis.n_channel))
-    np.testing.assert_allclose(block.Y_BF, exact.Y_BF, atol=1.0e-13)
-    np.testing.assert_allclose(block.Bmat, exact.Bmat, atol=1.0e-13)
+    np.testing.assert_allclose(block.Y_BF, exact.Y_propagated, atol=1.0e-13)
+    np.testing.assert_allclose(block.Bmat, exact.asymptotic_transform, atol=1.0e-13)
     np.testing.assert_allclose(block.L, exact.L, atol=1.0e-13)
-    np.testing.assert_allclose(block.Y_asymptotic, exact.Y_SF, atol=1.0e-13)
+    np.testing.assert_allclose(block.Y_asymptotic, exact.Y_asymptotic, atol=1.0e-13)
     for Smat_block, Smat_exact in zip(block.Smat_asymptotic, exact.Smat, strict=True):
         np.testing.assert_allclose(Smat_block, Smat_exact, atol=1.0e-13)
 
@@ -99,6 +99,7 @@ def test_nncc_covering_every_K_is_identical_to_exact() -> None:
     nncc = _run(Jtot=2, approx=ticc.Approx.NNCC, K_delta=1)
 
     assert isinstance(exact, ticc.ScatteringResult)
+    assert isinstance(exact.basis, ticc.ChannelBasis)
     assert isinstance(nncc, ticc.CoupledStatesResult)
     assert {channel.K for channel in exact.basis} == {0, 1, 2}
     _assert_exact_matches_single_block(exact, nncc)

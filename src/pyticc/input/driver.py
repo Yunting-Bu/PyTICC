@@ -61,18 +61,23 @@ def run(source: str | Path, *, pes: PESWrapper | DiabaticPESWrapper | None = Non
     potential = _load_pes(config, input_path.parent, calculation_type) if pes is None else pes
     if calculation_type == "atom-diatom" and isinstance(potential, PESWrapper):
         result = atom_diatom.run(config, input_path.parent, potential)
+    elif calculation_type == "electric-atom-diatom" and isinstance(potential, PESWrapper):
+        result = atom_diatom.run_electric(config, input_path.parent, potential)
     elif calculation_type == "diatom-diatom" and isinstance(potential, PESWrapper):
         result = diatom_diatom.run(config, input_path.parent, potential)
     elif calculation_type == "diabatic-atom-diatom" and isinstance(potential, DiabaticPESWrapper):
         result = diabatic.run(config, input_path.parent, potential)
     else:
         expected = DiabaticPESWrapper if calculation_type == "diabatic-atom-diatom" else PESWrapper
-        if calculation_type in {"atom-diatom", "diatom-diatom", "diabatic-atom-diatom"}:
+        if calculation_type in {"atom-diatom", "electric-atom-diatom", "diatom-diatom", "diabatic-atom-diatom"}:
             message = f"Calculation type {calculation_type!r} requires {expected.__name__}"
             logger.error(message)
             raise TypeError(message)
 
-        message = f"Unsupported calculation type {calculation_type!r}; supported: 'atom-diatom', 'diabatic-atom-diatom', 'diatom-diatom'"
+        message = (
+            f"Unsupported calculation type {calculation_type!r}; supported: "
+            "'atom-diatom', 'electric-atom-diatom', 'diabatic-atom-diatom', 'diatom-diatom'"
+        )
         logger.error(message)
         raise ValueError(message)
 

@@ -256,14 +256,6 @@ def build_RovibDVR(dvr: SineDVR, vmax: int, jmax: int, mass: float) -> RovibDVR:
     Returns:
         rovib: RovibDVR - energies and wavefunctions on the primitive DVR grid
     """
-    if vmax < 0 or jmax < 0:
-        message = f"vmax and jmax must be non-negative, but got vmax={vmax}, jmax={jmax}"
-        logger.error(message)
-        raise ValueError(message)
-    if mass <= 0.0 or not np.isfinite(mass):
-        message = f"mass must be positive and finite, but got {mass}"
-        logger.error(message)
-        raise ValueError(message)
 
     n_dvr = dvr.grids.size
     n_v = min(vmax + 1, n_dvr)

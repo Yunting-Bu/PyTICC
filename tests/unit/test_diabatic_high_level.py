@@ -59,9 +59,10 @@ def _solve(
 def test_solve_diabatic_atom_diatom_returns_unitary_coupled_state_smatrix() -> None:
     result = _solve(_diabatic_basis(), _pes(0.02))
 
+    assert isinstance(result.basis, ticc.ChannelBasis)
     assert result.basis.n_channel == 2
     assert {channel.mis_Y.electronic_state for channel in result.basis} == {0, 1}
-    assert result.Y_BF.shape == (1, 2, 2)
+    assert result.Y_propagated.shape == (1, 2, 2)
     assert result.Smat[0].shape == (2, 2)
     assert abs(result.Smat[0][0, 1]) > 1.0e-4
     np.testing.assert_allclose(result.Smat[0].conj().T @ result.Smat[0], np.eye(2), atol=1.0e-11)
