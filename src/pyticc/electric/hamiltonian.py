@@ -6,6 +6,7 @@ from pyticc.basis.dvr import phase_fix
 from pyticc.electric.angular import rotor_orientation_moment_matrices
 
 
+# Electric-field-dressed diatom
 # ----------------------------------------------------------------------------------------
 def solve_diatom_electric_block(
     h_reference: NDArray[np.float64],
@@ -70,6 +71,9 @@ def solve_diatom_electric_block(
     eigenvectors = phase_fix(eigenvectors)
     coefficients = eigenvectors.reshape(grids.size, j_values.size, n_alpha)
     return j_values, energies, coefficients
+
+
+# ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------

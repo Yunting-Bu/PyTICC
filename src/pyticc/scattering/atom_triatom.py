@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 
 import pyticc.matrix.interaction.atom_triatom as vmat
 from pyticc.basis.angle import gauss_legendre_dvr
-from pyticc.basis.channel import ChannelBuilder, TruncSpec
+from pyticc.basis.channel import ChannelBasis
 from pyticc.basis.monomer import AtomSpec
 from pyticc.basis.triatom import TriatomBasis
 from pyticc.matrix.interaction import contract
@@ -20,7 +20,6 @@ from pyticc.system import ScattSystem
 def build_hamiltonian(
     system: ScattSystem,
     *,
-    trunc: TruncSpec | None = None,
     n_theta_1: int | None = None,
     n_theta_2: int = 16,
     n_phi: int = 16,
@@ -34,10 +33,18 @@ def build_hamiltonian(
         message = "Atom-triatom Hamiltonian requires a PESWrapper"
         logger.error(message)
         raise TypeError(message)
+    if system.reduced_mass is None:
+        message = "Atom-triatom Hamiltonian requires a collision reduced mass"
+        logger.error(message)
+        raise ValueError(message)
+    if not isinstance(system.basis, ChannelBasis):
+        message = "Atom-triatom Hamiltonian requires channels prepared by build_ScattSystem"
+        logger.error(message)
+        raise TypeError(message)
 
     triatom = system.monomer_Y
     pes = system.potential
-    basis = ChannelBuilder(system, TruncSpec() if trunc is None else trunc).build()
+    basis = system.basis
 
     if n_theta_1 is None:
         if triatom.cos_theta is None or triatom.theta_weights is None:
@@ -88,9 +95,11 @@ def build_hamiltonian(
         return tuple(contract(V_basis, potential_grid, indices) for indices in channel_blocks)
 
     return ScattHamiltonian(
-        system=system,
         basis=basis,
+        reduced_mass=system.reduced_mass,
         interaction=Vmat,
+        approx=system.approx,
+        K_delta=system.K_delta,
         block_interaction=V_blocks,
         potential_grid_size=prod(V_basis.grid_shape),
     )

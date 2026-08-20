@@ -2,27 +2,29 @@ import numpy as np
 from scipy.special import roots_legendre
 
 import pyticc as ticc
+from pyticc.basis.rovib import RovibBasis
 from pyticc.scattering import atom_diatom, diatom_diatom
+from pyticc.scattering.solver import build_k_blocks
 
 
-def _rovib() -> ticc.RovibPODVR:
-    return ticc.RovibPODVR(
+def _rovib() -> RovibBasis:
+    return RovibBasis(
         grids=np.array([1.5]),
         E_vj=np.zeros((1, 1)),
         WF_vj=np.ones((1, 1, 1)),
     )
 
 
-def _rotational_rovib(jmax: int) -> ticc.RovibPODVR:
-    return ticc.RovibPODVR(
+def _rotational_rovib(jmax: int) -> RovibBasis:
+    return RovibBasis(
         grids=np.array([1.5]),
         E_vj=np.zeros((1, jmax + 1)),
         WF_vj=np.ones((1, 1, jmax + 1)),
     )
 
 
-def _diatom(rovib: ticc.RovibPODVR, *, jmax: int = 0, jpar: int = 0) -> ticc.DiatomBasis:
-    return ticc.DiatomBasis(rovib=rovib, energy_zero=0.0, vmax=0, jmax=jmax, jpar=jpar)
+def _diatom(rovib: RovibBasis) -> ticc.DiatomBasis:
+    return ticc.DiatomBasis(rovib=rovib, energy_zero=0.0)
 
 
 def _solve_atom(
@@ -35,14 +37,16 @@ def _solve_atom(
     approx: ticc.Approx = ticc.Approx.EXACT,
     K_delta: int = 1,
     propagation: ticc.Propagation | None = None,
+    channel: ticc.ChannelSpec | None = None,
 ) -> ticc.ScatteringResult | ticc.CoupledStatesResult:
-    system = ticc.ScattSystem(
+    system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
         Jtot=Jtot,
         system_parity=1,
         approx=approx,
         K_delta=K_delta,
+        channel=channel,
         potential=pes,
         reduced_mass=2.0,
     )
@@ -55,8 +59,11 @@ def test_common_setup_tools_are_available_from_top_level() -> None:
     assert ticc.CM2AU * ticc.AU2CM == 1.0
     assert ticc.reduced_mass(2.0, 2.0) == 1.0
     assert callable(ticc.build_SineDVR)
+    assert callable(ticc.prepare_Diatom)
+    assert callable(ticc.prepare_DiabaticDiatom)
+    assert callable(ticc.prepare_DiatomElectric)
     assert "solve" in ticc.__all__
-    assert "build_k_blocks" in ticc.__all__
+    assert "build_k_blocks" not in ticc.__all__
     assert "report" in ticc.__all__
     assert "get_Wmat" not in ticc.__all__
     for legacy_name in ("run_atom_diatom", "run_diatom_diatom", "run_atom_triatom", "run_diabatic_atom_diatom"):
@@ -83,14 +90,18 @@ def test_solve_atom_diatom_returns_complete_scattering_result() -> None:
 
 def test_solve_atom_diatom_uses_half_angle_rule_for_rotational_exchange_parity() -> None:
     rovib = _rovib()
-    diatom = _diatom(rovib, jpar=1)
+    diatom = _diatom(rovib)
     sampled_angles: list[np.ndarray] = []
 
     def interaction(RR: float, coordinates: np.ndarray) -> np.ndarray:
         sampled_angles.append(np.unique(coordinates[1]))
         return np.zeros(coordinates.shape[1])
 
-    _solve_atom(diatom, ticc.PESWrapper(interaction=interaction))
+    _solve_atom(
+        diatom,
+        ticc.PESWrapper(interaction=interaction),
+        channel=ticc.ChannelSpec(exchange_parity_Y=1),
+    )
 
     full_cos_theta, _ = roots_legendre(8)
     assert sampled_angles
@@ -104,7 +115,7 @@ def test_solve_diatom_diatom_returns_complete_scattering_result() -> None:
     diatom_Y = _diatom(rovib_Y)
     pes = ticc.PESWrapper(interaction=lambda RR, coordinates: np.zeros(coordinates.shape[1]))
 
-    system = ticc.ScattSystem(
+    system = ticc.build_ScattSystem(
         diatom_X,
         diatom_Y,
         Jtot=0,
@@ -129,13 +140,13 @@ def test_solve_diatom_diatom_returns_complete_scattering_result() -> None:
 
 def test_solve_atom_diatom_cs_returns_independent_K_blocks() -> None:
     rovib = _rotational_rovib(2)
-    diatom = _diatom(rovib, jmax=2)
+    diatom = _diatom(rovib)
     pes = ticc.PESWrapper(interaction=lambda RR, coordinates: np.zeros(coordinates.shape[1]))
 
     result = _solve_atom(diatom, pes, Jtot=2, n_theta=6, approx=ticc.Approx.CS)
 
     assert isinstance(result, ticc.CoupledStatesResult)
-    system = ticc.ScattSystem(
+    system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
         Jtot=2,
@@ -145,16 +156,18 @@ def test_solve_atom_diatom_cs_returns_independent_K_blocks() -> None:
         reduced_mass=2.0,
     )
     hamiltonian = atom_diatom.build_hamiltonian(system, n_theta=6)
-    assert [block.K_values for block in ticc.build_k_blocks(hamiltonian)] == [(0,), (1,), (2,)]
+    assert [block.K_values for block in build_k_blocks(hamiltonian)] == [(0,), (1,), (2,)]
     assert [block.block.K_values for block in result.blocks] == [(0,), (1,), (2,)]
     for block in result.blocks:
         Smat = block.Smat_asymptotic[0]
         np.testing.assert_allclose(Smat.conj().T @ Smat, np.eye(Smat.shape[0]), atol=1.0e-12)
+        Smat_BF = block.Smat_BF[0]
+        np.testing.assert_allclose(Smat_BF.conj().T @ Smat_BF, np.eye(Smat_BF.shape[0]), atol=1.0e-12)
 
 
 def test_solve_atom_diatom_nncc_reuses_one_batched_pes_grid() -> None:
     rovib = _rotational_rovib(4)
-    diatom = _diatom(rovib, jmax=4)
+    diatom = _diatom(rovib)
     calls = 0
 
     def interaction_many(RR: np.ndarray, coordinates: np.ndarray) -> np.ndarray:
@@ -177,7 +190,7 @@ def test_solve_atom_diatom_nncc_reuses_one_batched_pes_grid() -> None:
 
 def test_solve_atom_diatom_nncc_shares_each_radial_window_across_blocks() -> None:
     rovib = _rotational_rovib(4)
-    diatom = _diatom(rovib, jmax=4)
+    diatom = _diatom(rovib)
     evaluated_R: list[np.ndarray] = []
 
     def interaction_many(RR: np.ndarray, coordinates: np.ndarray) -> np.ndarray:

@@ -21,38 +21,33 @@ def main() -> None:
     reduced_mass_O2 = ticc.reduced_mass(mass_O, mass_O)
     reduced_mass_HO2 = ticc.reduced_mass(mass_H, mass_O2)
 
-    dvrs = tuple(
-        ticc.build_SineDVR(
-            a=1.2,
-            b=5.0,
-            n_dvr=135,
-            mass=reduced_mass_O2,
-            pot_func=pes.monomer_state(electronic_state),
-        )
-        for electronic_state in range(pes.n_state)
-    )
-    diatom_O2 = ticc.build_DiabaticDiatomBasis(
-        dvrs,
+    diatom_O2 = ticc.prepare_DiabaticDiatom(
+        pes.monomer_values,
+        n_state=pes.n_state,
+        r=(1.2, 5.0),
+        n_dvr=135,
         n_podvr=80,
         vmax=(29, 26),
         jmax=(55, 56),
         mass=reduced_mass_O2,
-        jpar=(-1, 1),
     )
     total_energies = np.array([17.38631, 18.18561, 18.46362, 18.77639]) * ticc.CM2AU
 
     try:
-        system = ticc.ScattSystem(
+        system = ticc.build_ScattSystem(
             ticc.AtomSpec(),
             diatom_O2,
             Jtot=0,
             system_parity=1,
+            channel=ticc.ChannelSpec(
+                exchange_parity_Y=(-1, 1),
+                E_Y_cut=38000.0 * ticc.CM2AU,
+            ),
             potential=pes,
             reduced_mass=reduced_mass_HO2,
         )
         hamiltonian = diabatic_atom_diatom.build_hamiltonian(
             system,
-            trunc=ticc.TruncSpec(E_Y_cut=38000.0 * ticc.CM2AU),
             n_theta=30,
         )
         result = ticc.solve(

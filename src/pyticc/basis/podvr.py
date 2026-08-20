@@ -6,8 +6,10 @@ from numpy.typing import NDArray
 from scipy.linalg import eigh
 
 from pyticc.basis.dvr import SineDVR, phase_fix
+from pyticc.basis.rovib import RovibBasis
 
 
+# PODVR contraction
 # --------------------------------------------------------------------------------
 def podvr_grids(
     dvr_grids: NDArray[np.float64], dvr_wf: NDArray[np.float64], n_podvr: int
@@ -183,30 +185,7 @@ def build_VibPODVR(dvr: SineDVR, n_podvr: int, vmax: int) -> VibPODVR:
 
 
 # --------------------------------------------------------------------------------
-@dataclass(frozen=True)
-class RovibPODVR:
-    """
-    Contracted diatomic rovibrational basis on PODVR grids.
-
-    Members:
-        grids: NDArray[np.float64] - PODVR bond-length grids in atomic units, shape
-            (n_podvr,)
-        E_vj: NDArray[np.float64] - rovibrational energies indexed as E_vj[v, j],
-            shape (n_v, n_j)
-        WF_vj: NDArray[np.float64] - wavefunctions indexed as WF_vj[grid, v, j],
-            shape (n_podvr, n_v, n_j)
-    """
-
-    grids: NDArray[np.float64]
-    E_vj: NDArray[np.float64]
-    WF_vj: NDArray[np.float64]
-
-
-# --------------------------------------------------------------------------------
-
-
-# --------------------------------------------------------------------------------
-def build_RovibPODVR(dvr: SineDVR, n_podvr: int, vmax: int, jmax: int, mass: float) -> RovibPODVR:
+def build_RovibPODVR(dvr: SineDVR, n_podvr: int, vmax: int, jmax: int, mass: float) -> RovibBasis:
     """
     Build a contracted diatomic rovibrational basis from a sine-DVR calculation.
 
@@ -218,8 +197,8 @@ def build_RovibPODVR(dvr: SineDVR, n_podvr: int, vmax: int, jmax: int, mass: flo
         mass: float - diatomic reduced mass in atomic units
 
     Returns:
-        rovib: RovibPODVR - PODVR grids, rovibrational energies, and wavefunctions
+        rovib: RovibBasis - PODVR grids, rovibrational energies, and wavefunctions
     """
     po_grids, _, po_to_cfbr = podvr_grids(dvr.grids, dvr.eigen_vec, n_podvr)
     E_vj, WF_vj = podvr_vibrot(po_grids, po_to_cfbr, dvr.eigen_val, vmax, jmax, mass)
-    return RovibPODVR(grids=po_grids, E_vj=E_vj, WF_vj=WF_vj)
+    return RovibBasis(grids=po_grids, E_vj=E_vj, WF_vj=WF_vj)

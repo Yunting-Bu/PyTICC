@@ -12,14 +12,11 @@ def make_atom_diatom_basis(v_values: tuple[int, ...] = (0,)) -> ChannelBasis:
             mis_Y=MolInnerState(v=v, j=2),
             j_couple=2,
             K=K,
-            Jtot=2,
-            system_parity=1,
             E_int=float(v),
-            index=index,
         )
-        for index, (v, K) in enumerate((v, K) for v in v_values for K in range(3))
+        for v, K in ((v, K) for v in v_values for K in range(3))
     )
-    return ChannelBasis(channels)
+    return ChannelBasis(channels, Jtot=2, system_parity=1)
 
 
 def test_get_Umat_BF_has_expected_diagonal_and_coriolis_couplings() -> None:
@@ -61,15 +58,12 @@ def test_get_Umat_BF_does_not_couple_different_electronic_states() -> None:
             mis_Y=MolInnerState(v=0, j=2, electronic_state=electronic_state),
             j_couple=2,
             K=K,
-            Jtot=2,
-            system_parity=1,
             E_int=float(electronic_state),
-            index=index,
         )
-        for index, (electronic_state, K) in enumerate((state, K) for state in range(2) for K in range(3))
+        for electronic_state, K in ((state, K) for state in range(2) for K in range(3))
     )
 
-    Umat = get_Umat_BF(ChannelBasis(channels))
+    Umat = get_Umat_BF(ChannelBasis(channels, Jtot=2, system_parity=1))
 
     np.testing.assert_allclose(Umat[:3, 3:], 0.0)
     np.testing.assert_allclose(Umat[3:, :3], 0.0)

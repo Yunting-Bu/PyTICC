@@ -7,14 +7,16 @@ from numpy.typing import NDArray
 import pyticc as ticc
 import pyticc.pes.fortran.compiler as compiler_module
 from pyticc.basis.angle import clebsch_gordan
+from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
+from pyticc.basis.rovib import RovibBasis
 from pyticc.scattering import atom_diatom
 
 
 def _zero_field_J0_transform(
-    basis_bf: ticc.ChannelBasis,
-    basis_sf: ticc.ChannelBasisElectricSF,
+    basis_bf: ChannelBasis,
+    basis_sf: ChannelBasisElectricSF,
     electric_basis: ticc.DiatomElectricBasis,
-    rovib: ticc.RovibPODVR,
+    rovib: RovibBasis,
 ) -> NDArray[np.float64]:
     r"""
     Transform the zero-field Electric-SF basis to the regular J=0 TICC basis.
@@ -32,12 +34,12 @@ def _zero_field_J0_transform(
         zero-field dressed state and the regular PODVR rovibrational state.
 
     Inputs:
-        basis_bf: ticc.ChannelBasis - regular J=0 positive-parity Ar-HF
+        basis_bf: ChannelBasis - regular J=0 positive-parity Ar-HF
             channel basis
-        basis_sf: ticc.ChannelBasisElectricSF - zero-field fixed-M Electric-SF
+        basis_sf: ChannelBasisElectricSF - zero-field fixed-M Electric-SF
             channel basis
         electric_basis: ticc.DiatomElectricBasis - zero-field dressed HF states
-        rovib: ticc.RovibPODVR - regular HF rovibrational states
+        rovib: RovibBasis - regular HF rovibrational states
 
     Returns:
         transform: NDArray[np.float64] - Electric-SF to regular J=0
@@ -53,7 +55,7 @@ def _zero_field_J0_transform(
             alpha = int(np.argmax(np.abs(overlaps)))
             radial_phase = float(np.sign(overlaps[alpha]))
             sf_index = next(
-                channel.index for channel in basis_sf if channel.alpha == alpha and channel.m == m and channel.l == j and channel.m_l == -m
+                index for index, channel in enumerate(basis_sf) if channel.alpha == alpha and channel.m == m and channel.l == j and channel.m_l == -m
             )
             transform[sf_index, bf_index] = (-1.0) ** j * radial_phase * clebsch_gordan(j, m, j, -m, 0)
     return transform
@@ -74,17 +76,20 @@ def test_ArHF_zero_electric_field_recovers_regular_TICC_Hamiltonian() -> None:
     mass_Ar, mass_H, mass_F = ticc.element_masses_au("Ar", "H", "F")
     mass_HF = ticc.reduced_mass(mass_H, mass_F)
     mass_ArHF = ticc.reduced_mass(mass_Ar, mass_H + mass_F)
-    dvr = ticc.build_SineDVR(1.5, 4.5, 100, mass_HF, pes.monomer_Y)
-    rovib = ticc.build_RovibPODVR(dvr, n_podvr=5, vmax=0, jmax=1, mass=mass_HF)
-    diatom = ticc.DiatomBasis(
-        rovib=rovib,
-        energy_zero=float(rovib.E_vj[0, 0]),
+    diatom = ticc.prepare_Diatom(
+        pes.monomer_Y,
+        r=(1.5, 4.5),
+        n_dvr=100,
+        n_podvr=5,
         vmax=0,
         jmax=1,
+        mass=mass_HF,
     )
-    electric_basis = ticc.build_DiatomElectricBasis(
-        dvr,
+    electric_basis = ticc.prepare_DiatomElectric(
+        pes.monomer_Y,
         response_file,
+        r=(1.5, 4.5),
+        n_dvr=100,
         electric_strength=0.0,
         n_podvr=5,
         jmax=1,
@@ -95,37 +100,37 @@ def test_ArHF_zero_electric_field_recovers_regular_TICC_Hamiltonian() -> None:
         energy_zero=diatom.energy_zero,
     )
 
-    regular_system = ticc.ScattSystem(
+    regular_system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
         Jtot=0,
         system_parity=1,
+        channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
         potential=pes,
         reduced_mass=mass_ArHF,
     )
     regular = atom_diatom.build_hamiltonian(
         regular_system,
-        trunc=ticc.TruncSpec(E_Y_cut=2000.0 * ticc.CM2AU),
         n_theta=35,
     )
-    electric_system = ticc.ScattSystem(
+    electric_system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         electric_basis,
         M=0,
+        lmax=1,
+        channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
         potential=pes,
         reduced_mass=mass_ArHF,
     )
     electric = atom_diatom.build_hamiltonian_electric_sf(
         electric_system,
-        lmax=1,
-        E_cut=2000.0 * ticc.CM2AU,
         n_theta_r=24,
         n_theta_R=24,
-        n_delta=24,
+        n_delta=48,
     )
-    assert isinstance(regular.basis, ticc.ChannelBasis)
-    assert isinstance(electric.basis, ticc.ChannelBasisElectricSF)
-    transform = _zero_field_J0_transform(regular.basis, electric.basis, electric_basis, rovib)
+    assert isinstance(regular.basis, ChannelBasis)
+    assert isinstance(electric.basis, ChannelBasisElectricSF)
+    transform = _zero_field_J0_transform(regular.basis, electric.basis, electric_basis, diatom.rovib)
 
     np.testing.assert_allclose(transform.T @ transform, np.eye(regular.basis.n_channel), atol=2.0e-15)
     np.testing.assert_allclose(transform.T @ np.diag(electric.E_int) @ transform, np.diag(regular.E_int), atol=2.0e-15)
@@ -149,4 +154,4 @@ def test_ArHF_zero_electric_field_recovers_regular_TICC_Hamiltonian() -> None:
     asymptotic_transform = transform @ regular_result.asymptotic_transform
     transform_open = asymptotic_transform[electric_open]
     projected_Smat = transform_open.T @ electric_result.Smat[0] @ transform_open
-    np.testing.assert_allclose(projected_Smat, regular_result.Smat[0], rtol=0.0, atol=1.2e-4)
+    np.testing.assert_allclose(projected_Smat, regular_result.Smat[0], rtol=0.0, atol=2.0e-5)

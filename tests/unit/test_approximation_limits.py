@@ -1,16 +1,18 @@
 import numpy as np
 
 import pyticc as ticc
+from pyticc.basis.channel import ChannelBasis
+from pyticc.basis.rovib import RovibBasis
 from pyticc.scattering import diatom_diatom
 
 
-def _rovib(grids: list[float], energies: list[float]) -> ticc.RovibPODVR:
+def _rovib(grids: list[float], energies: list[float]) -> RovibBasis:
     jmax = len(energies) - 1
     wavefunctions = np.empty((len(grids), 1, jmax + 1), dtype=np.float64)
     for j in range(jmax + 1):
         angle = 0.15 * (j + 1)
         wavefunctions[:, 0, j] = np.array([np.cos(angle), np.sin(angle)])
-    return ticc.RovibPODVR(
+    return RovibBasis(
         grids=np.asarray(grids, dtype=np.float64),
         E_vj=np.asarray([energies], dtype=np.float64),
         WF_vj=wavefunctions,
@@ -20,8 +22,8 @@ def _rovib(grids: list[float], energies: list[float]) -> ticc.RovibPODVR:
 def _model() -> tuple[ticc.DiatomBasis, ticc.DiatomBasis, ticc.PESWrapper]:
     rovib_X = _rovib([1.2, 1.6], [0.0, 0.01, 0.02])
     rovib_Y = _rovib([1.4, 1.8], [0.0, 0.015])
-    diatom_X = ticc.DiatomBasis(rovib=rovib_X, energy_zero=0.0, vmax=0, jmax=2, jpar=1)
-    diatom_Y = ticc.DiatomBasis(rovib=rovib_Y, energy_zero=0.0, vmax=0, jmax=1)
+    diatom_X = ticc.DiatomBasis(rovib=rovib_X, energy_zero=0.0)
+    diatom_Y = ticc.DiatomBasis(rovib=rovib_Y, energy_zero=0.0)
 
     def interaction(RR: float, coordinates: np.ndarray) -> np.ndarray:
         r_X, r_Y, theta_X, theta_Y, phi = coordinates
@@ -40,19 +42,19 @@ def _run(
     K_delta: int = 1,
 ) -> ticc.ScatteringResult | ticc.CoupledStatesResult:
     diatom_X, diatom_Y, pes = _model()
-    system = ticc.ScattSystem(
+    system = ticc.build_ScattSystem(
         diatom_X,
         diatom_Y,
         Jtot=Jtot,
         system_parity=1,
         approx=approx,
         K_delta=K_delta,
+        channel=ticc.ChannelSpec(exchange_parity_X=1, K_cut=K_cut),
         potential=pes,
         reduced_mass=2.0,
     )
     hamiltonian = diatom_diatom.build_hamiltonian(
         system,
-        trunc=ticc.TruncSpec(K_cut=K_cut),
         n_theta_X=4,
         n_theta_Y=4,
         n_phi=5,
@@ -99,7 +101,7 @@ def test_nncc_covering_every_K_is_identical_to_exact() -> None:
     nncc = _run(Jtot=2, approx=ticc.Approx.NNCC, K_delta=1)
 
     assert isinstance(exact, ticc.ScatteringResult)
-    assert isinstance(exact.basis, ticc.ChannelBasis)
+    assert isinstance(exact.basis, ChannelBasis)
     assert isinstance(nncc, ticc.CoupledStatesResult)
     assert {channel.K for channel in exact.basis} == {0, 1, 2}
     _assert_exact_matches_single_block(exact, nncc)

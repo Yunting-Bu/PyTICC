@@ -2,6 +2,18 @@ import numpy as np
 import pytest
 
 from pyticc.basis.dvr import build_RovibDVR, build_SineDVR
+from pyticc.basis.podvr import build_RovibPODVR
+from pyticc.basis.rovib import RovibBasis
+
+
+def test_primitive_dvr_and_podvr_build_the_same_rovib_type() -> None:
+    dvr = build_SineDVR(1.0, 3.0, 12, 500.0, lambda r: 0.02 * (r - 2.0) ** 2)
+
+    primitive = build_RovibDVR(dvr, vmax=1, jmax=1, mass=500.0)
+    contracted = build_RovibPODVR(dvr, n_podvr=5, vmax=1, jmax=1, mass=500.0)
+
+    assert isinstance(primitive, RovibBasis)
+    assert isinstance(contracted, RovibBasis)
 
 
 def test_build_rovib_dvr_keeps_the_primitive_grid_and_adds_rotation() -> None:

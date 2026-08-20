@@ -51,7 +51,7 @@ class TriatomBasis:
         jmax: int - maximum triatomic rotational angular momentum
         tmax: int - maximum contracted-state index
         tmin: int - minimum contracted-state index
-        jpar: int - A2B exchange parity, or 0 for an ABC monomer
+        exchange_parity: int - A2B exchange parity, or 0 for an ABC monomer
         parity_block_sign: int - epsilon*(-1)^J used to construct the K=0 basis
         K0_available: NDArray[np.bool_] | None - availability of each (j, t, K=0)
             state, shape (jmax + 1, tmax + 1)
@@ -70,7 +70,7 @@ class TriatomBasis:
     jmax: int
     tmax: int
     tmin: int = 0
-    jpar: int = 0
+    exchange_parity: int = 0
     parity_block_sign: int = 1
     K0_available: NDArray[np.bool_] | None = None
     positive_K_available: NDArray[np.bool_] | None = None
@@ -99,8 +99,8 @@ class TriatomBasis:
             message = f"Eint shape {self.Eint.shape} does not cover jmax={self.jmax} and tmax={self.tmax}"
             logger.error(message)
             raise ValueError(message)
-        if self.jpar not in (-1, 0, 1):
-            message = f"jpar must be -1, 0, or 1, but got jpar={self.jpar}"
+        if self.exchange_parity not in (-1, 0, 1):
+            message = f"exchange_parity must be -1, 0, or 1, but got {self.exchange_parity}"
             logger.error(message)
             raise ValueError(message)
         if self.parity_block_sign not in (-1, 1):
@@ -185,7 +185,7 @@ def get_triatom_expansion(
     vmax_1 = int(np.max(block.qn[:, 2]))
     vmax_2 = int(np.max(block.qn[:, 3]))
     qn = _unsym_qn(j, j1max, vmax_1, vmax_2)
-    transform = _symmetry_transform(qn, block.qn, K, basis.parity_block_sign, basis.jpar)
+    transform = _symmetry_transform(qn, block.qn, K, basis.parity_block_sign, basis.exchange_parity)
     coefficients = transform @ block.coefficients[:, int(columns[0])]
     return qn, np.asarray(coefficients, dtype=np.float64)
 
@@ -450,7 +450,7 @@ def build_TriatomBasis(
         Eint=Eint,
         jmax=j2max,
         tmax=tmax,
-        jpar=exchange_parity,
+        exchange_parity=exchange_parity,
         parity_block_sign=parity_block_sign,
         K0_available=K0_available,
         positive_K_available=positive_K_available,

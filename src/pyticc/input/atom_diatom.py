@@ -4,9 +4,7 @@ from typing import cast
 from loguru import logger
 
 import pyticc.scattering.atom_diatom as geometry
-from pyticc.basis.channel import TruncSpec
-from pyticc.basis.dvr import build_SineDVR
-from pyticc.basis.monomer import AtomSpec, build_DiatomElectricBasis
+from pyticc.basis.monomer import AtomSpec, prepare_DiatomElectric
 from pyticc.constants import CM2AU
 from pyticc.input.common import (
     TomlTable,
@@ -23,7 +21,7 @@ from pyticc.input.common import (
 from pyticc.pes.adiabatic import PESWrapper
 from pyticc.result import CoupledStatesResult, ScatteringResult
 from pyticc.scattering.solver import solve
-from pyticc.system import Approx, ScattSystem, element_masses_au, reduced_mass
+from pyticc.system import Approx, ChannelSpec, build_ScattSystem, element_masses_au, reduced_mass
 
 # ----------------------------------------------------------------------------------------
 
@@ -70,7 +68,7 @@ def run_electric(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringRe
     basis_values = section(config, "basis")
     electric_values = section(config, "electric")
     quadrature = section(config, "quadrature")
-    truncation = section(config, "truncation")
+    channels = section(config, "channels")
     interval = tuple(float(value) for value in required(basis_values, "r"))
     if len(interval) != 2:
         message = f"basis r must contain the two DVR boundaries, but got {interval}"
@@ -85,16 +83,11 @@ def run_electric(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringRe
     lmax = int(required(basis_values, "lmax"))
     n_podvr = int(required(basis_values, "n_podvr"))
     jmax = int(required(basis_values, "jmax"))
-    dvr = build_SineDVR(
-        interval[0],
-        interval[1],
-        int(required(basis_values, "n_dvr")),
-        diatom_reduced_mass,
+    electric_diatom = prepare_DiatomElectric(
         potential,
-    )
-    electric_diatom = build_DiatomElectricBasis(
-        dvr,
         resolve_path(base, str(required(electric_values, "response_csv"))),
+        r=(interval[0], interval[1]),
+        n_dvr=int(required(basis_values, "n_dvr")),
         electric_strength=float(required(electric_values, "strength_au")),
         n_podvr=n_podvr,
         jmax=jmax,
@@ -103,17 +96,17 @@ def run_electric(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringRe
         n_alpha=int(required(basis_values, "n_alpha")),
         mass=diatom_reduced_mass,
     )
-    system = ScattSystem(
+    system = build_ScattSystem(
         AtomSpec(),
         electric_diatom,
         M=M,
+        lmax=lmax,
+        channel=ChannelSpec(E_Y_cut=float(required(channels, "E_Y_cut_cm")) * CM2AU),
         potential=pes,
         reduced_mass=reduced_mass(atom_mass, diatom_mass),
     )
     hamiltonian = geometry.build_hamiltonian_electric_sf(
         system,
-        lmax=lmax,
-        E_cut=float(required(truncation, "E_Y_cut_cm")) * CM2AU,
         n_theta_r=int(required(quadrature, "n_theta_r")),
         n_theta_R=int(required(quadrature, "n_theta_R")),
         n_delta=int(required(quadrature, "n_delta")),
@@ -138,26 +131,28 @@ def run(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | Co
 
     basis_values = section(config, "basis")
     quadrature = section(config, "quadrature")
-    truncation = section(config, "truncation")
+    channels = section(config, "channels")
     diatom, diatom_mass = build_diatom(diatom_symbols(config, "diatom"), basis_values, potential)
     atom_mass = element_masses_au(str(required(config, "atom")))[0]
     approx, K_delta = approximation(config)
-    system = ScattSystem(
+    system = build_ScattSystem(
         AtomSpec(),
         diatom,
         Jtot=int(required(config, "Jtot")),
         system_parity=int(required(config, "system_parity")),
         approx=approx,
         K_delta=K_delta,
+        channel=ChannelSpec(
+            vmin_Y=int(channels.get("vmin_Y", 0)),
+            exchange_parity_Y=int(channels.get("exchange_parity_Y", 0)),
+            E_Y_cut=float(required(channels, "E_Y_cut_cm")) * CM2AU,
+            K_cut=k_cut(channels),
+        ),
         potential=pes,
         reduced_mass=reduced_mass(atom_mass, diatom_mass),
     )
     hamiltonian = geometry.build_hamiltonian(
         system,
-        trunc=TruncSpec(
-            E_Y_cut=float(required(truncation, "E_Y_cut_cm")) * CM2AU,
-            K_cut=k_cut(truncation),
-        ),
         n_theta=int(required(quadrature, "n_theta")),
     )
     return solve(hamiltonian, energies(required(config, "energies_cm"), base), propagation(config))

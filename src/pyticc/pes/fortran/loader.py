@@ -6,8 +6,9 @@ from loguru import logger
 
 from pyticc.pes.adiabatic import PESWrapper
 from pyticc.pes.diabatic import DiabaticPESWrapper
-from pyticc.pes.fortran.compiler import prepare_diabatic_extension, prepare_extension
-from pyticc.pes.fortran.executor import create_diabatic_pes_wrapper, create_pes_wrapper
+from pyticc.pes.fortran.compiler import prepare_diabatic_extension, prepare_extension, prepare_total_extension
+from pyticc.pes.fortran.executor import create_diabatic_pes_wrapper, create_pes_wrapper, create_total_pes
+from pyticc.pes.total import TotalPES
 
 
 # ----------------------------------------------------------------------------------------
@@ -83,6 +84,39 @@ def load_fortran_diabatic_pes(
     source_paths, wrapper_path, runtime_dir, configured_lapack = _resolve_inputs(sources, wrapper, workdir)
     module_name, extension = prepare_diabatic_extension(source_paths, wrapper_path, lapack=requested_lapack or configured_lapack)
     return create_diabatic_pes_wrapper(module_name, extension, runtime_dir, processes, n_state)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def load_fortran_total_pes(
+    sources: Sequence[str | Path] | str | Path,
+    wrapper: str | Path | None = None,
+    *,
+    workdir: str | Path | None = None,
+    lapack: bool = False,
+) -> TotalPES:
+    """
+    Compile or load a Fortran scalar adiabatic total PES.
+
+    The wrapper must define ``pyticc_total_grid(bonds,V,n_grid)``. PyTICC passes
+    physical bond lengths in bohr with leading order ``(r_AB,r_BC,r_CA)``; the
+    wrapper must return total energies in Hartree without changing their zero.
+
+    Inputs:
+        sources: Sequence[str | Path] | str | Path - Fortran sources or a TOML file
+        wrapper: str | Path | None - source implementing ``pyticc_total_grid``
+        workdir: str | Path | None - directory containing PES runtime data files
+        lapack: bool - whether the PES requires LAPACK
+
+    Returns:
+        pes: TotalPES - validated total potential-energy surface
+    """
+    requested_lapack = _require_lapack(lapack)
+    source_paths, wrapper_path, runtime_dir, configured_lapack = _resolve_inputs(sources, wrapper, workdir)
+    module_name, extension = prepare_total_extension(source_paths, wrapper_path, lapack=requested_lapack or configured_lapack)
+    return create_total_pes(module_name, extension, runtime_dir)
 
 
 # ----------------------------------------------------------------------------------------

@@ -11,9 +11,10 @@ from typing import Literal
 import numpy as np
 from loguru import logger
 
-PESABI = Literal["scalar", "diabatic"]
+PESABI = Literal["scalar", "diabatic", "total"]
 _SCALAR_ROUTINES = ("pyticc_interaction_grid", "pyticc_monomer_x_grid", "pyticc_monomer_y_grid")
 _DIABATIC_ROUTINES = ("pyticc_diabatic_interaction_grid", "pyticc_diabatic_monomer_grid")
+_TOTAL_ROUTINES = ("pyticc_total_grid",)
 _INCLUDE_PATTERN = re.compile(r"^\s*include\s*['\"]([^'\"]+)['\"]", re.IGNORECASE | re.MULTILINE)
 
 
@@ -41,8 +42,14 @@ def prepare_diabatic_extension(sources: tuple[Path, ...], wrapper: Path, *, lapa
 
 
 # ----------------------------------------------------------------------------------------
+def prepare_total_extension(sources: tuple[Path, ...], wrapper: Path, *, lapack: bool = False) -> tuple[str, Path]:
+    """Return a cached or newly compiled total-PES extension."""
+    return _prepare_extension(sources, wrapper, "total", lapack)
+
+
+# ----------------------------------------------------------------------------------------
 def _prepare_extension(sources: tuple[Path, ...], wrapper: Path, abi: PESABI, lapack: bool) -> tuple[str, Path]:
-    """Compile one scalar or diabatic Fortran PES ABI."""
+    """Compile one scalar, diabatic, or total Fortran PES ABI."""
     routines = _find_routines(wrapper, abi)
     compiler_selection = os.environ.get("FC", "auto")
     module_name = f"pyticc_pes_{_source_digest(sources, wrapper, abi, lapack=lapack, compiler=compiler_selection)[:12]}"
@@ -167,9 +174,13 @@ def _require_build_tools() -> str:
 def _find_routines(wrapper: Path, abi: PESABI = "scalar") -> set[str]:
     """Detect supported PyTICC wrapper subroutines and require one complete ABI."""
     source = wrapper.read_text(errors="ignore")
-    supported = _SCALAR_ROUTINES if abi == "scalar" else _DIABATIC_ROUTINES
+    supported = {"scalar": _SCALAR_ROUTINES, "diabatic": _DIABATIC_ROUTINES, "total": _TOTAL_ROUTINES}[abi]
     routines = {name for name in supported if re.search(rf"^\s*subroutine\s+{name}\b", source, re.IGNORECASE | re.MULTILINE)}
-    required: set[str] = {"pyticc_interaction_grid"} if abi == "scalar" else set(_DIABATIC_ROUTINES)
+    required = {
+        "scalar": {"pyticc_interaction_grid"},
+        "diabatic": set(_DIABATIC_ROUTINES),
+        "total": set(_TOTAL_ROUTINES),
+    }[abi]
     missing = required - routines
     if missing:
         message = f"Fortran {abi} wrapper must define {', '.join(sorted(missing))}: {wrapper}"
@@ -184,6 +195,13 @@ def _find_routines(wrapper: Path, abi: PESABI = "scalar") -> set[str]:
 # ----------------------------------------------------------------------------------------
 def _f2py_signature(module_name: str, routines: set[str], abi: PESABI = "scalar") -> str:
     """Generate the explicit f2py signature for the routines exposed by a wrapper."""
+    if abi == "total":
+        block = """        subroutine pyticc_total_grid(bonds, V, n_grid)
+            real*8 intent(in), dimension(3, n_grid) :: bonds
+            real*8 intent(out), dimension(n_grid) :: V
+            integer intent(hide), depend(bonds) :: n_grid = shape(bonds, 1)
+        end subroutine pyticc_total_grid"""
+        return f"python module {module_name}\n    interface\n{block}\n    end interface\nend python module {module_name}\n"
     if abi == "diabatic":
         blocks = [
             """        subroutine pyticc_diabatic_interaction_grid(RR, coordinates, V, n_coordinate, n_grid, n_state)

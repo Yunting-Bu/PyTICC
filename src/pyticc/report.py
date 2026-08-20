@@ -3,12 +3,13 @@ from typing import TypeAlias, cast
 
 import numpy as np
 
-from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF
+from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF, ChannelElectricSF
 from pyticc.basis.kblock import KBlock
 from pyticc.basis.monomer import DiabaticDiatomBasis, DiatomBasis
 from pyticc.constants import AU2CM
 from pyticc.energy import EnergyInput, get_Etot
-from pyticc.result import CoupledStatesResult, KBlockResult, ScatteringResult
+from pyticc.match.delves import DelvesAsymptoticBasis
+from pyticc.result import CoupledStatesResult, KBlockResult, ReactiveScatteringResult, ScatteringResult
 from pyticc.system import MolInnerState
 
 QuantumSelection: TypeAlias = int | range | Sequence[int] | None
@@ -95,7 +96,7 @@ def _state_value(state: MolInnerState, attribute: str) -> str:
 
 
 # ----------------------------------------------------------------------------------------
-def channels(basis: ChannelBasis | ChannelBasisElectricSF) -> str:
+def channels(basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasis) -> str:
     """
     Format the channel quantum numbers and internal energies as a text table.
 
@@ -103,11 +104,26 @@ def channels(basis: ChannelBasis | ChannelBasisElectricSF) -> str:
     states are shown when present, while Jtot and parity are omitted.
 
     Inputs:
-        basis: ChannelBasis | ChannelBasisElectricSF - channel basis to report
+        basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasis -
+            channel basis to report
 
     Returns:
         output: str - formatted channel table with energies in cm-1
     """
+    if isinstance(basis, DelvesAsymptoticBasis):
+        rows = [
+            [
+                str(index),
+                str(arrangement),
+                str(v),
+                str(j),
+                str(K),
+                f"{energy * AU2CM:.6f}",
+            ]
+            for index, ((arrangement, v, j, K), energy) in enumerate(zip(basis.qns, basis.energies, strict=True), start=1)
+        ]
+        return _table(("n", "a", "v", "j", "K", "E_int/cm-1"), rows)
+
     if isinstance(basis, ChannelBasisElectricSF):
         rows = [
             [
@@ -163,13 +179,13 @@ def channels(basis: ChannelBasis | ChannelBasisElectricSF) -> str:
 
 
 # ----------------------------------------------------------------------------------------
-def open_closed(basis: ChannelBasis | ChannelBasisElectricSF, energies: EnergyInput) -> str:
+def open_closed(basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasis, energies: EnergyInput) -> str:
     """
     Format open and closed channel counts at each total energy.
 
     Inputs:
-        basis: ChannelBasis | ChannelBasisElectricSF - channel basis used to
-            classify thresholds
+        basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasis -
+            channel basis used to classify thresholds
         energies: EnergyInput - total energies in atomic units, or a path to a
             one-column energy file
 
@@ -177,11 +193,18 @@ def open_closed(basis: ChannelBasis | ChannelBasisElectricSF, energies: EnergyIn
         output: str - formatted channel-count table with energies in cm-1
     """
     values = get_Etot(energies)
-    counts = basis.open_closed(values)
+    if isinstance(basis, DelvesAsymptoticBasis):
+        open_mask = basis.energies[np.newaxis, :] < values[:, np.newaxis]
+        n_open = np.sum(open_mask, axis=1)
+        n_closed = basis.n_channel - n_open
+    else:
+        counts = basis.open_closed(values)
+        n_open = counts.n_open
+        n_closed = counts.n_closed
     rows = [
-        [str(index), f"{energy * AU2CM:.8f}", str(n_open), str(n_closed)]
-        for index, (energy, n_open, n_closed) in enumerate(
-            zip(values, counts.n_open, counts.n_closed, strict=True),
+        [str(index), f"{energy * AU2CM:.8f}", str(n_open_value), str(n_closed_value)]
+        for index, (energy, n_open_value, n_closed_value) in enumerate(
+            zip(values, n_open, n_closed, strict=True),
             start=1,
         )
     ]
@@ -265,18 +288,7 @@ def _energy_indices(selection: EnergySelection, size: int) -> tuple[int, ...]:
 
 
 # ----------------------------------------------------------------------------------------
-def _internal_state(channel: Channel) -> MolInnerState:
-    states = tuple(state for state in (channel.mis_X, channel.mis_Y) if not _is_atom_state(state))
-    if len(states) != 1 or states[0].v is None:
-        raise ValueError("smatrix currently requires an atom-diatom channel basis with one vibrational quantum number")
-    return states[0]
-
-
-# ----------------------------------------------------------------------------------------
-
-
-# ----------------------------------------------------------------------------------------
-def _matches(state: MolInnerState, electronic: set[int] | None, v: set[int] | None, j: set[int] | None) -> bool:
+def _matches_state(state: MolInnerState, electronic: set[int] | None, v: set[int] | None, j: set[int] | None) -> bool:
     return (electronic is None or state.electronic_state in electronic) and (v is None or state.v in v) and (j is None or state.j in j)
 
 
@@ -295,16 +307,78 @@ def _orbital_angular_momentum(value: float) -> str:
 
 
 # ----------------------------------------------------------------------------------------
-def _smatrix_electric(result: ScatteringResult, energy_indices: EnergySelection) -> str:
+def _reject_filters(context: str, filters: Sequence[tuple[str, object]]) -> None:
+    selected = [name for name, value in filters if value is not None]
+    if selected:
+        raise ValueError(f"Filters {', '.join(selected)} do not apply to {context} results")
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _matches_electric(
+    channel: ChannelElectricSF,
+    alpha: set[int] | None,
+    m: set[int] | None,
+    ell: set[int] | None,
+    m_l: set[int] | None,
+) -> bool:
+    return (
+        (alpha is None or channel.alpha in alpha)
+        and (m is None or channel.m in m)
+        and (ell is None or channel.l in ell)
+        and (m_l is None or channel.m_l in m_l)
+    )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _smatrix_electric(
+    result: ScatteringResult,
+    energy_indices: EnergySelection,
+    *,
+    alpha: QuantumSelection,
+    m: QuantumSelection,
+    ell: QuantumSelection,
+    m_l: QuantumSelection,
+    alpha_prime: QuantumSelection,
+    m_prime: QuantumSelection,
+    ell_prime: QuantumSelection,
+    m_l_prime: QuantumSelection,
+) -> str:
     basis = cast(ChannelBasisElectricSF, result.basis)
+    initial_filters = (
+        _selection(alpha, "alpha"),
+        _selection(m, "m"),
+        _selection(ell, "l"),
+        _selection(m_l, "m_l"),
+    )
+    final_filters = (
+        _selection(alpha_prime, "alpha_prime"),
+        _selection(m_prime, "m_prime"),
+        _selection(ell_prime, "l_prime"),
+        _selection(m_l_prime, "m_l_prime"),
+    )
+    if not any(_matches_electric(channel, *initial_filters) for channel in basis):
+        raise ValueError("The initial Electric-SF selection does not match any channel")
+    if not any(_matches_electric(channel, *final_filters) for channel in basis):
+        raise ValueError("The final Electric-SF selection does not match any channel")
+
     rows: list[list[str]] = []
     for energy_index in _energy_indices(energy_indices, result.Etot.size):
         indices = result.open_channel_indices[energy_index]
         matrix = result.Smat[energy_index]
         for incoming, incoming_global in enumerate(indices):
             initial = basis[int(incoming_global)]
+            if not _matches_electric(initial, *initial_filters):
+                continue
             for outgoing, outgoing_global in enumerate(indices):
                 final = basis[int(outgoing_global)]
+                if not _matches_electric(final, *final_filters):
+                    continue
                 value = matrix[outgoing, incoming]
                 rows.append(
                     [
@@ -328,84 +402,147 @@ def _smatrix_electric(result: ScatteringResult, energy_indices: EnergySelection)
 
 
 # ----------------------------------------------------------------------------------------
-def smatrix(
-    result: ScatteringResult | CoupledStatesResult,
+def _matches_delves(
+    qns: tuple[int, int, int, int],
+    arrangement: set[int] | None,
+    v: set[int] | None,
+    j: set[int] | None,
+    K: set[int] | None,
+) -> bool:
+    a_value, v_value, j_value, K_value = qns
+    return (
+        (arrangement is None or a_value in arrangement)
+        and (v is None or v_value in v)
+        and (j is None or j_value in j)
+        and (K is None or K_value in K)
+    )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _smatrix_delves(
+    result: ReactiveScatteringResult,
+    energy_indices: EnergySelection,
     *,
-    energy_indices: EnergySelection = None,
-    state: QuantumSelection = None,
-    v: QuantumSelection = None,
-    j: QuantumSelection = None,
-    state_prime: QuantumSelection = None,
-    v_prime: QuantumSelection = None,
-    j_prime: QuantumSelection = None,
-    block_index: int | None = None,
+    arrangement: QuantumSelection,
+    v: QuantumSelection,
+    j: QuantumSelection,
+    K: QuantumSelection,
+    arrangement_prime: QuantumSelection,
+    v_prime: QuantumSelection,
+    j_prime: QuantumSelection,
+    K_prime: QuantumSelection,
 ) -> str:
-    """
-    Format selected atom-diatom S-matrix elements as a text table.
+    initial_filters = (
+        _selection(arrangement, "arrangement"),
+        _selection(v, "v"),
+        _selection(j, "j"),
+        _selection(K, "K"),
+    )
+    final_filters = (
+        _selection(arrangement_prime, "arrangement_prime"),
+        _selection(v_prime, "v_prime"),
+        _selection(j_prime, "j_prime"),
+        _selection(K_prime, "K_prime"),
+    )
+    if not any(_matches_delves(qns, *initial_filters) for qns in result.basis.qns):
+        raise ValueError("The initial Delves selection does not match any channel")
+    if not any(_matches_delves(qns, *final_filters) for qns in result.basis.qns):
+        raise ValueError("The final Delves selection does not match any channel")
 
-    Initial-state filters select matrix columns and final-state filters select
-    matrix rows, following ``S[out, in]``. A filter may be one integer, a range,
-    an integer sequence, or None to retain every available value. The complex
-    S-matrix elements are written with 16 digits after the decimal point.
+    rows: list[list[str]] = []
+    for energy_index in _energy_indices(energy_indices, result.Etot.size):
+        indices = result.open_channel_indices[energy_index]
+        matrix = result.Smat[energy_index]
+        for incoming, incoming_global in enumerate(indices):
+            initial = result.basis.qns[int(incoming_global)]
+            if not _matches_delves(initial, *initial_filters):
+                continue
+            for outgoing, outgoing_global in enumerate(indices):
+                final = result.basis.qns[int(outgoing_global)]
+                if not _matches_delves(final, *final_filters):
+                    continue
+                value = matrix[outgoing, incoming]
+                rows.append(
+                    [
+                        f"{result.Etot[energy_index] * AU2CM:.8f}",
+                        *(str(number) for number in initial),
+                        *(str(number) for number in final),
+                        f"{value.real:.16E}",
+                        f"{value.imag:.16E}",
+                    ]
+                )
+    return _table(("Etot/cm-1", "a", "v", "j", "K", "a'", "v'", "j'", "K'", "Re(S)", "Im(S)"), rows)
 
-    Inputs:
-        result: ScatteringResult | CoupledStatesResult - completed scattering
-            calculation to report
-        energy_indices: EnergySelection - integer indices, slice, or integer
-            sequence selecting total-energy entries; None selects all entries
-        state: QuantumSelection - initial electronic-state filter
-        v: QuantumSelection - initial vibrational-state filter
-        j: QuantumSelection - initial rotational-state filter
-        state_prime: QuantumSelection - final electronic-state filter
-        v_prime: QuantumSelection - final vibrational-state filter
-        j_prime: QuantumSelection - final rotational-state filter
-        block_index: int | None - coupled-states K-block result to report; may be
-            omitted only when the result contains one block
 
-    Returns:
-        output: str - formatted S-matrix table with total energies in cm-1
-    """
-    if isinstance(result, ScatteringResult) and isinstance(result.basis, ChannelBasisElectricSF):
-        if any(value is not None for value in (state, v, j, state_prime, v_prime, j_prime, block_index)):
-            raise ValueError("Electronic, vibrational, rotational, and K-block filters do not apply to Electric-SF results")
-        return _smatrix_electric(result, energy_indices)
+# ----------------------------------------------------------------------------------------
 
-    state_values = _selection(state, "state")
-    v_values = _selection(v, "v")
-    j_values = _selection(j, "j")
-    state_prime_values = _selection(state_prime, "state_prime")
-    v_prime_values = _selection(v_prime, "v_prime")
-    j_prime_values = _selection(j_prime, "j_prime")
-    basis = cast(ChannelBasis, result.basis)
-    internal_states = tuple(_internal_state(channel) for channel in basis)
 
-    if not any(_matches(value, state_values, v_values, j_values) for value in internal_states):
-        raise ValueError("The initial-state selection does not match any channel")
-    if not any(_matches(value, state_prime_values, v_prime_values, j_prime_values) for value in internal_states):
-        raise ValueError("The final-state selection does not match any channel")
-
+# ----------------------------------------------------------------------------------------
+def _field_free_data(
+    result: ScatteringResult | CoupledStatesResult,
+    block_index: int | None,
+) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
     if isinstance(result, ScatteringResult):
         if block_index is not None:
             raise ValueError("block_index is only valid for coupled-states results")
-        matrices = result.Smat
         open_indices = result.open_channel_indices
         angular_momenta = tuple(result.L[indices] for indices in open_indices)
-    else:
-        if block_index is None:
-            if len(result.blocks) != 1:
-                raise ValueError("block_index is required when a coupled-states result has more than one K block")
-            block_index = 0
-        try:
-            block_result = result.blocks[block_index]
-        except IndexError as error:
-            raise IndexError(f"block_index {block_index} is outside the available K blocks") from error
-        matrices = block_result.Smat_asymptotic
-        open_indices = block_result.open_channel_indices
-        local_positions = {global_index: local_index for local_index, global_index in enumerate(block_result.block.channel_indices)}
-        angular_momenta = tuple(
-            np.asarray([block_result.L[local_positions[int(global_index)]] for global_index in indices]) for indices in open_indices
-        )
+        return result.Smat, open_indices, angular_momenta
 
+    if block_index is None:
+        if len(result.blocks) != 1:
+            raise ValueError("block_index is required when a coupled-states result has more than one K block")
+        block_index = 0
+    try:
+        block_result = result.blocks[block_index]
+    except IndexError as error:
+        raise IndexError(f"block_index {block_index} is outside the available K blocks") from error
+    local_positions = {global_index: local_index for local_index, global_index in enumerate(block_result.block.channel_indices)}
+    angular_momenta = tuple(
+        np.asarray([block_result.L[local_positions[int(global_index)]] for global_index in indices]) for indices in block_result.open_channel_indices
+    )
+    return block_result.Smat_asymptotic, block_result.open_channel_indices, angular_momenta
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _smatrix_atom_diatom(
+    result: ScatteringResult | CoupledStatesResult,
+    energy_indices: EnergySelection,
+    *,
+    state: QuantumSelection,
+    v: QuantumSelection,
+    j: QuantumSelection,
+    state_prime: QuantumSelection,
+    v_prime: QuantumSelection,
+    j_prime: QuantumSelection,
+    block_index: int | None,
+) -> str:
+    basis = cast(ChannelBasis, result.basis)
+    internal_states: list[MolInnerState] = []
+    for channel in basis:
+        states = tuple(state_value for state_value in (channel.mis_X, channel.mis_Y) if not _is_atom_state(state_value))
+        if len(states) != 1 or states[0].v is None:
+            raise ValueError("The atom-diatom S-matrix report requires one diatomic internal state per channel")
+        internal_states.append(states[0])
+
+    initial_filters = (_selection(state, "state"), _selection(v, "v"), _selection(j, "j"))
+    final_filters = (
+        _selection(state_prime, "state_prime"),
+        _selection(v_prime, "v_prime"),
+        _selection(j_prime, "j_prime"),
+    )
+    if not any(_matches_state(value, *initial_filters) for value in internal_states):
+        raise ValueError("The initial-state selection does not match any channel")
+    if not any(_matches_state(value, *final_filters) for value in internal_states):
+        raise ValueError("The final-state selection does not match any channel")
+
+    matrices, open_indices, angular_momenta = _field_free_data(result, block_index)
     include_electronic_state = any(value.electronic_state is not None for value in internal_states)
     headers = ["Etot/cm-1"]
     if include_electronic_state:
@@ -422,11 +559,11 @@ def smatrix(
         matrix = matrices[energy_index]
         for incoming, incoming_global in enumerate(indices):
             initial = internal_states[int(incoming_global)]
-            if not _matches(initial, state_values, v_values, j_values):
+            if not _matches_state(initial, *initial_filters):
                 continue
             for outgoing, outgoing_global in enumerate(indices):
                 final = internal_states[int(outgoing_global)]
-                if not _matches(final, state_prime_values, v_prime_values, j_prime_values):
+                if not _matches_state(final, *final_filters):
                     continue
                 value = matrix[outgoing, incoming]
                 row = [f"{result.Etot[energy_index] * AU2CM:.8f}"]
@@ -446,6 +583,299 @@ def smatrix(
                 )
                 rows.append(row)
     return _table(headers, rows)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _smatrix_diatom_diatom(
+    result: ScatteringResult | CoupledStatesResult,
+    energy_indices: EnergySelection,
+    *,
+    state_X: QuantumSelection,
+    v_X: QuantumSelection,
+    j_X: QuantumSelection,
+    state_Y: QuantumSelection,
+    v_Y: QuantumSelection,
+    j_Y: QuantumSelection,
+    j_couple: QuantumSelection,
+    state_X_prime: QuantumSelection,
+    v_X_prime: QuantumSelection,
+    j_X_prime: QuantumSelection,
+    state_Y_prime: QuantumSelection,
+    v_Y_prime: QuantumSelection,
+    j_Y_prime: QuantumSelection,
+    j_couple_prime: QuantumSelection,
+    block_index: int | None,
+) -> str:
+    basis = cast(ChannelBasis, result.basis)
+    if any(channel.mis_X.v is None or channel.mis_Y.v is None for channel in basis):
+        raise ValueError("The diatom-diatom S-matrix report requires two diatomic internal states per channel")
+
+    initial_X = (_selection(state_X, "state_X"), _selection(v_X, "v_X"), _selection(j_X, "j_X"))
+    initial_Y = (_selection(state_Y, "state_Y"), _selection(v_Y, "v_Y"), _selection(j_Y, "j_Y"))
+    initial_j_couple = _selection(j_couple, "j_couple")
+    final_X = (
+        _selection(state_X_prime, "state_X_prime"),
+        _selection(v_X_prime, "v_X_prime"),
+        _selection(j_X_prime, "j_X_prime"),
+    )
+    final_Y = (
+        _selection(state_Y_prime, "state_Y_prime"),
+        _selection(v_Y_prime, "v_Y_prime"),
+        _selection(j_Y_prime, "j_Y_prime"),
+    )
+    final_j_couple = _selection(j_couple_prime, "j_couple_prime")
+
+    def matches(channel: Channel, X_filters: tuple[set[int] | None, ...], Y_filters: tuple[set[int] | None, ...], coupled: set[int] | None) -> bool:
+        return (
+            _matches_state(channel.mis_X, *X_filters)
+            and _matches_state(channel.mis_Y, *Y_filters)
+            and (coupled is None or channel.j_couple in coupled)
+        )
+
+    if not any(matches(channel, initial_X, initial_Y, initial_j_couple) for channel in basis):
+        raise ValueError("The initial diatom-diatom selection does not match any channel")
+    if not any(matches(channel, final_X, final_Y, final_j_couple) for channel in basis):
+        raise ValueError("The final diatom-diatom selection does not match any channel")
+
+    matrices, open_indices, angular_momenta = _field_free_data(result, block_index)
+    include_state_X = any(channel.mis_X.electronic_state is not None for channel in basis)
+    include_state_Y = any(channel.mis_Y.electronic_state is not None for channel in basis)
+    initial_headers = (["state_X"] if include_state_X else []) + ["v_X", "j_X"] + (["state_Y"] if include_state_Y else []) + ["v_Y", "j_Y"]
+    final_headers = (["state_X'"] if include_state_X else []) + ["v_X'", "j_X'"] + (["state_Y'"] if include_state_Y else []) + ["v_Y'", "j_Y'"]
+    headers = ["Etot/cm-1", *initial_headers, "j_couple", "L", *final_headers, "j_couple'", "L'", "Re(S)", "Im(S)"]
+
+    def state_values(state_value: MolInnerState, include_electronic: bool) -> list[str]:
+        values = [str(state_value.electronic_state)] if include_electronic else []
+        values.extend((str(state_value.v), str(state_value.j)))
+        return values
+
+    rows: list[list[str]] = []
+    for energy_index in _energy_indices(energy_indices, result.Etot.size):
+        indices = open_indices[energy_index]
+        L_values = angular_momenta[energy_index]
+        matrix = matrices[energy_index]
+        for incoming, incoming_global in enumerate(indices):
+            initial = basis[int(incoming_global)]
+            if not matches(initial, initial_X, initial_Y, initial_j_couple):
+                continue
+            for outgoing, outgoing_global in enumerate(indices):
+                final = basis[int(outgoing_global)]
+                if not matches(final, final_X, final_Y, final_j_couple):
+                    continue
+                value = matrix[outgoing, incoming]
+                rows.append(
+                    [
+                        f"{result.Etot[energy_index] * AU2CM:.8f}",
+                        *state_values(initial.mis_X, include_state_X),
+                        *state_values(initial.mis_Y, include_state_Y),
+                        str(initial.j_couple),
+                        _orbital_angular_momentum(float(L_values[incoming])),
+                        *state_values(final.mis_X, include_state_X),
+                        *state_values(final.mis_Y, include_state_Y),
+                        str(final.j_couple),
+                        _orbital_angular_momentum(float(L_values[outgoing])),
+                        f"{value.real:.16E}",
+                        f"{value.imag:.16E}",
+                    ]
+                )
+    return _table(headers, rows)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def smatrix(
+    result: ScatteringResult | CoupledStatesResult | ReactiveScatteringResult,
+    *,
+    energy_indices: EnergySelection = None,
+    state: QuantumSelection = None,
+    v: QuantumSelection = None,
+    j: QuantumSelection = None,
+    state_prime: QuantumSelection = None,
+    v_prime: QuantumSelection = None,
+    j_prime: QuantumSelection = None,
+    state_X: QuantumSelection = None,
+    v_X: QuantumSelection = None,
+    j_X: QuantumSelection = None,
+    state_Y: QuantumSelection = None,
+    v_Y: QuantumSelection = None,
+    j_Y: QuantumSelection = None,
+    j_couple: QuantumSelection = None,
+    state_X_prime: QuantumSelection = None,
+    v_X_prime: QuantumSelection = None,
+    j_X_prime: QuantumSelection = None,
+    state_Y_prime: QuantumSelection = None,
+    v_Y_prime: QuantumSelection = None,
+    j_Y_prime: QuantumSelection = None,
+    j_couple_prime: QuantumSelection = None,
+    alpha: QuantumSelection = None,
+    m: QuantumSelection = None,
+    l: QuantumSelection = None,  # noqa: E741 - l is the conventional end-over-end angular momentum.
+    m_l: QuantumSelection = None,
+    alpha_prime: QuantumSelection = None,
+    m_prime: QuantumSelection = None,
+    l_prime: QuantumSelection = None,
+    m_l_prime: QuantumSelection = None,
+    arrangement: QuantumSelection = None,
+    K: QuantumSelection = None,
+    arrangement_prime: QuantumSelection = None,
+    K_prime: QuantumSelection = None,
+    block_index: int | None = None,
+) -> str:
+    """
+    Format selected S-matrix elements as a text table.
+
+    Initial-state filters select matrix columns and final-state filters select
+    matrix rows, following ``S[out, in]``. A filter may be one integer, a range,
+    an integer sequence, or None to retain every available value. Atom-diatom,
+    diatom-diatom, Electric-SF, and Delves results use their corresponding filter
+    families. The complex elements are written with 16 digits after the decimal
+    point.
+
+    Inputs:
+        result: ScatteringResult | CoupledStatesResult |
+            ReactiveScatteringResult - completed scattering calculation
+        energy_indices: EnergySelection - integer indices, slice, or integer
+            sequence selecting total-energy entries; None selects all entries
+        state, v, j: QuantumSelection - atom-diatom initial-state filters; v and
+            j also label initial Delves channels
+        state_prime, v_prime, j_prime: QuantumSelection - corresponding final-state
+            filters
+        state_X, v_X, j_X, state_Y, v_Y, j_Y, j_couple: QuantumSelection -
+            diatom-diatom initial-state filters
+        state_X_prime, v_X_prime, j_X_prime, state_Y_prime, v_Y_prime,
+            j_Y_prime, j_couple_prime: QuantumSelection - diatom-diatom
+            final-state filters
+        alpha, m, l, m_l: QuantumSelection - Electric-SF initial-channel filters
+        alpha_prime, m_prime, l_prime, m_l_prime: QuantumSelection - Electric-SF
+            final-channel filters
+        arrangement, K: QuantumSelection - Delves initial-channel filters
+        arrangement_prime, K_prime: QuantumSelection - Delves final-channel filters
+        block_index: int | None - coupled-states K-block result to report; may be
+            omitted only when the result contains one block
+
+    Returns:
+        output: str - formatted S-matrix table with total energies in cm-1
+    """
+    diatom_filters = (
+        ("state_X", state_X),
+        ("v_X", v_X),
+        ("j_X", j_X),
+        ("state_Y", state_Y),
+        ("v_Y", v_Y),
+        ("j_Y", j_Y),
+        ("j_couple", j_couple),
+        ("state_X_prime", state_X_prime),
+        ("v_X_prime", v_X_prime),
+        ("j_X_prime", j_X_prime),
+        ("state_Y_prime", state_Y_prime),
+        ("v_Y_prime", v_Y_prime),
+        ("j_Y_prime", j_Y_prime),
+        ("j_couple_prime", j_couple_prime),
+    )
+    electric_filters = (
+        ("alpha", alpha),
+        ("m", m),
+        ("l", l),
+        ("m_l", m_l),
+        ("alpha_prime", alpha_prime),
+        ("m_prime", m_prime),
+        ("l_prime", l_prime),
+        ("m_l_prime", m_l_prime),
+    )
+    delves_filters = (("arrangement", arrangement), ("K", K), ("arrangement_prime", arrangement_prime), ("K_prime", K_prime))
+
+    if isinstance(result, ReactiveScatteringResult):
+        _reject_filters(
+            "Delves",
+            (("state", state), ("state_prime", state_prime), *diatom_filters, *electric_filters, ("block_index", block_index)),
+        )
+        return _smatrix_delves(
+            result,
+            energy_indices,
+            arrangement=arrangement,
+            v=v,
+            j=j,
+            K=K,
+            arrangement_prime=arrangement_prime,
+            v_prime=v_prime,
+            j_prime=j_prime,
+            K_prime=K_prime,
+        )
+
+    if isinstance(result, ScatteringResult) and isinstance(result.basis, ChannelBasisElectricSF):
+        _reject_filters(
+            "Electric-SF",
+            (
+                ("state", state),
+                ("v", v),
+                ("j", j),
+                ("state_prime", state_prime),
+                ("v_prime", v_prime),
+                ("j_prime", j_prime),
+                *diatom_filters,
+                *delves_filters,
+                ("block_index", block_index),
+            ),
+        )
+        return _smatrix_electric(
+            result,
+            energy_indices,
+            alpha=alpha,
+            m=m,
+            ell=l,
+            m_l=m_l,
+            alpha_prime=alpha_prime,
+            m_prime=m_prime,
+            ell_prime=l_prime,
+            m_l_prime=m_l_prime,
+        )
+
+    _reject_filters("field-free", (*electric_filters, *delves_filters))
+    basis = cast(ChannelBasis, result.basis)
+    active_X = any(not _is_atom_state(channel.mis_X) for channel in basis)
+    active_Y = any(not _is_atom_state(channel.mis_Y) for channel in basis)
+    if active_X and active_Y:
+        _reject_filters(
+            "diatom-diatom",
+            (("state", state), ("v", v), ("j", j), ("state_prime", state_prime), ("v_prime", v_prime), ("j_prime", j_prime)),
+        )
+        return _smatrix_diatom_diatom(
+            result,
+            energy_indices,
+            state_X=state_X,
+            v_X=v_X,
+            j_X=j_X,
+            state_Y=state_Y,
+            v_Y=v_Y,
+            j_Y=j_Y,
+            j_couple=j_couple,
+            state_X_prime=state_X_prime,
+            v_X_prime=v_X_prime,
+            j_X_prime=j_X_prime,
+            state_Y_prime=state_Y_prime,
+            v_Y_prime=v_Y_prime,
+            j_Y_prime=j_Y_prime,
+            j_couple_prime=j_couple_prime,
+            block_index=block_index,
+        )
+
+    _reject_filters("atom-diatom", diatom_filters)
+    return _smatrix_atom_diatom(
+        result,
+        energy_indices,
+        state=state,
+        v=v,
+        j=j,
+        state_prime=state_prime,
+        v_prime=v_prime,
+        j_prime=j_prime,
+        block_index=block_index,
+    )
 
 
 # ----------------------------------------------------------------------------------------

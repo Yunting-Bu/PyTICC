@@ -21,15 +21,15 @@ lapack = true
 r = [1.2, 5.0]
 n_dvr = 135
 n_podvr = 80
-vmin = [0, 0]
 vmax = [29, 26]
 jmax = [55, 56]
-jpar = [-1, 1]
 
 [quadrature]
 n_theta = 30
 
-[truncation]
+[channels]
+vmin_Y = [0, 0]
+exchange_parity_Y = [-1, 1]
 E_Y_cut_cm = 38000.0
 K_cut = "none"
 

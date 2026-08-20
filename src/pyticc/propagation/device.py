@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from typing import Protocol
 
 import jax
 from loguru import logger
@@ -7,12 +8,26 @@ from loguru import logger
 _DEVICE_PATTERN = re.compile(r"(?:auto|cpu(?::\d+)?|gpu(?::\d+)?)")
 
 
+class JaxDevice(Protocol):
+    """Structural type required from a concrete JAX execution device."""
+
+    @property
+    def platform(self) -> str:
+        """Return the execution platform name."""
+        ...
+
+    @property
+    def id(self) -> int:
+        """Return the device index within its platform."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedDevice:
     """One concrete JAX device selected for radial propagation."""
 
     requested: str
-    device: jax.Device
+    device: JaxDevice
 
     @property
     def label(self) -> str:
@@ -35,7 +50,7 @@ def normalize_device_spec(value: object) -> str:
     return normalized
 
 
-def _platform_devices(platform: str) -> tuple[jax.Device, ...]:
+def _platform_devices(platform: str) -> tuple[JaxDevice, ...]:
     """Return initialized devices for one optional JAX platform."""
     try:
         return tuple(jax.devices(platform))

@@ -60,7 +60,7 @@ def get_Bmat_BF_to_SF(
             raise ValueError(message)
 
         channel = channels[positions_list[0]]
-        phase = (-1) ** (channel.j_couple + min(channel.Jtot, channel.j_couple))
+        phase = (-1) ** (channel.j_couple + min(basis.Jtot, channel.j_couple))
         signs = np.where(eigenvectors[-1] * phase < 0.0, -1.0, 1.0)
         eigenvectors *= signs
 

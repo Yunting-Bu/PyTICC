@@ -16,48 +16,34 @@ def main() -> None:
     )
 
     monomer_HF = pes.monomer_Y
-    if monomer_HF is None:
-        raise RuntimeError("ArHF PES does not provide the HF monomer potential")
 
     mass_Ar, mass_H, mass_F = ticc.element_masses_au("Ar", "H", "F")
     mass_HF = mass_H + mass_F
     reduced_mass_HF = ticc.reduced_mass(mass_H, mass_F)
     reduced_mass_ArHF = ticc.reduced_mass(mass_Ar, mass_HF)
 
-    dvr_HF = ticc.build_SineDVR(
-        a=1.5,
-        b=4.5,
+    diatom_HF = ticc.prepare_Diatom(
+        monomer_HF,
+        r=(1.5, 4.5),
         n_dvr=100,
-        mass=reduced_mass_HF,
-        pot_func=monomer_HF,
-    )
-    rovib_HF = ticc.build_RovibPODVR(
-        dvr=dvr_HF,
         n_podvr=5,
         vmax=0,
         jmax=4,
         mass=reduced_mass_HF,
     )
-
-    diatom_HF = ticc.DiatomBasis(
-        rovib=rovib_HF,
-        energy_zero=float(rovib_HF.E_vj[0, 0]),
-        vmax=0,
-        jmax=4,
-    )
     total_energies = np.array([100.0, 300.0, 500.0]) * ticc.CM2AU
 
-    system = ticc.ScattSystem(
+    system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom_HF,
         Jtot=0,
         system_parity=1,
+        channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU, K_cut=None),
         potential=pes,
         reduced_mass=reduced_mass_ArHF,
     )
     hamiltonian = atom_diatom.build_hamiltonian(
         system,
-        trunc=ticc.TruncSpec(E_Y_cut=2000.0 * ticc.CM2AU, K_cut=None),
         n_theta=35,
     )
     result = ticc.solve(

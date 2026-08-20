@@ -6,7 +6,10 @@ from loguru import logger
 from numpy.typing import NDArray
 from scipy.linalg import eigh
 
+from pyticc.basis.rovib import RovibBasis
 
+
+# Primitive sine DVR
 # --------------------------------------------------------------------------------
 def sine_dvr_grids(a: float, b: float, n: int) -> tuple[NDArray[np.float64], float]:
     r"""
@@ -217,28 +220,7 @@ class SineDVR:
 
 
 # --------------------------------------------------------------------------------
-@dataclass(frozen=True)
-class RovibDVR:
-    """
-    Diatomic rovibrational basis on one complete primitive DVR grid.
-
-    Members:
-        grids: NDArray[np.float64] - primitive bond-length grid, shape (n_dvr,)
-        E_vj: NDArray[np.float64] - rovibrational energies, shape (n_v, n_j)
-        WF_vj: NDArray[np.float64] - primitive-grid wavefunctions, shape
-            (n_dvr, n_v, n_j)
-    """
-
-    grids: NDArray[np.float64]
-    E_vj: NDArray[np.float64]
-    WF_vj: NDArray[np.float64]
-
-
-# --------------------------------------------------------------------------------
-
-
-# --------------------------------------------------------------------------------
-def build_RovibDVR(dvr: SineDVR, vmax: int, jmax: int, mass: float) -> RovibDVR:
+def build_RovibDVR(dvr: SineDVR, vmax: int, jmax: int, mass: float) -> RovibBasis:
     """
     Build full primitive-DVR rovibrational states from a vibrational SineDVR.
 
@@ -254,8 +236,16 @@ def build_RovibDVR(dvr: SineDVR, vmax: int, jmax: int, mass: float) -> RovibDVR:
         mass: float - diatomic reduced mass in atomic units
 
     Returns:
-        rovib: RovibDVR - energies and wavefunctions on the primitive DVR grid
+        rovib: RovibBasis - energies and wavefunctions on the primitive DVR grid
     """
+    if vmax < 0 or jmax < 0:
+        message = f"vmax and jmax must be non-negative, but got vmax={vmax}, jmax={jmax}"
+        logger.error(message)
+        raise ValueError(message)
+    if not np.isfinite(mass) or mass <= 0.0:
+        message = f"mass must be positive and finite, but got {mass}"
+        logger.error(message)
+        raise ValueError(message)
 
     n_dvr = dvr.grids.size
     n_v = min(vmax + 1, n_dvr)
@@ -271,7 +261,7 @@ def build_RovibDVR(dvr: SineDVR, vmax: int, jmax: int, mass: float) -> RovibDVR:
         energies[:n_v, j] = eigenvalues
         wavefunctions[:, :n_v, j] = phase_fix(eigenvectors)
 
-    return RovibDVR(grids=dvr.grids, E_vj=energies, WF_vj=wavefunctions)
+    return RovibBasis(grids=dvr.grids, E_vj=energies, WF_vj=wavefunctions)
 
 
 # --------------------------------------------------------------------------------

@@ -1,13 +1,13 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import cast
 
 import numpy as np
+from loguru import logger
 from numpy.typing import NDArray
 
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_ElectricSF
-from pyticc.system import ScattSystem
+from pyticc.system import Approx
 
 Interaction = Callable[[float | NDArray[np.float64]], NDArray[np.float64]]
 BlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[NDArray[np.float64], ...]]
@@ -27,38 +27,43 @@ class ScattHamiltonian:
 
         W(R;E_tot) = 2 mu_R [H(R)-E_tot I].
 
-        The conserved quantities and interaction PES belong to ScattSystem.
-        The channel basis determines the representation-specific centrifugal
-        matrix U.
+        The channel basis owns conserved block quantum numbers, while this
+        object retains only the data required after Hamiltonian construction.
 
     Members:
-        system: ScattSystem - physical system, conserved quantities, PES, and
-            collision reduced mass
         basis: ChannelBasis | ChannelBasisElectricSF - complete channel basis
+        reduced_mass: float - collision reduced mass in atomic units
+        approx: Approx - exact CC, CS, or NNCC approximation
+        K_delta: int - neighboring-K range used by NNCC
         interaction: Interaction - callback returning V(R) for one point or a
             radial batch
         block_interaction: BlockInteraction | None - optimized interaction
             provider for field-free CS and NNCC channel blocks
-        batched: bool - whether interaction accepts a radial array
         potential_grid_size: int - internal PES grid points per radial point
     """
 
-    system: ScattSystem
     basis: ScatteringBasis
+    reduced_mass: float
     interaction: Interaction
+    approx: Approx = Approx.EXACT
+    K_delta: int = 1
     block_interaction: BlockInteraction | None = None
-    batched: bool = True
     potential_grid_size: int = 0
+
+    def __post_init__(self) -> None:
+        if self.reduced_mass <= 0.0:
+            message = f"Scattering reduced_mass must be positive, but got {self.reduced_mass}"
+            logger.error(message)
+            raise ValueError(message)
+        if self.K_delta < 1:
+            message = f"K_delta must be positive, but got {self.K_delta}"
+            logger.error(message)
+            raise ValueError(message)
 
     @property
     def E_int(self) -> NDArray[np.float64]:
         """Return channel internal energies with shape (n_channel,)."""
         return self.basis.E_int
-
-    @property
-    def reduced_mass(self) -> float:
-        """Return the collision reduced mass in atomic units."""
-        return cast(float, self.system.reduced_mass)
 
     def centrifugal(self, channel_indices: Sequence[int] | None = None) -> NDArray[np.float64]:
         """

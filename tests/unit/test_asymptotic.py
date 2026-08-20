@@ -4,28 +4,29 @@ import numpy as np
 import pytest
 
 import pyticc as ticc
-from pyticc.basis.channel import ChannelBuilder
+from pyticc.basis.channel import Channel, ChannelBasis, build_ChannelBasis
 from pyticc.basis.monomer import DiatomSpec
 from pyticc.match import get_Bmat_BF_to_SF, transform_logD_BF_to_SF
 from pyticc.matrix.centrifugal import get_Umat_BF
+from pyticc.system import MolInnerState
 
 
-def _atom_diatom_basis() -> ticc.ChannelBasis:
+def _atom_diatom_basis() -> ChannelBasis:
     atom = ticc.AtomSpec()
-    diatom = DiatomSpec(Eint=np.zeros((1, 2)), vmax=0, jmax=1)
+    diatom = DiatomSpec(Eint=np.zeros((1, 2)))
     system = ticc.ScattSystem(atom, diatom, Jtot=2, system_parity=1)
-    return ChannelBuilder(system, ticc.TruncSpec()).build()
+    return build_ChannelBasis(system, ticc.ChannelSpec())
 
 
-def _diatom_diatom_basis() -> ticc.ChannelBasis:
-    diatom_X = DiatomSpec(Eint=np.zeros((1, 1)), vmax=0, jmax=0)
-    diatom_Y = DiatomSpec(Eint=np.zeros((1, 2)), vmax=0, jmax=1)
+def _diatom_diatom_basis() -> ChannelBasis:
+    diatom_X = DiatomSpec(Eint=np.zeros((1, 1)))
+    diatom_Y = DiatomSpec(Eint=np.zeros((1, 2)))
     system = ticc.ScattSystem(diatom_X, diatom_Y, Jtot=2, system_parity=1)
-    return ChannelBuilder(system, ticc.TruncSpec()).build()
+    return build_ChannelBasis(system, ticc.ChannelSpec())
 
 
 @pytest.mark.parametrize("basis_factory", [_atom_diatom_basis, _diatom_diatom_basis])
-def test_get_Bmat_BF_to_SF_diagonalizes_each_internal_block(basis_factory: Callable[[], ticc.ChannelBasis]) -> None:
+def test_get_Bmat_BF_to_SF_diagonalizes_each_internal_block(basis_factory: Callable[[], ChannelBasis]) -> None:
     basis = basis_factory()
     indices = tuple(index for index, channel in enumerate(basis) if channel.j_couple == 1)
     Umat = get_Umat_BF(basis, indices)
@@ -58,9 +59,9 @@ def test_transform_logD_BF_to_SF_supports_complex_batches() -> None:
 
 def test_get_Bmat_BF_to_SF_returns_noninteger_L_for_incomplete_helicity_basis() -> None:
     atom = ticc.AtomSpec()
-    diatom = DiatomSpec(Eint=np.zeros((1, 4)), vmax=0, jmax=3)
+    diatom = DiatomSpec(Eint=np.zeros((1, 4)))
     system = ticc.ScattSystem(atom, diatom, Jtot=3, system_parity=-1)
-    basis = ChannelBuilder(system, ticc.TruncSpec(K_cut=1)).build()
+    basis = build_ChannelBasis(system, ticc.ChannelSpec(K_cut=1))
     indices = tuple(index for index, channel in enumerate(basis) if channel.j_couple == 3)
 
     _, L = get_Bmat_BF_to_SF(basis, indices)
@@ -71,19 +72,16 @@ def test_get_Bmat_BF_to_SF_returns_noninteger_L_for_incomplete_helicity_basis() 
 
 def test_get_Bmat_BF_to_SF_keeps_electronic_states_in_separate_blocks() -> None:
     channels = tuple(
-        ticc.Channel(
-            mis_X=ticc.MolInnerState(j=0),
-            mis_Y=ticc.MolInnerState(v=0, j=2, electronic_state=electronic_state),
+        Channel(
+            mis_X=MolInnerState(j=0),
+            mis_Y=MolInnerState(v=0, j=2, electronic_state=electronic_state),
             j_couple=2,
             K=K,
-            Jtot=2,
-            system_parity=1,
             E_int=float(electronic_state),
-            index=index,
         )
-        for index, (electronic_state, K) in enumerate((state, K) for state in range(2) for K in range(3))
+        for electronic_state, K in ((state, K) for state in range(2) for K in range(3))
     )
-    basis = ticc.ChannelBasis(channels)
+    basis = ChannelBasis(channels, Jtot=2, system_parity=1)
 
     Bmat, L = get_Bmat_BF_to_SF(basis)
 

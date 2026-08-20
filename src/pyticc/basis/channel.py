@@ -1,8 +1,7 @@
-import math
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Protocol, overload
+from typing import cast, overload
 
 import numpy as np
 from loguru import logger
@@ -10,7 +9,7 @@ from numpy.typing import NDArray
 
 from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis
 from pyticc.energy import EnergyInput, get_Etot
-from pyticc.system import MolInnerState, MonomerType, ScattSystem
+from pyticc.system import ChannelSpec, MolInnerState, MonomerSpec, MonomerType, ScattSystem
 
 
 # ----------------------------------------------------------------------------------------
@@ -28,45 +27,23 @@ def set_Kmax(j_couple: int, Jtot: int, Kcut: int | None = None) -> int:
 
 # ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
-class TruncSpec:
+class Channel:
     """
-    Monomer-energy and helicity truncations.
+    One field-free body-fixed scattering channel.
 
     Members:
-        E_X_cut: float - X-monomer internal-energy cutoff in atomic units
-        E_Y_cut: float - Y-monomer internal-energy cutoff in atomic units
-        K_cut: int | None - maximum retained helicity, or None to retain every allowed K
+        mis_X: MolInnerState - internal state of monomer X
+        mis_Y: MolInnerState - internal state of monomer Y
+        j_couple: int - coupled monomer angular momentum
+        K: int - body-fixed helicity
+        E_int: float - total channel threshold in atomic units
     """
 
-    E_X_cut: float = math.inf
-    E_Y_cut: float = math.inf
-    K_cut: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.E_X_cut < 0.0 or self.E_Y_cut < 0.0:
-            message = f"Energy cutoffs must be non-negative, but got E_X_cut={self.E_X_cut}, E_Y_cut={self.E_Y_cut}"
-            logger.error(message)
-            raise ValueError(message)
-        if self.K_cut is not None and self.K_cut < 0:
-            message = f"K_cut must be non-negative, but got K_cut={self.K_cut}"
-            logger.error(message)
-            raise ValueError(message)
-
-
-# ----------------------------------------------------------------------------------------
-
-
-# ----------------------------------------------------------------------------------------
-@dataclass(frozen=True)
-class Channel:
     mis_X: MolInnerState
     mis_Y: MolInnerState
     j_couple: int
     K: int
-    Jtot: int
-    system_parity: int
     E_int: float
-    index: int = -1
 
     def __str__(self) -> str:
         qn_X = f"t={self.mis_X.t}" if self.mis_X.t is not None else f"v={'-' if self.mis_X.v is None else self.mis_X.v}"
@@ -74,11 +51,9 @@ class Channel:
         electronic_X = "" if self.mis_X.electronic_state is None else f"e={self.mis_X.electronic_state}, "
         electronic_Y = "" if self.mis_Y.electronic_state is None else f"e={self.mis_Y.electronic_state}, "
         return (
-            f"Channel[{self.index}] "
             f"X({electronic_X}{qn_X}, j={self.mis_X.j}) "
             f"Y({electronic_Y}{qn_Y}, j={self.mis_Y.j}) "
-            f"j_couple={self.j_couple} K={self.K} Jtot={self.Jtot} "
-            f"system_parity={self.system_parity:+d} E_int={self.E_int:.10f} a.u."
+            f"j_couple={self.j_couple} K={self.K} E_int={self.E_int:.10f} a.u."
         )
 
 
@@ -92,19 +67,20 @@ class OpenClosedChannels:
     Open and closed channel information over a total-energy grid.
 
     Members:
-        total_energies: NDArray[np.float64] - total energies in atomic units, shape
-            (n_energy,)
         open_mask: NDArray[np.bool_] - open-channel mask with shape (n_energy, n_channel)
-        n_open: NDArray[np.int64] - number of open channels at each energy, shape
-            (n_energy,)
-        n_closed: NDArray[np.int64] - number of closed channels at each energy, shape
-            (n_energy,)
     """
 
-    total_energies: NDArray[np.float64]
     open_mask: NDArray[np.bool_]
-    n_open: NDArray[np.int64]
-    n_closed: NDArray[np.int64]
+
+    @property
+    def n_open(self) -> NDArray[np.int64]:
+        """Return the number of open channels at each energy, shape (n_energy,)."""
+        return np.asarray(np.sum(self.open_mask, axis=1), dtype=np.int64)
+
+    @property
+    def n_closed(self) -> NDArray[np.int64]:
+        """Return the number of closed channels at each energy, shape (n_energy,)."""
+        return np.asarray(self.open_mask.shape[1] - self.n_open, dtype=np.int64)
 
 
 # ----------------------------------------------------------------------------------------
@@ -118,10 +94,16 @@ class ChannelBasis(Sequence[Channel]):
 
     Members:
         channels: tuple[Channel, ...] - channels ordered by increasing internal energy
+        Jtot: int - conserved total angular momentum
+        system_parity: int - conserved total parity, -1 or 1
+        channel_spec: ChannelSpec - selections used to construct the basis
         n_channel: int - total number of channels
     """
 
     channels: tuple[Channel, ...]
+    Jtot: int
+    system_parity: int
+    channel_spec: ChannelSpec = field(default_factory=ChannelSpec)
 
     @property
     def n_channel(self) -> int:
@@ -154,20 +136,12 @@ class ChannelBasis(Sequence[Channel]):
                 or a one-column text file in atomic units
 
         Returns:
-            result: OpenClosedChannels - energies and counts with shape (n_energy,),
-                and an open-channel mask with shape (n_energy, n_channel)
+            result: OpenClosedChannels - open-channel mask with shape
+                (n_energy,n_channel), with derived counts of shape (n_energy,)
         """
         energies = get_Etot(total_energies)
         open_mask = self.E_int[np.newaxis, :] < energies[:, np.newaxis]
-        n_open = np.asarray(np.sum(open_mask, axis=1), dtype=np.int64)
-        n_closed = np.asarray(self.n_channel - n_open, dtype=np.int64)
-
-        return OpenClosedChannels(
-            total_energies=energies,
-            open_mask=open_mask,
-            n_open=n_open,
-            n_closed=n_closed,
-        )
+        return OpenClosedChannels(open_mask=open_mask)
 
 
 # ----------------------------------------------------------------------------------------
@@ -198,7 +172,6 @@ class ChannelElectricSF:
         m_l: int - SF projection of the end-over-end angular momentum
         E_int: float - channel internal energy relative to the common monomer
             energy zero, in atomic units
-        index: int - zero-based position in the energy-ordered complete basis
     """
 
     alpha: int
@@ -206,10 +179,9 @@ class ChannelElectricSF:
     l: int  # noqa: E741 - l is the conventional end-over-end angular momentum.
     m_l: int
     E_int: float
-    index: int = -1
 
     def __str__(self) -> str:
-        return f"ChannelElectricSF[{self.index}] alpha={self.alpha} m={self.m} l={self.l} m_l={self.m_l} E_int={self.E_int:.10f} a.u."
+        return f"alpha={self.alpha} m={self.m} l={self.l} m_l={self.m_l} E_int={self.E_int:.10f} a.u."
 
 
 # ----------------------------------------------------------------------------------------
@@ -274,20 +246,12 @@ class ChannelBasisElectricSF(Sequence[ChannelElectricSF]):
                 (n_energy,), or a one-column text file in atomic units
 
         Returns:
-            result: OpenClosedChannels - energies and counts with shape
-                (n_energy,), and an open-channel mask with shape
-                (n_energy, n_channel)
+            result: OpenClosedChannels - open-channel mask with shape
+                (n_energy,n_channel), with derived counts of shape (n_energy,)
         """
         energies = get_Etot(total_energies)
         open_mask = self.E_int[np.newaxis, :] < energies[:, np.newaxis]
-        n_open = np.asarray(np.sum(open_mask, axis=1), dtype=np.int64)
-        n_closed = np.asarray(self.n_channel - n_open, dtype=np.int64)
-        return OpenClosedChannels(
-            total_energies=energies,
-            open_mask=open_mask,
-            n_open=n_open,
-            n_closed=n_closed,
-        )
+        return OpenClosedChannels(open_mask=open_mask)
 
 
 # ----------------------------------------------------------------------------------------
@@ -299,7 +263,7 @@ def build_ChannelBasisElectricSF(
     *,
     M: int,
     lmax: int,
-    E_cut: float = math.inf,
+    channel: ChannelSpec | None = None,
 ) -> ChannelBasisElectricSF:
     r"""
     Build one energy-ordered electric-field SF channel basis.
@@ -328,12 +292,13 @@ def build_ChannelBasisElectricSF(
             eigenstates grouped by fixed m
         M: int - conserved total SF projection
         lmax: int - largest retained end-over-end angular momentum
-        E_cut: float - largest retained relative monomer threshold in atomic
-            units; infinity retains every available alpha state
+        channel: ChannelSpec | None - channel-energy selection; None uses the
+            default untruncated specification
 
     Returns:
         basis: ChannelBasisElectricSF - channels ordered by increasing E_int
     """
+    channel_spec = ChannelSpec() if channel is None else channel
     channels: list[ChannelElectricSF] = []
     for ell in range(lmax + 1):
         for m_l in range(-ell, ell + 1):
@@ -341,7 +306,7 @@ def build_ChannelBasisElectricSF(
             if abs(m) > monomer_basis.jmax:
                 continue
             for alpha, E_int in enumerate(monomer_basis.relative_energies(m)):
-                if E_int <= E_cut:
+                if E_int <= channel_spec.E_Y_cut:
                     channels.append(
                         ChannelElectricSF(
                             alpha=alpha,
@@ -353,94 +318,156 @@ def build_ChannelBasisElectricSF(
                     )
 
     channels.sort(key=lambda channel: (channel.E_int, channel.l, channel.m_l, channel.alpha))
-    indexed_channels = tuple(replace(channel, index=index) for index, channel in enumerate(channels))
-    return ChannelBasisElectricSF(channels=indexed_channels, M=M)
+    return ChannelBasisElectricSF(channels=tuple(channels), M=M)
 
 
 # ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------
-class ParityRule(Protocol):
-    def allow_K0(self, mis_X: MolInnerState, mis_Y: MolInnerState, j_couple: int) -> bool:
-        """Return whether one coupled monomer state is allowed at K=0."""
-        ...
-
-
-@dataclass(frozen=True)
-class ClosedShellParity:
-    """Apply the field-free closed-shell parity condition to K=0 channels."""
-
-    system_parity: int
-    Jtot: int
-
-    def allow_K0(self, mis_X: MolInnerState, mis_Y: MolInnerState, j_couple: int) -> bool:
-        """Return whether the coupled monomer state belongs to this K=0 parity block."""
-        phase = self.system_parity * (-1) ** (mis_X.j + mis_Y.j + j_couple + self.Jtot)
-        return phase == 1
+def _allow_closed_shell_K0(
+    mis_X: MolInnerState,
+    mis_Y: MolInnerState,
+    j_couple: int,
+    Jtot: int,
+    system_parity: int,
+) -> bool:
+    """Return whether one coupled monomer state belongs to the K=0 parity block."""
+    return system_parity * (-1) ** (mis_X.j + mis_Y.j + j_couple + Jtot) == 1
 
 
 # ----------------------------------------------------------------------------------------
 
 
 # ----------------------------------------------------------------------------------------
-@dataclass(frozen=True)
-class ChannelBuilder:
-    """Construct and energy-order one field-free channel basis."""
+def _state_values(values: int | tuple[int, ...], n_state: int, name: str) -> tuple[int, ...]:
+    """Expand one channel selection to one value per electronic state."""
+    selected = (values,) * n_state if isinstance(values, int) else values
+    if len(selected) != n_state:
+        message = f"{name} must provide one value per electronic state; expected {n_state}, got {len(selected)}"
+        logger.error(message)
+        raise ValueError(message)
+    return selected
 
-    system: ScattSystem
-    trunc: TruncSpec
 
-    def build(self) -> ChannelBasis:
-        """Enumerate channels allowed by angular momentum, parity, energy, and helicity."""
-        if isinstance(self.system.monomer_Y, DiatomElectricBasis):
-            message = "Field-free channel construction does not accept a dressed electric monomer basis"
-            logger.error(message)
-            raise TypeError(message)
-        if self.system.Jtot is None or self.system.system_parity is None:
-            message = "Field-free channel construction requires Jtot and system_parity"
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _selected_diatom_states(
+    monomer: MonomerSpec,
+    E_cut: float,
+    vmin: int | tuple[int, ...],
+    exchange_parity: int | tuple[int, ...],
+) -> tuple[MolInnerState, ...]:
+    """Return full monomer states filtered by channel vibrational and rotational symmetry selections."""
+    states = tuple(monomer.mis_iter(E_cut))
+    if monomer.type is not MonomerType.DIATOM:
+        return states
+
+    n_state = int(getattr(monomer, "n_state", 1))
+    vmin_values = _state_values(vmin, n_state, "vmin")
+    parity_values = _state_values(exchange_parity, n_state, "exchange_parity")
+    selected: list[MolInnerState] = []
+    for state in states:
+        electronic_state = 0 if state.electronic_state is None else state.electronic_state
+        if state.v is None:
+            message = "Diatomic channel state requires a vibrational quantum number"
             logger.error(message)
             raise ValueError(message)
+        if state.v < vmin_values[electronic_state]:
+            continue
+        parity = parity_values[electronic_state]
+        if parity != 0 and (-1) ** state.j != parity:
+            continue
+        selected.append(state)
+    return tuple(selected)
 
-        parity_rule = ClosedShellParity(self.system.system_parity, self.system.Jtot)
-        monomer_types = (self.system.monomer_X.type, self.system.monomer_Y.type)
-        atom_triatom = monomer_types in (
-            (MonomerType.ATOM, MonomerType.TRIATOM),
-            (MonomerType.TRIATOM, MonomerType.ATOM),
-        )
-        parity_block_sign = self.system.system_parity * (-1) ** self.system.Jtot
-        if atom_triatom:
-            triatom = self.system.monomer_X if self.system.monomer_X.type is MonomerType.TRIATOM else self.system.monomer_Y
-            if getattr(triatom, "parity_block_sign", parity_block_sign) != parity_block_sign:
-                message = "Triatomic basis parity_block_sign does not match system_parity*(-1)^Jtot"
-                logger.error(message)
-                raise ValueError(message)
-        channels: list[Channel] = []
 
-        for mis_X in self.system.monomer_X.mis_iter(self.trunc.E_X_cut):
-            for mis_Y in self.system.monomer_Y.mis_iter(self.trunc.E_Y_cut):
-                for j_couple in range(abs(mis_X.j - mis_Y.j), mis_X.j + mis_Y.j + 1):
-                    Kmax = set_Kmax(j_couple, self.system.Jtot, self.trunc.K_cut)
-                    for K in range(Kmax + 1):
-                        if not self.system.monomer_X.allows_K(mis_X, K) or not self.system.monomer_Y.allows_K(mis_Y, K):
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def build_ChannelBasis(system: ScattSystem, channel: ChannelSpec | None = None) -> ChannelBasis:
+    """
+    Construct and energy-order one field-free channel basis.
+
+    Inputs:
+        system: ScattSystem - field-free monomer bases and conserved block
+            quantum numbers
+        channel: ChannelSpec | None - vibrational, exchange-parity, energy, and
+            helicity selections; None uses ``system.channel_spec`` or defaults
+
+    Returns:
+        basis: ChannelBasis - channels allowed by angular momentum, parity,
+            energy, and helicity
+    """
+    if isinstance(system.monomer_Y, DiatomElectricBasis):
+        message = "Field-free channel construction does not accept a dressed electric monomer basis"
+        logger.error(message)
+        raise TypeError(message)
+    monomer_X = cast(MonomerSpec, system.monomer_X)
+    monomer_Y = cast(MonomerSpec, system.monomer_Y)
+    if system.Jtot is None or system.system_parity is None:
+        message = "Field-free channel construction requires Jtot and system_parity"
+        logger.error(message)
+        raise ValueError(message)
+
+    channel_spec = channel if channel is not None else system.channel_spec
+    if channel_spec is None:
+        channel_spec = ChannelSpec()
+    monomer_types = (monomer_X.type, monomer_Y.type)
+    atom_triatom = monomer_types in (
+        (MonomerType.ATOM, MonomerType.TRIATOM),
+        (MonomerType.TRIATOM, MonomerType.ATOM),
+    )
+    parity_block_sign = system.system_parity * (-1) ** system.Jtot
+    if atom_triatom:
+        triatom = monomer_X if monomer_X.type is MonomerType.TRIATOM else monomer_Y
+        if getattr(triatom, "parity_block_sign", parity_block_sign) != parity_block_sign:
+            message = "Triatomic basis parity_block_sign does not match system_parity*(-1)^Jtot"
+            logger.error(message)
+            raise ValueError(message)
+    channels: list[Channel] = []
+
+    states_X = _selected_diatom_states(
+        monomer_X,
+        channel_spec.E_X_cut,
+        channel_spec.vmin_X,
+        channel_spec.exchange_parity_X,
+    )
+    states_Y = _selected_diatom_states(
+        monomer_Y,
+        channel_spec.E_Y_cut,
+        channel_spec.vmin_Y,
+        channel_spec.exchange_parity_Y,
+    )
+    for mis_X in states_X:
+        for mis_Y in states_Y:
+            for j_couple in range(abs(mis_X.j - mis_Y.j), mis_X.j + mis_Y.j + 1):
+                Kmax = set_Kmax(j_couple, system.Jtot, channel_spec.K_cut)
+                for K in range(Kmax + 1):
+                    if not monomer_X.allows_K(mis_X, K) or not monomer_Y.allows_K(mis_Y, K):
+                        continue
+                    if K == 0 and not atom_triatom:
+                        if not _allow_closed_shell_K0(mis_X, mis_Y, j_couple, system.Jtot, system.system_parity):
                             continue
-                        if K == 0:
-                            if not atom_triatom and not parity_rule.allow_K0(mis_X, mis_Y, j_couple):
-                                continue
 
-                        E_int = float(self.system.monomer_X.energy(mis_X, K) + self.system.monomer_Y.energy(mis_Y, K))
-                        channels.append(
-                            Channel(
-                                mis_X=mis_X,
-                                mis_Y=mis_Y,
-                                j_couple=j_couple,
-                                K=K,
-                                Jtot=self.system.Jtot,
-                                system_parity=self.system.system_parity,
-                                E_int=E_int,
-                            )
+                    E_int = float(monomer_X.energy(mis_X, K) + monomer_Y.energy(mis_Y, K))
+                    channels.append(
+                        Channel(
+                            mis_X=mis_X,
+                            mis_Y=mis_Y,
+                            j_couple=j_couple,
+                            K=K,
+                            E_int=E_int,
                         )
+                    )
 
-        channels.sort(key=lambda channel: channel.E_int)
-        indexed_channels = tuple(replace(channel, index=index) for index, channel in enumerate(channels))
-        return ChannelBasis(channels=indexed_channels)
+    channels.sort(key=lambda channel: channel.E_int)
+    return ChannelBasis(
+        channels=tuple(channels),
+        Jtot=system.Jtot,
+        system_parity=system.system_parity,
+        channel_spec=channel_spec,
+    )

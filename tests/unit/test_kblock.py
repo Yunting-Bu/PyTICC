@@ -1,15 +1,15 @@
 import numpy as np
 
-from pyticc.basis.channel import ChannelBuilder, TruncSpec
+from pyticc.basis.channel import ChannelSpec, build_ChannelBasis
 from pyticc.basis.kblock import build_cs_blocks, build_nncc_blocks
 from pyticc.basis.monomer import AtomSpec, DiatomSpec
 from pyticc.system import ScattSystem
 
 
 def _channels():
-    diatom = DiatomSpec(Eint=np.zeros((1, 5)), vmax=0, jmax=4)
+    diatom = DiatomSpec(Eint=np.zeros((1, 5)))
     system = ScattSystem(AtomSpec(), diatom, Jtot=4, system_parity=1)
-    return ChannelBuilder(system, TruncSpec()).build()
+    return build_ChannelBasis(system, ChannelSpec())
 
 
 def test_cs_builds_one_owned_block_per_K() -> None:

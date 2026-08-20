@@ -1,4 +1,3 @@
-import math
 from collections.abc import Sequence
 from math import prod
 
@@ -8,7 +7,7 @@ from numpy.typing import NDArray
 
 import pyticc.matrix.interaction.atom_diatom as vmat
 from pyticc.basis.angle import gauss_legendre_dvr
-from pyticc.basis.channel import ChannelBuilder, TruncSpec, build_ChannelBasisElectricSF
+from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.monomer import AtomSpec, DiatomBasis, DiatomElectricBasis
 from pyticc.matrix.interaction import contract
 from pyticc.pes.adiabatic import PESWrapper, RadialInput, get_Vgrid_atom_diatom, get_Vgrid_atom_diatom_electric_sf
@@ -20,14 +19,12 @@ from pyticc.system import ScattSystem
 def build_hamiltonian(
     system: ScattSystem,
     *,
-    trunc: TruncSpec | None = None,
     n_theta: int = 16,
 ) -> ScattHamiltonian:
     """Build an adiabatic atom-diatom scattering Hamiltonian.
 
     Inputs:
         system: ScattSystem - atom-diatom system with a scalar PES
-        trunc: TruncSpec | None - channel-energy and helicity truncations
         n_theta: int - retained Jacobi-angle quadrature points
 
     Returns:
@@ -41,12 +38,22 @@ def build_hamiltonian(
         message = "Adiabatic atom-diatom Hamiltonian requires a PESWrapper"
         logger.error(message)
         raise TypeError(message)
+    if system.reduced_mass is None:
+        message = "Adiabatic atom-diatom Hamiltonian requires a collision reduced mass"
+        logger.error(message)
+        raise ValueError(message)
+    if not isinstance(system.basis, ChannelBasis):
+        message = "Atom-diatom Hamiltonian requires a field-free channel basis prepared by build_ScattSystem"
+        logger.error(message)
+        raise TypeError(message)
 
     diatom = system.monomer_Y
     rovib = diatom.rovib
     pes = system.potential
-    basis = ChannelBuilder(system, TruncSpec() if trunc is None else trunc).build()
-    cos_theta, theta_weights = gauss_legendre_dvr(-1.0, 1.0, n_theta, symmetry=diatom.jpar != 0)
+    basis = system.basis
+    exchange_parity = basis.channel_spec.exchange_parity_Y
+    exchange_parities = (exchange_parity,) if isinstance(exchange_parity, int) else exchange_parity
+    cos_theta, theta_weights = gauss_legendre_dvr(-1.0, 1.0, n_theta, symmetry=all(parity != 0 for parity in exchange_parities))
     theta = np.arccos(cos_theta)
     V_basis = vmat.prepare(basis, rovib, cos_theta, theta_weights)
 
@@ -67,9 +74,11 @@ def build_hamiltonian(
         return tuple(contract(V_basis, potential_grid, indices) for indices in channel_blocks)
 
     return ScattHamiltonian(
-        system=system,
         basis=basis,
+        reduced_mass=system.reduced_mass,
         interaction=Vmat,
+        approx=system.approx,
+        K_delta=system.K_delta,
         block_interaction=V_blocks,
         potential_grid_size=prod(V_basis.grid_shape),
     )
@@ -82,8 +91,6 @@ def build_hamiltonian(
 def build_hamiltonian_electric_sf(
     system: ScattSystem,
     *,
-    lmax: int,
-    E_cut: float = math.inf,
     n_theta_r: int = 16,
     n_theta_R: int = 16,
     n_delta: int = 16,
@@ -116,9 +123,6 @@ def build_hamiltonian_electric_sf(
     Inputs:
         system: ScattSystem - atom-diatom system containing AtomSpec,
             DiatomElectricBasis, M, interaction PES, and collision reduced mass
-        lmax: int - largest retained end-over-end angular momentum
-        E_cut: float - largest retained relative monomer threshold in atomic
-            units
         n_theta_r: int - Gauss-Legendre order for cos(theta_r)
         n_theta_R: int - Gauss-Legendre order for cos(theta_R)
         n_delta: int - retained relative-azimuth quadrature points
@@ -139,11 +143,18 @@ def build_hamiltonian_electric_sf(
         message = "Electric atom-diatom Hamiltonian requires M"
         logger.error(message)
         raise ValueError(message)
+    if system.reduced_mass is None:
+        message = "Electric atom-diatom Hamiltonian requires a collision reduced mass"
+        logger.error(message)
+        raise ValueError(message)
+    if not isinstance(system.basis, ChannelBasisElectricSF):
+        message = "Electric atom-diatom Hamiltonian requires SF channels prepared by build_ScattSystem"
+        logger.error(message)
+        raise TypeError(message)
 
-    M = system.M
     monomer_basis = system.monomer_Y
     pes = system.potential
-    basis = build_ChannelBasisElectricSF(monomer_basis, M=M, lmax=lmax, E_cut=E_cut)
+    basis = system.basis
     cos_theta_r, theta_r_weights = gauss_legendre_dvr(-1.0, 1.0, n_theta_r)
     cos_theta_R, theta_R_weights = gauss_legendre_dvr(-1.0, 1.0, n_theta_R)
     delta, delta_weights = gauss_legendre_dvr(0.0, 2.0 * np.pi, n_delta, symmetry=delta_symmetry)
@@ -167,8 +178,8 @@ def build_hamiltonian_electric_sf(
         return vmat.contract_electric_sf(V_basis, Vgrid(radial_points))
 
     return ScattHamiltonian(
-        system=system,
         basis=basis,
+        reduced_mass=system.reduced_mass,
         interaction=Vmat,
         potential_grid_size=prod(V_basis.grid_shape),
     )

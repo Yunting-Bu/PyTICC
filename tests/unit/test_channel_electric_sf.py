@@ -1,8 +1,9 @@
 import numpy as np
 
 from pyticc.basis.channel import build_ChannelBasisElectricSF
-from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis, DiatomElectricBlock
+from pyticc.basis.monomer import DiatomElectricBasis, DiatomElectricBlock
 from pyticc.matrix.centrifugal import get_Umat_ElectricSF
+from pyticc.system import ChannelSpec
 
 
 def make_monomer_basis(m_values: tuple[int, ...] = (-2, -1, 0, 1, 2)) -> DiatomElectricBasis:
@@ -49,15 +50,14 @@ def test_build_ChannelBasisElectricSF_determines_m_from_M_minus_m_l() -> None:
     }
 
 
-def test_build_ChannelBasisElectricSF_orders_thresholds_and_assigns_indices() -> None:
+def test_build_ChannelBasisElectricSF_orders_thresholds() -> None:
     basis = build_ChannelBasisElectricSF(make_monomer_basis(), M=0, lmax=2)
 
     assert np.all(np.diff(basis.E_int) >= 0.0)
-    assert [channel.index for channel in basis] == list(range(basis.n_channel))
 
 
 def test_build_ChannelBasisElectricSF_applies_relative_energy_cutoff() -> None:
-    basis = build_ChannelBasisElectricSF(make_monomer_basis(), M=0, lmax=1, E_cut=0.015)
+    basis = build_ChannelBasisElectricSF(make_monomer_basis(), M=0, lmax=1, channel=ChannelSpec(E_Y_cut=0.015))
 
     assert basis.n_channel == 4
     assert {channel.alpha for channel in basis} == {0}
@@ -74,7 +74,7 @@ def test_ChannelBasisElectricSF_classifies_open_and_closed_channels() -> None:
 
 
 def test_get_Umat_ElectricSF_is_diagonal_and_preserves_selected_order() -> None:
-    basis = build_ChannelBasisElectricSF(make_monomer_basis(), M=0, lmax=2, E_cut=0.015)
+    basis = build_ChannelBasisElectricSF(make_monomer_basis(), M=0, lmax=2, channel=ChannelSpec(E_Y_cut=0.015))
     indices = (2, 0, 1)
 
     Umat = get_Umat_ElectricSF(basis, indices)

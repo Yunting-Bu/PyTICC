@@ -4,14 +4,14 @@ import numpy as np
 import pytest
 
 import pyticc as pt
-from pyticc.basis.channel import ChannelBuilder
+from pyticc.basis.channel import ChannelBasis, build_ChannelBasis
 from pyticc.basis.monomer import DiatomSpec
 
 
-def build_test_basis() -> pt.ChannelBasis:
-    diatom = DiatomSpec(Eint=np.array([[0.0, 1.0, 2.0]]), vmax=0, jmax=2)
+def build_test_basis() -> ChannelBasis:
+    diatom = DiatomSpec(Eint=np.array([[0.0, 1.0, 2.0]]))
     system = pt.ScattSystem(monomer_X=pt.AtomSpec(), monomer_Y=diatom, Jtot=0, system_parity=1)
-    return ChannelBuilder(system, pt.TruncSpec()).build()
+    return build_ChannelBasis(system, pt.ChannelSpec())
 
 
 def test_open_closed_channels_accept_array_input() -> None:
@@ -19,7 +19,6 @@ def test_open_closed_channels_accept_array_input() -> None:
 
     result = basis.open_closed([1.0, 1.5, 2.0])
 
-    np.testing.assert_allclose(result.total_energies, [1.0, 1.5, 2.0])
     np.testing.assert_array_equal(result.n_open, [1, 2, 2])
     np.testing.assert_array_equal(result.n_closed, [2, 1, 1])
     np.testing.assert_array_equal(
@@ -39,7 +38,6 @@ def test_open_closed_channels_accept_file_input(tmp_path: Path) -> None:
 
     result = basis.open_closed(path)
 
-    np.testing.assert_allclose(result.total_energies, [1.0, 1.5, 2.0])
     np.testing.assert_array_equal(result.n_open, [1, 2, 2])
 
 

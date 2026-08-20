@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -6,13 +7,12 @@ from loguru import logger
 from numpy.typing import ArrayLike, NDArray
 
 from pyticc.basis.angle import norm_YjK
-from pyticc.basis.dvr import SineDVR
+from pyticc.basis.dvr import SineDVR, build_SineDVR
 from pyticc.basis.podvr import podvr_grids
 from pyticc.electric import ElectricResponseTable, electric_coefficients, load_electric_response_csv, required_m_values
 from pyticc.electric.hamiltonian import solve_diatom_electric_block
 
 
-# ----------------------------------------------------------------------------------------
 def _readonly_array(values: ArrayLike, dtype: np.dtype | type = np.float64) -> NDArray:
     array = np.array(values, dtype=dtype, copy=True)
     array.setflags(write=False)
@@ -249,6 +249,71 @@ def build_DiatomElectricBasis(
         electric_strength=electric_strength,
         jmax=jmax,
         mass=mass,
+    )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def prepare_DiatomElectric(
+    potential: Callable[[NDArray[np.float64]], NDArray[np.float64]] | None,
+    response: ElectricResponseTable | str | Path,
+    *,
+    r: tuple[float, float],
+    n_dvr: int,
+    n_podvr: int,
+    electric_strength: float,
+    jmax: int,
+    M: int,
+    lmax: int,
+    n_alpha: int,
+    mass: float,
+    energy_zero: float | None = None,
+) -> DiatomElectricBasis:
+    """
+    Prepare an electric-field-dressed diatom through the DVR and PODVR steps.
+
+    Inputs:
+        potential: Callable | None - zero-field monomer PES mapping bond-length
+            grids with shape (n_dvr,) to energies with shape (n_dvr,); None
+            raises an error
+        response: ElectricResponseTable | str | Path - electric-response table
+            or fixed-schema CSV path
+        r: tuple[float,float] - left and right sine-DVR boundaries in bohr
+        n_dvr: int - number of primitive sine-DVR points
+        n_podvr: int - number of contracted PODVR points
+        electric_strength: float - electric-field strength in atomic units
+        jmax: int - largest primitive diatomic angular momentum
+        M: int - conserved total SF projection used to select m
+        lmax: int - largest end-over-end angular momentum used to select m
+        n_alpha: int - number of lowest dressed states retained in each
+            fixed-m block
+        mass: float - diatomic reduced mass in atomic units
+        energy_zero: float | None - common absolute energy zero; if None, use
+            the lowest eigenvalue of the m=0 Hamiltonian
+
+    Returns:
+        monomer: DiatomElectricBasis - prepared electric-field-dressed monomer
+            basis on the PODVR grid
+    """
+    if potential is None:
+        message = "Electric diatomic monomer preparation requires a monomer potential"
+        logger.error(message)
+        raise ValueError(message)
+
+    dvr = build_SineDVR(r[0], r[1], n_dvr, mass, potential)
+    return build_DiatomElectricBasis(
+        dvr,
+        response,
+        electric_strength=electric_strength,
+        n_podvr=n_podvr,
+        jmax=jmax,
+        M=M,
+        lmax=lmax,
+        n_alpha=n_alpha,
+        mass=mass,
+        energy_zero=energy_zero,
     )
 
 

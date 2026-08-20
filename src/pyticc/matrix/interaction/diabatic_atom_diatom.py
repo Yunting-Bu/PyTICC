@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 from pyticc.basis.angle import norm_YjK
 from pyticc.basis.channel import Channel, ChannelBasis
-from pyticc.basis.monomer.diabatic import DiabaticDiatomBasis
+from pyticc.basis.monomer import DiabaticDiatomBasis
 from pyticc.pes.diabatic import DiabaticPESWrapper, RadialInput, get_diabatic_potential_grid_atom_diatom
 from pyticc.system import MolInnerState
 
@@ -109,8 +109,8 @@ def prepare(
             if not indices:
                 continue
 
-            diagonal_rows = np.empty((len(indices), state_basis.rovib.grids.size * cos_values.size), dtype=np.float64)
-            coupling_rows = np.empty((len(indices), state_basis.dvr.grids.size * cos_values.size), dtype=np.float64)
+            diagonal_rows = np.empty((len(indices), state_basis.contracted.grids.size * cos_values.size), dtype=np.float64)
+            coupling_rows = np.empty((len(indices), state_basis.primitive.grids.size * cos_values.size), dtype=np.float64)
             for local_index, channel_index in enumerate(indices):
                 channel = basis[channel_index]
                 inner_state = _diatomic_inner_state(channel)
@@ -121,8 +121,8 @@ def prepare(
                     angular[angular_key] = sqrt_weights * np.asarray(norm_YjK(j, K, cos_values), dtype=np.float64)
 
                 angular_values = angular[angular_key]
-                diagonal_rows[local_index] = np.multiply.outer(state_basis.rovib.WF_vj[:, v, j], angular_values).reshape(-1)
-                coupling_rows[local_index] = np.multiply.outer(state_basis.rovib_dvr.WF_vj[:, v, j], angular_values).reshape(-1)
+                diagonal_rows[local_index] = np.multiply.outer(state_basis.contracted.WF_vj[:, v, j], angular_values).reshape(-1)
+                coupling_rows[local_index] = np.multiply.outer(state_basis.primitive.WF_vj[:, v, j], angular_values).reshape(-1)
 
             key = (electronic_state, K)
             channel_indices[key] = indices
@@ -133,8 +133,8 @@ def prepare(
         n_channel=basis.n_channel,
         n_state=diabatic_basis.n_state,
         theta=np.arccos(cos_values),
-        diagonal_grids=tuple(state.rovib.grids for state in diabatic_basis.states),
-        coupling_grid=diabatic_basis.states[0].dvr.grids,
+        diagonal_grids=tuple(state.contracted.grids for state in diabatic_basis.states),
+        coupling_grid=diabatic_basis.states[0].primitive.grids,
         channel_indices=channel_indices,
         B_diagonal=B_diagonal,
         B_coupling=B_coupling,

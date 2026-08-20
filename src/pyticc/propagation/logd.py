@@ -1,15 +1,18 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from loguru import logger
-from numpy.typing import DTypeLike, NDArray
+from numpy.typing import NDArray
+
+from pyticc.propagation.device import JaxDevice
 
 jax.config.update("jax_enable_x64", True)
 
 LogDInput = jax.Array | NDArray[np.float64] | NDArray[np.complex128]
 
 
-def _device_array(value: LogDInput | float, device: jax.Device | None, dtype: DTypeLike | None = None) -> jax.Array:
+def _device_array(value: LogDInput | float, device: JaxDevice | None, dtype: DTypeLike | None = None) -> jax.Array:
     """Place one input directly on the requested device and optionally cast it there."""
     array = jax.device_put(value, device)
     return jnp.asarray(array, dtype=dtype)
@@ -229,7 +232,7 @@ def propagate_logD_sector(
     W_mid: LogDInput,
     W_end: LogDInput,
     *,
-    device: jax.Device | None = None,
+    device: JaxDevice | None = None,
 ) -> jax.Array:
     r"""
     Propagate a log-derivative matrix through one Manolopoulos LDMD sector.
@@ -339,7 +342,7 @@ def propagate_logD(
     W_base_mid: LogDInput,
     W_base_end: LogDInput,
     *,
-    device: jax.Device | None = None,
+    device: JaxDevice | None = None,
 ) -> jax.Array:
     r"""
     Propagate all total energies through a sequence of LDMD sectors with JAX.

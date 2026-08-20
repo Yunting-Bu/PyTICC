@@ -1,0 +1,992 @@
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from math import pi
+from typing import Any, overload
+
+import numpy as np
+from loguru import logger
+from numpy.typing import ArrayLike, NDArray
+
+from pyticc.basis.angle import gauss_legendre_dvr, norm_YjK
+
+AsymptoticPotential = Callable[[int, NDArray[np.float64]], NDArray[np.float64]]
+
+
+# ----------------------------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class DelvesDiatomBasis:
+    """
+    Multiple-arrangement asymptotic diatomic states in ABC's sine FBR.
+
+    This is the reactive-scattering monomer layer.  It contains the rovibrational
+    states of the three possible diatoms, but no helicity or total-angular-momentum
+    channels and no PODVR contraction.
+
+    Members:
+        mass: tuple[float,float,float] - atomic masses ``(A,B,C)`` in atomic units
+        jmax: int - largest solved diatomic rotational angular momentum
+        E_max: float - maximum internal energy in any ABC channel, in Hartree
+        rho_min: float - ABC inner hyperradial hard wall in bohr
+        scaled_r_max: float - common mass-scaled diatomic coordinate boundary in bohr
+        n_sine: int - number of primitive particle-in-a-box sine functions
+        n_vib_quad: int - number of midpoint quadrature points in ``s`` or ``theta``
+        n_gamma_quad: int - number of Gauss--Legendre Jacobi-angle points
+        qns: tuple[tuple[int,int,int],...] - retained labels ``(arrangement,v,j)``
+        energies: NDArray[np.float64] - rovibrational energies in Hartree, shape
+            ``(n_state,)``
+        coefficients: NDArray[np.float64] - sine-FBR coefficients indexed as
+            ``[sine,state]``, shape ``(n_sine,n_state)``
+        energy_zero: float - native total-PES energy subtracted before construction,
+            in Hartree
+    """
+
+    mass: tuple[float, float, float]
+    jmax: int
+    E_max: float
+    rho_min: float
+    scaled_r_max: float
+    n_sine: int
+    n_vib_quad: int
+    n_gamma_quad: int
+    qns: tuple[tuple[int, int, int], ...]
+    energies: NDArray[np.float64]
+    coefficients: NDArray[np.float64]
+    energy_zero: float = 0.0
+
+    def __post_init__(self) -> None:
+        energies = np.asarray(self.energies, dtype=np.float64)
+        coefficients = np.asarray(self.coefficients, dtype=np.float64)
+        if energies.shape != (len(self.qns),):
+            message = f"Delves diatom energies must have shape {(len(self.qns),)}, but got {energies.shape}"
+            logger.error(message)
+            raise ValueError(message)
+        if coefficients.shape != (self.n_sine, len(self.qns)):
+            message = f"Delves diatom coefficients must have shape {(self.n_sine, len(self.qns))}, but got {coefficients.shape}"
+            logger.error(message)
+            raise ValueError(message)
+        if not np.all(np.isfinite(energies)) or not np.all(np.isfinite(coefficients)) or not np.isfinite(self.energy_zero):
+            message = "Delves diatom energies, coefficients, and energy_zero must be finite"
+            logger.error(message)
+            raise ValueError(message)
+        object.__setattr__(self, "energies", energies)
+        object.__setattr__(self, "coefficients", coefficients)
+
+    @property
+    def n_state(self) -> int:
+        """Return the number of retained arrangement rovibrational states."""
+        return len(self.qns)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class DelvesBasis:
+    """
+    Automatically resolved primitive Delves basis specification.
+
+    Members:
+        mass: tuple[float, float, float] - atomic masses (A,B,C) in atomic units
+        Jtot: int - conserved total angular momentum
+        system_parity: int - conserved total parity, -1 or 1
+        exchange_parity: int - BC exchange parity, -1, 0, or 1
+        jmax: int - largest primitive diatomic rotational angular momentum
+        K_cut: int - largest retained body-fixed helicity
+        E_max: float - maximum internal energy in any ABC channel, in Hartree
+        rho_min: float - inner hyperradial hard wall in bohr
+        scaled_r_max: float - largest mass-scaled diatomic bond coordinate in bohr
+        n_sine: int - number of primitive sine FBR functions
+        n_vib_quad: int - number of midpoint quadrature points in scaled-r or theta
+        n_gamma_quad: int - number of Gauss--Legendre points in cos(gamma)
+        angular_qns: tuple[tuple[int, int, int], ...] - primitive (arrangement,j,K)
+            labels before adding the sine index; arrangements are one-based
+        qns: tuple[tuple[int,int,int,int],...] - preselected ABC channels
+            ``(arrangement,v,j,K)``; empty only for low-level primitive calculations
+        energies: NDArray[np.float64] - fixed channel thresholds in Hartree, shape
+            ``(n_channel,)``
+        s_coefficients: NDArray[np.float64] - fixed-Jacobi sine-FBR coefficients,
+            shape ``(n_sine,n_channel)``
+        energy_zero: float - native total-PES energy subtracted when preparing the
+            asymptotic diatoms, in Hartree
+    """
+
+    mass: tuple[float, float, float]
+    Jtot: int
+    system_parity: int
+    exchange_parity: int
+    jmax: int
+    K_cut: int
+    E_max: float
+    rho_min: float
+    scaled_r_max: float
+    n_sine: int
+    n_vib_quad: int
+    n_gamma_quad: int
+    angular_qns: tuple[tuple[int, int, int], ...]
+    qns: tuple[tuple[int, int, int, int], ...] = ()
+    energies: NDArray[np.float64] = field(default_factory=lambda: np.empty(0, dtype=np.float64))
+    s_coefficients: NDArray[np.float64] = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
+    energy_zero: float = 0.0
+
+    def __post_init__(self) -> None:
+        energies = np.asarray(self.energies, dtype=np.float64)
+        coefficients = np.asarray(self.s_coefficients, dtype=np.float64)
+        if energies.shape != (len(self.qns),):
+            message = f"Delves channel energies must have shape {(len(self.qns),)}, but got {energies.shape}"
+            logger.error(message)
+            raise ValueError(message)
+        expected_coefficients = (self.n_sine, len(self.qns)) if self.qns else (0, 0)
+        if coefficients.shape != expected_coefficients:
+            message = f"Delves channel s_coefficients must have shape {expected_coefficients}, but got {coefficients.shape}"
+            logger.error(message)
+            raise ValueError(message)
+        if not np.all(np.isfinite(energies)) or not np.all(np.isfinite(coefficients)) or not np.isfinite(self.energy_zero):
+            message = "Delves channel energies, coefficients, and energy_zero must be finite"
+            logger.error(message)
+            raise ValueError(message)
+        object.__setattr__(self, "energies", energies)
+        object.__setattr__(self, "s_coefficients", coefficients)
+
+    @property
+    def n_primitive(self) -> int:
+        """Return the uncontracted primitive dimension including the sine index."""
+        return self.n_sine * len(self.angular_qns)
+
+    @property
+    def n_channel(self) -> int:
+        """Return the number of preselected ABC arrangement channels."""
+        return len(self.qns)
+
+    @property
+    def E_int(self) -> NDArray[np.float64]:
+        """Return fixed asymptotic channel thresholds in Hartree."""
+        return self.energies
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def midpoint_quad(lower: float, upper: float, n_points: int) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    r"""
+    Construct a uniform midpoint quadrature rule.
+
+    Formula:
+        For q = 1,...,M on lower < x < upper,
+
+        x_q = lower + (q-1/2) Delta x,
+        w_q = Delta x,
+        Delta x = (upper-lower)/M.
+
+    Inputs:
+        lower: float - lower integration boundary
+        upper: float - upper integration boundary
+        n_points: int - number M of midpoint nodes
+
+    Returns:
+        grids: NDArray[np.float64] - midpoint nodes, shape (n_points,)
+        weights: NDArray[np.float64] - uniform weights, shape (n_points,)
+    """
+    if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+        message = f"Midpoint quadrature boundaries must be finite and increasing, but got lower={lower}, upper={upper}"
+        logger.error(message)
+        raise ValueError(message)
+    if n_points < 1:
+        message = f"n_points must be positive, but got {n_points}"
+        logger.error(message)
+        raise ValueError(message)
+
+    spacing = (upper - lower) / n_points
+    grids = lower + (np.arange(n_points, dtype=np.float64) + 0.5) * spacing
+    weights = np.full(n_points, spacing, dtype=np.float64)
+    return grids, weights
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def sine_basis(
+    lower: float,
+    upper: float,
+    n_sine: int,
+    grids: ArrayLike,
+    *,
+    derivative: int = 0,
+) -> NDArray[np.float64]:
+    r"""
+    Evaluate normalized particle-in-a-box sine functions or first derivatives.
+
+    Formula:
+        For n = 1,...,N and L = upper-lower,
+
+        u_n(x) = sqrt(2/L) sin[n pi (x-lower)/L],
+
+        d u_n(x)/dx = sqrt(2/L) (n pi/L)
+                         cos[n pi (x-lower)/L].
+
+        The continuous normalization is
+
+        integral_lower^upper u_m(x) u_n(x) dx = delta_mn.
+
+    Inputs:
+        lower: float - left box boundary
+        upper: float - right box boundary
+        n_sine: int - number N of sine functions
+        grids: ArrayLike - evaluation coordinates, shape (n_grid,)
+        derivative: int - 0 for values or 1 for first derivatives
+
+    Returns:
+        values: NDArray[np.float64] - basis values indexed as [grid,n], shape
+            (n_grid,n_sine)
+    """
+    if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+        message = f"Sine basis boundaries must be finite and increasing, but got lower={lower}, upper={upper}"
+        logger.error(message)
+        raise ValueError(message)
+    if n_sine < 1:
+        message = f"n_sine must be positive, but got {n_sine}"
+        logger.error(message)
+        raise ValueError(message)
+    if derivative not in (0, 1):
+        message = f"derivative must be 0 or 1, but got {derivative}"
+        logger.error(message)
+        raise ValueError(message)
+
+    coordinates = np.asarray(grids, dtype=np.float64)
+    if coordinates.ndim != 1 or not np.all(np.isfinite(coordinates)):
+        message = f"grids must be a finite one-dimensional array, but got shape={coordinates.shape}"
+        logger.error(message)
+        raise ValueError(message)
+
+    length = upper - lower
+    modes = np.arange(1, n_sine + 1, dtype=np.float64)
+    arguments = np.pi * (coordinates[:, None] - lower) * modes[None, :] / length
+    normalization = np.sqrt(2.0 / length)
+    if derivative == 0:
+        return normalization * np.sin(arguments)
+    return normalization * (np.pi * modes[None, :] / length) * np.cos(arguments)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+@overload
+def theta_max(rho: float, scaled_r_max: float) -> float: ...
+
+
+@overload
+def theta_max(rho: NDArray[Any], scaled_r_max: float) -> NDArray[np.float64]: ...
+
+
+def theta_max(rho: float | ArrayLike, scaled_r_max: float) -> float | NDArray[np.float64]:
+    r"""
+    Return the arrangement-local Delves hyperangle boundary.
+
+    Formula:
+        theta_max(rho) = asin[min(1, scaled_r_max/rho)],
+
+        so every retained point satisfies
+
+        scaled_r = rho sin(theta) <= scaled_r_max.
+
+    Inputs:
+        rho: float | ArrayLike - positive hyperradius in bohr, scalar or shape (...)
+        scaled_r_max: float - positive mass-scaled bond-coordinate limit in bohr
+
+    Returns:
+        theta_limit: float | NDArray[np.float64] - hyperangle boundary in radians,
+            with the same scalar/array form as rho
+    """
+    radii = np.asarray(rho, dtype=np.float64)
+    if not np.all(np.isfinite(radii)) or np.any(radii <= 0.0):
+        message = "rho must contain finite positive hyperradii"
+        logger.error(message)
+        raise ValueError(message)
+    if not np.isfinite(scaled_r_max) or scaled_r_max <= 0.0:
+        message = f"scaled_r_max must be finite and positive, but got {scaled_r_max}"
+        logger.error(message)
+        raise ValueError(message)
+
+    result = np.arcsin(np.minimum(1.0, scaled_r_max / radii))
+    return float(result) if result.ndim == 0 else result
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def delves_theta_basis(
+    basis: DelvesBasis,
+    rho: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    r"""
+    Construct the hyperangle quadrature and sine primitive at one hyperradius.
+
+    Formula:
+        theta_max(rho) = asin[min(1,scaled_r_max/rho)],
+
+        theta_q = (q-1/2) theta_max/M_theta,
+        w_q = theta_max/M_theta,
+
+        u_n(theta_q;rho) = sqrt(2/theta_max)
+                           sin(n pi theta_q/theta_max),
+
+        for q=1,...,M_theta and n=1,...,n_sine. The sine functions obey
+
+        integral_0^theta_max u_m(theta;rho)u_n(theta;rho)dtheta = delta_mn.
+
+    Inputs:
+        basis: DelvesBasis - resolved Delves sizes and scaled-r boundary
+        rho: float - positive hyperradius in bohr
+
+    Returns:
+        theta: NDArray[np.float64] - midpoint hyperangle nodes, shape
+            ``(n_vib_quad,)``
+        weights: NDArray[np.float64] - hyperangle quadrature weights, shape
+            ``(n_vib_quad,)``
+        values: NDArray[np.float64] - normalized sine values indexed as
+            ``[theta,n]``, shape ``(n_vib_quad,n_sine)``
+    """
+    limit = float(theta_max(rho, basis.scaled_r_max))
+    theta, weights = midpoint_quad(0.0, limit, basis.n_vib_quad)
+    return theta, weights, sine_basis(0.0, limit, basis.n_sine, theta)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def delves_angular_basis(
+    basis: DelvesBasis,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    r"""
+    Construct the Jacobi-angle quadrature and normalized angular primitives.
+
+    Formula:
+        x_p = cos(gamma_p), p=1,...,M_gamma, is an M_gamma-point
+        Gauss--Legendre rule on [-1,1]. The angular primitive is
+
+        P_tilde_j^K(x) = sqrt[(2j+1)/2 * (j-K)!/(j+K)!] P_j^K(x),
+
+        for 0 <= K <= min(j,K_cut), including the Condon--Shortley phase. Its
+        normalization is
+
+        integral_-1^1 P_tilde_j^K(x) P_tilde_j'^K(x) dx = delta_jj'.
+
+    Inputs:
+        basis: DelvesBasis - resolved angular and quadrature limits
+
+    Returns:
+        cos_gamma: NDArray[np.float64] - Gauss--Legendre nodes, shape
+            ``(n_gamma_quad,)``
+        weights: NDArray[np.float64] - Gauss--Legendre weights, shape
+            ``(n_gamma_quad,)``
+        values: NDArray[np.float64] - normalized angular values indexed as
+            ``[cos_gamma,j,K]``, shape ``(n_gamma_quad,jmax+1,K_cut+1)``;
+            entries with K>j are zero
+    """
+    cos_gamma, weights = gauss_legendre_dvr(-1.0, 1.0, basis.n_gamma_quad)
+    values = np.zeros((basis.n_gamma_quad, basis.jmax + 1, basis.K_cut + 1), dtype=np.float64)
+    for K in range(basis.K_cut + 1):
+        for j in range(K, basis.jmax + 1):
+            values[:, j, K] = norm_YjK(j, K, cos_gamma)
+    return cos_gamma, weights, values
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def build_delves_qns(
+    mass: Sequence[float],
+    Jtot: int,
+    system_parity: int,
+    exchange_parity: int,
+    jmax: int,
+    K_cut: int,
+) -> tuple[tuple[int, int, int], ...]:
+    r"""
+    Enumerate arrangement, diatomic rotation, and nonnegative helicity labels.
+
+    Formula:
+        K_min = 0 when system_parity = (-1)^Jtot, and K_min = 1 otherwise,
+
+        K_min <= K <= min(j,Jtot,K_cut).
+
+        For exchange_parity = +/-1, arrangements 2 and 3 are exchange-related and only
+        arrangements a = 1,2 are explicit. Arrangement 1 contains even j for
+        exchange_parity = +1 and odd j for exchange_parity = -1. Otherwise all three arrangements and
+        every j = 0,...,jmax are explicit.
+
+    Inputs:
+        mass: Sequence[float] - three positive atomic masses (A,B,C) in any
+            common unit
+        Jtot: int - conserved total angular momentum
+        system_parity: int - conserved total parity, -1 or 1
+        exchange_parity: int - BC exchange parity, -1, 0, or 1
+        jmax: int - largest diatomic rotational angular momentum
+        K_cut: int - largest retained helicity
+
+    Returns:
+        qns: tuple[tuple[int, int, int], ...] - one-based arrangement and (j,K)
+            labels ordered as arrangement, j, K
+    """
+    masses = _validate_delves_inputs(mass, Jtot, system_parity, exchange_parity, jmax, K_cut)
+    effective_exchange_parity = exchange_parity
+    if not np.isclose(masses[1], masses[2], rtol=1.0e-12, atol=0.0):
+        effective_exchange_parity = 0
+
+    K_min = 0 if system_parity == (-1) ** Jtot else 1
+    n_arrangement = 3 - abs(effective_exchange_parity)
+    qns: list[tuple[int, int, int]] = []
+    for arrangement in range(1, n_arrangement + 1):
+        if arrangement == 1:
+            j_min = (1 - effective_exchange_parity) // 2
+            j_step = 1 + abs(effective_exchange_parity)
+        else:
+            j_min = 0
+            j_step = 1
+        for j in range(j_min, jmax + 1, j_step):
+            for K in range(K_min, min(j, Jtot, K_cut) + 1):
+                qns.append((arrangement, j, K))
+    return tuple(qns)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def sine_kinetic(n_sine: int, length: float, mass_factor: float, *, theta: bool) -> NDArray[np.float64]:
+    r"""
+    Return diagonal sine-FBR kinetic energies in ``s`` or Delves ``theta``.
+
+    Formula:
+        For ``n=1,...,n_sine``,
+
+        T_n^(s) = (n pi/L)^2/(2 mu),
+
+        T_n^(theta) = [(n pi/L)^2-1/4]/(2 mu rho^2),
+
+        where ``mass_factor=mu`` for ``s`` and ``mass_factor=mu*rho^2`` for
+        ``theta``.
+
+    Inputs:
+        n_sine: int - number of sine functions
+        length: float - sine-box length in bohr or radians
+        mass_factor: float - positive mass factor in atomic units
+        theta: bool - whether to include the Delves ``-1/4`` term
+
+    Returns:
+        energies: NDArray[np.float64] - diagonal kinetic energies, shape
+            ``(n_sine,)``
+    """
+    modes = np.arange(1, n_sine + 1, dtype=np.float64)
+    eigenvalues = (np.pi * modes / length) ** 2
+    if theta:
+        eigenvalues -= 0.25
+    return eigenvalues / (2.0 * mass_factor)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def sine_reference_hamiltonian(
+    values: NDArray[np.float64],
+    weights: NDArray[np.float64],
+    kinetic: NDArray[np.float64],
+    effective_potential: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    r"""
+    Construct one sine-FBR reference Hamiltonian by midpoint quadrature.
+
+    Formula:
+        H_nm = delta_nm T_n
+             + sum_q w_q u_n(x_q) V_eff(x_q) u_m(x_q).
+
+    Inputs:
+        values: NDArray[np.float64] - sine values indexed as ``[grid,n]``
+        weights: NDArray[np.float64] - quadrature weights, shape ``(n_grid,)``
+        kinetic: NDArray[np.float64] - diagonal kinetic energies, shape ``(n_sine,)``
+        effective_potential: NDArray[np.float64] - sampled effective potential,
+            shape ``(n_grid,)``
+
+    Returns:
+        hamiltonian: NDArray[np.float64] - symmetric FBR Hamiltonian, shape
+            ``(n_sine,n_sine)``
+    """
+    hamiltonian = values.T @ (weights[:, None] * effective_potential[:, None] * values)
+    hamiltonian += np.diag(kinetic)
+    return 0.5 * (hamiltonian + hamiltonian.T)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def clean_sine_phases(vectors: NDArray[np.float64], primitive_values: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Apply ABC's positive-inner-turning-point phase convention."""
+    result = vectors.copy()
+    wavefunctions = primitive_values @ result
+    for state in range(result.shape[1]):
+        maximum = float(np.max(np.abs(wavefunctions[:, state])))
+        significant = np.flatnonzero(np.abs(wavefunctions[:, state]) > 0.1 * maximum)
+        if significant.size and wavefunctions[significant[0], state] < 0.0:
+            result[:, state] *= -1.0
+    return result
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def build_delves_diatom_basis(
+    asymptotic_potential: AsymptoticPotential,
+    mass: Sequence[float],
+    jmax: int,
+    E_max: float,
+    *,
+    energy_zero: float = 0.0,
+    scaled_r_step: float = 0.01,
+    scaled_r_scan_max: float = 10.0,
+    tail_cut: float = 5.0,
+) -> DelvesDiatomBasis:
+    r"""
+    Prepare ABC's three arrangement-asymptotic diatomic bases without PODVR.
+
+    The automatic WKB scan determines one common sine FBR.  For every
+    arrangement ``a=1,2,3`` and ``j=0,...,jmax``, the fixed-Jacobi problem is
+    diagonalized and states below ``E_max`` are retained.
+
+    Formula:
+        u_n(s)=sqrt(2/s_max) sin(n pi s/s_max),
+
+        H_nm^(a,j) = delta_nm (n pi/s_max)^2/(2 mu)
+          + integral_0^s_max u_n(s)
+            [j(j+1)/(2 mu s^2)+V_a^asym(s)]u_m(s) ds,
+
+        H^(a,j) c^(a,v,j) = E_(a,v,j) c^(a,v,j).
+
+    Inputs:
+        asymptotic_potential: AsymptoticPotential - arrangement-indexed,
+            energy-zero-adjusted asymptotic potential in Hartree
+        mass: Sequence[float] - atomic masses ``(A,B,C)`` in atomic units
+        jmax: int - largest diatomic rotational angular momentum
+        E_max: float - maximum internal energy in any ABC channel, in Hartree
+        energy_zero: float - native total-PES energy already subtracted, in Hartree
+        scaled_r_step: float - WKB scan spacing in bohr
+        scaled_r_scan_max: float - WKB scan upper boundary in bohr
+        tail_cut: float - forbidden-tail action cutoff
+
+    Returns:
+        basis: DelvesDiatomBasis - prepared arrangement rovibrational states and
+            common primitive specification
+    """
+    if jmax < 0:
+        message = f"jmax must be non-negative, but got {jmax}"
+        logger.error(message)
+        raise ValueError(message)
+    masses, rho_min, scaled_r_max, n_sine, n_vib_quad, n_gamma_quad = _resolve_delves_sizes(
+        asymptotic_potential,
+        mass,
+        jmax,
+        E_max,
+        scaled_r_step=scaled_r_step,
+        scaled_r_scan_max=scaled_r_scan_max,
+        tail_cut=tail_cut,
+    )
+    reduced_mass = np.sqrt(np.prod(masses) / sum(masses))
+    s_grid, s_weights = midpoint_quad(0.0, scaled_r_max, n_vib_quad)
+    s_values = sine_basis(0.0, scaled_r_max, n_sine, s_grid)
+    kinetic = sine_kinetic(n_sine, scaled_r_max, reduced_mass, theta=False)
+    records: list[tuple[tuple[int, int, int], float, NDArray[np.float64]]] = []
+
+    for arrangement in range(1, 4):
+        potential = np.asarray(asymptotic_potential(arrangement, s_grid), dtype=np.float64)
+        for j in range(jmax + 1):
+            effective = potential + j * (j + 1) / (2.0 * reduced_mass * s_grid**2)
+            hamiltonian = sine_reference_hamiltonian(s_values, s_weights, kinetic, effective)
+            energies, vectors = np.linalg.eigh(hamiltonian)
+            vectors = clean_sine_phases(vectors, s_values)
+            for v in np.flatnonzero(energies <= E_max):
+                records.append(((arrangement, int(v), j), float(energies[v]), vectors[:, v].copy()))
+
+    if not records:
+        message = f"No asymptotic diatomic states lie below E_max={E_max} Hartree"
+        logger.error(message)
+        raise ValueError(message)
+    records.sort(key=lambda item: item[0])
+    return DelvesDiatomBasis(
+        mass=masses,
+        jmax=jmax,
+        E_max=float(E_max),
+        rho_min=rho_min,
+        scaled_r_max=scaled_r_max,
+        n_sine=n_sine,
+        n_vib_quad=n_vib_quad,
+        n_gamma_quad=n_gamma_quad,
+        qns=tuple(record[0] for record in records),
+        energies=np.asarray([record[1] for record in records], dtype=np.float64),
+        coefficients=np.column_stack([record[2] for record in records]),
+        energy_zero=float(energy_zero),
+    )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def build_delves_channels(
+    diatom_basis: DelvesDiatomBasis,
+    Jtot: int,
+    system_parity: int,
+    exchange_parity: int,
+    K_cut: int,
+) -> DelvesBasis:
+    """
+    Build and order ABC channels ``(arrangement,v,j,K)`` from prepared diatoms.
+
+    Inputs:
+        diatom_basis: DelvesDiatomBasis - three arrangement-asymptotic diatomic bases
+        Jtot: int - conserved total angular momentum
+        system_parity: int - conserved total parity, -1 or 1
+        exchange_parity: int - BC exchange parity, -1, 0, or 1
+        K_cut: int - largest retained nonnegative helicity
+
+    Returns:
+        basis: DelvesBasis - primitive numerical support plus the fixed channel
+            labels, thresholds, and sine-FBR coefficients required by ABC
+    """
+    if not isinstance(diatom_basis, DelvesDiatomBasis):
+        message = "build_delves_channels requires a DelvesDiatomBasis"
+        logger.error(message)
+        raise TypeError(message)
+    angular_qns = build_delves_qns(
+        diatom_basis.mass,
+        Jtot,
+        system_parity,
+        exchange_parity,
+        diatom_basis.jmax,
+        K_cut,
+    )
+    angular_set = set(angular_qns)
+    records: list[tuple[tuple[int, int, int, int], float, NDArray[np.float64]]] = []
+    for state_index, (arrangement, v, j) in enumerate(diatom_basis.qns):
+        for K in range(min(j, Jtot, K_cut) + 1):
+            if (arrangement, j, K) not in angular_set:
+                continue
+            records.append(
+                (
+                    (arrangement, v, j, K),
+                    float(diatom_basis.energies[state_index]),
+                    diatom_basis.coefficients[:, state_index].copy(),
+                )
+            )
+    if not records:
+        message = "The requested Jtot, parities, and K_cut produce no Delves channels"
+        logger.error(message)
+        raise ValueError(message)
+    records.sort(key=lambda item: item[0])
+    effective_exchange_parity = exchange_parity if np.isclose(diatom_basis.mass[1], diatom_basis.mass[2], rtol=1.0e-12, atol=0.0) else 0
+    basis = DelvesBasis(
+        mass=diatom_basis.mass,
+        Jtot=Jtot,
+        system_parity=system_parity,
+        exchange_parity=effective_exchange_parity,
+        jmax=diatom_basis.jmax,
+        K_cut=min(K_cut, Jtot, diatom_basis.jmax),
+        E_max=diatom_basis.E_max,
+        rho_min=diatom_basis.rho_min,
+        scaled_r_max=diatom_basis.scaled_r_max,
+        n_sine=diatom_basis.n_sine,
+        n_vib_quad=diatom_basis.n_vib_quad,
+        n_gamma_quad=diatom_basis.n_gamma_quad,
+        angular_qns=angular_qns,
+        qns=tuple(record[0] for record in records),
+        energies=np.asarray([record[1] for record in records], dtype=np.float64),
+        s_coefficients=np.column_stack([record[2] for record in records]),
+        energy_zero=diatom_basis.energy_zero,
+    )
+    logger.info(
+        "Reactive channels prepared:\n"
+        + "\n".join(
+            f"{index:5d}  a={arrangement} v={v} j={j} K={K}  E={energy:.12e} Hartree"
+            for index, ((arrangement, v, j, K), energy) in enumerate(zip(basis.qns, basis.energies, strict=True), start=1)
+        )
+    )
+    return basis
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def build_delves_basis(
+    asymptotic_potential: AsymptoticPotential,
+    mass: Sequence[float],
+    Jtot: int,
+    system_parity: int,
+    exchange_parity: int,
+    jmax: int,
+    K_cut: int,
+    E_max: float,
+    *,
+    scaled_r_step: float = 0.01,
+    scaled_r_scan_max: float = 10.0,
+    tail_cut: float = 5.0,
+) -> DelvesBasis:
+    r"""
+    Resolve the primitive Delves basis using the ABC asymptotic-WKB strategy.
+
+    ``asymptotic_potential(a, scaled_r)`` supplies the arrangement-a asymptotic
+    potential in atomic units on a mass-scaled bond-coordinate array. The three
+    arrangements are numbered 1, 2, and 3. Atomic units are used throughout, so
+    hbar = 1 and the scaled radial equation uses 2 mu_rho.
+
+    Formula:
+        The three-body mass is
+
+        mu_rho = sqrt(m_A m_B m_C / (m_A+m_B+m_C)).
+
+        On scaled_r_l = l Delta r, l=1,...,M, the potential and cutoff are
+        multiplied by 2 mu_rho. Starting from the two E_max crossings, forbidden
+        tails are accumulated until
+
+        sum_l Delta r sqrt(2 mu_rho [V_a(scaled_r_l)-E_max]) > tail_cut.
+
+        This gives arrangement limits scaled_r_min^(a), scaled_r_max^(a), then
+
+        rho_min^2 = sum_a (1-m_a/M_tot) [scaled_r_min^(a)]^2,
+
+        scaled_r_max = max_a scaled_r_max^(a),
+
+        n_sine = max_a floor[(2 scaled_r_max/pi)
+                              sqrt(2 mu_rho [E_max-V_min^(a)])],
+
+        n_gamma_quad = floor{3[2(jmax+1)+(n_sine+1)]/4},
+
+        n_vib_quad = floor{3[2(n_sine+1)+(jmax+1)]/4}.
+
+    Inputs:
+        asymptotic_potential: AsymptoticPotential - arrangement-indexed potential
+            callback returning atomic-unit energies with shape (n_scaled_r,)
+        mass: Sequence[float] - atomic masses (A,B,C) in atomic units
+        Jtot: int - conserved total angular momentum
+        system_parity: int - conserved total parity, -1 or 1
+        exchange_parity: int - BC exchange parity, -1, 0, or 1
+        jmax: int - largest primitive diatomic rotational angular momentum
+        K_cut: int - largest retained body-fixed helicity
+        E_max: float - maximum internal energy in any ABC channel, in Hartree
+        scaled_r_step: float - asymptotic scan spacing in bohr
+        scaled_r_scan_max: float - largest scanned scaled_r coordinate in bohr
+        tail_cut: float - dimensionless forbidden-tail action target
+
+    Returns:
+        basis: DelvesBasis - resolved basis sizes, coordinate limits, and angular
+            quantum-number labels
+    """
+    masses = _validate_delves_inputs(mass, Jtot, system_parity, exchange_parity, jmax, K_cut)
+    masses, rho_min, scaled_r_max, n_sine, n_vib_quad, n_gamma_quad = _resolve_delves_sizes(
+        asymptotic_potential,
+        masses,
+        jmax,
+        E_max,
+        scaled_r_step=scaled_r_step,
+        scaled_r_scan_max=scaled_r_scan_max,
+        tail_cut=tail_cut,
+    )
+    qns = build_delves_qns(masses, Jtot, system_parity, exchange_parity, jmax, K_cut)
+    if not qns:
+        message = "The requested Jtot, system_parity, jmax, and K_cut produce no Delves angular functions"
+        logger.error(message)
+        raise ValueError(message)
+
+    effective_exchange_parity = exchange_parity if np.isclose(masses[1], masses[2], rtol=1.0e-12, atol=0.0) else 0
+    return DelvesBasis(
+        mass=masses,
+        Jtot=Jtot,
+        system_parity=system_parity,
+        exchange_parity=effective_exchange_parity,
+        jmax=jmax,
+        K_cut=min(K_cut, Jtot, jmax),
+        E_max=float(E_max),
+        rho_min=rho_min,
+        scaled_r_max=scaled_r_max,
+        n_sine=n_sine,
+        n_vib_quad=n_vib_quad,
+        n_gamma_quad=n_gamma_quad,
+        angular_qns=qns,
+    )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _resolve_delves_sizes(
+    asymptotic_potential: AsymptoticPotential,
+    mass: Sequence[float],
+    jmax: int,
+    E_max: float,
+    *,
+    scaled_r_step: float,
+    scaled_r_scan_max: float,
+    tail_cut: float,
+) -> tuple[tuple[float, float, float], float, float, int, int, int]:
+    """Run ABC's WKB scan and return the common primitive sizes."""
+    masses = tuple(float(value) for value in mass)
+    if len(masses) != 3 or not np.all(np.isfinite(masses)) or not np.all(np.asarray(masses) > 0.0):
+        message = f"mass must contain three finite positive atomic masses, but got {mass!r}"
+        logger.error(message)
+        raise ValueError(message)
+    if not np.isfinite(E_max):
+        message = f"E_max must be finite, but got {E_max}"
+        logger.error(message)
+        raise ValueError(message)
+    if not np.isfinite(scaled_r_step) or scaled_r_step <= 0.0:
+        message = f"scaled_r_step must be finite and positive, but got {scaled_r_step}"
+        logger.error(message)
+        raise ValueError(message)
+    if not np.isfinite(scaled_r_scan_max) or scaled_r_scan_max <= scaled_r_step:
+        message = f"scaled_r_scan_max must exceed scaled_r_step, but got {scaled_r_scan_max} and {scaled_r_step}"
+        logger.error(message)
+        raise ValueError(message)
+    if not np.isfinite(tail_cut) or tail_cut <= 0.0:
+        message = f"tail_cut must be finite and positive, but got {tail_cut}"
+        logger.error(message)
+        raise ValueError(message)
+
+    n_scan = int(np.floor(scaled_r_scan_max / scaled_r_step + 1.0e-12))
+    scaled_r = scaled_r_step * np.arange(1, n_scan + 1, dtype=np.float64)
+    total_mass = sum(masses)
+    reduced_mass = np.sqrt(np.prod(masses) / total_mass)
+    radial_scale = 2.0 * reduced_mass
+    scaled_E_max = radial_scale * E_max
+    inner_limits = np.empty(3, dtype=np.float64)
+    outer_limits = np.empty(3, dtype=np.float64)
+    potential_minima = np.empty(3, dtype=np.float64)
+
+    for arrangement in range(1, 4):
+        potential = np.asarray(asymptotic_potential(arrangement, scaled_r), dtype=np.float64)
+        if potential.shape != scaled_r.shape or not np.all(np.isfinite(potential)):
+            message = (
+                f"asymptotic_potential returned shape {potential.shape} for arrangement {arrangement}; "
+                f"expected finite values with shape {scaled_r.shape}"
+            )
+            logger.error(message)
+            raise ValueError(message)
+        scaled_potential = radial_scale * potential
+        minimum_index = int(np.argmin(scaled_potential))
+        potential_minima[arrangement - 1] = scaled_potential[minimum_index]
+        inner_limits[arrangement - 1], outer_limits[arrangement - 1] = _wkb_limits(
+            scaled_potential,
+            scaled_E_max,
+            minimum_index,
+            scaled_r_step,
+            tail_cut,
+            arrangement,
+        )
+
+    scaled_r_max = float(np.max(outer_limits))
+    rho_min = float(np.sqrt(np.sum((1.0 - np.asarray(masses) / total_mass) * inner_limits**2)))
+    basis_estimates = np.where(
+        scaled_E_max > potential_minima,
+        (2.0 * scaled_r_max / pi) * np.sqrt(np.maximum(0.0, scaled_E_max - potential_minima)),
+        0.0,
+    )
+    n_sine = int(np.max(basis_estimates))
+    if n_sine < 1:
+        message = "The ABC estimate produced no sine functions; increase E_max or inspect the asymptotic potentials"
+        logger.error(message)
+        raise ValueError(message)
+    n_gamma_quad = 3 * (2 * (jmax + 1) + (n_sine + 1)) // 4
+    n_vib_quad = 3 * (2 * (n_sine + 1) + (jmax + 1)) // 4
+    return masses, rho_min, scaled_r_max, n_sine, n_vib_quad, n_gamma_quad
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _validate_delves_inputs(
+    mass: Sequence[float],
+    Jtot: int,
+    system_parity: int,
+    exchange_parity: int,
+    jmax: int,
+    K_cut: int,
+) -> tuple[float, float, float]:
+    """Validate shared Delves mass and angular-momentum inputs."""
+    masses = tuple(float(value) for value in mass)
+    if len(masses) != 3 or not np.all(np.isfinite(masses)) or not np.all(np.asarray(masses) > 0.0):
+        message = f"mass must contain three finite positive atomic masses, but got {mass!r}"
+        logger.error(message)
+        raise ValueError(message)
+    if Jtot < 0 or jmax < 0 or K_cut < 0:
+        message = f"Jtot, jmax, and K_cut must be non-negative, but got {(Jtot, jmax, K_cut)}"
+        logger.error(message)
+        raise ValueError(message)
+    if system_parity not in (-1, 1):
+        message = f"system_parity must be -1 or 1, but got {system_parity}"
+        logger.error(message)
+        raise ValueError(message)
+    if exchange_parity not in (-1, 0, 1):
+        message = f"exchange_parity must be -1, 0, or 1, but got {exchange_parity}"
+        logger.error(message)
+        raise ValueError(message)
+    return masses
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _wkb_limits(
+    scaled_potential: NDArray[np.float64],
+    scaled_E_max: float,
+    minimum_index: int,
+    step: float,
+    tail_cut: float,
+    arrangement: int,
+) -> tuple[float, float]:
+    """Return inner and outer WKB limits for one sampled asymptotic potential."""
+    left_allowed = np.flatnonzero(scaled_potential[: minimum_index + 1] < scaled_E_max)
+    left_start = int(left_allowed[0]) - 1 if left_allowed.size else minimum_index
+    left_action = 0.0
+    inner_index = -1
+    for index in range(left_start, -1, -1):
+        inner_index = index
+        left_action += step * np.sqrt(scaled_potential[index] - scaled_E_max)
+        if left_action > tail_cut:
+            break
+    if inner_index >= 0 and left_action <= tail_cut:
+        message = f"The inner WKB tail for arrangement {arrangement} did not reach tail_cut={tail_cut} within the scaled-r scan"
+        logger.error(message)
+        raise ValueError(message)
+
+    right_allowed = np.flatnonzero(scaled_potential[minimum_index:] < scaled_E_max)
+    if not right_allowed.size:
+        message = f"No outer forbidden region below scaled_r_scan_max was found for arrangement {arrangement}"
+        logger.error(message)
+        raise ValueError(message)
+    right_start = minimum_index + int(right_allowed[-1]) + 1
+    if right_start >= scaled_potential.size:
+        message = f"No outer forbidden region below scaled_r_scan_max was found for arrangement {arrangement}"
+        logger.error(message)
+        raise ValueError(message)
+    right_action = 0.0
+    outer_index = scaled_potential.size
+    for index in range(right_start, scaled_potential.size):
+        outer_index = index
+        right_action += step * np.sqrt(scaled_potential[index] - scaled_E_max)
+        if right_action > tail_cut:
+            break
+    if outer_index >= scaled_potential.size or right_action <= tail_cut:
+        message = f"The outer WKB tail for arrangement {arrangement} did not reach tail_cut={tail_cut} within the scaled-r scan"
+        logger.error(message)
+        raise ValueError(message)
+
+    return (inner_index + 1) * step, (outer_index + 1) * step

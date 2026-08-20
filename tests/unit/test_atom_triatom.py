@@ -4,7 +4,7 @@ from scipy.special import roots_legendre
 import pyticc as ticc
 import pyticc.matrix.interaction.atom_triatom as vmat
 from pyticc.basis.angle import norm_reduced_wigner_d
-from pyticc.basis.channel import ChannelBuilder, TruncSpec
+from pyticc.basis.channel import ChannelSpec, build_ChannelBasis
 from pyticc.basis.monomer import AtomSpec
 from pyticc.basis.podvr import VibPODVR
 from pyticc.basis.triatom import TriatomBasis, TriatomBlock
@@ -54,7 +54,7 @@ def test_reduced_wigner_d_matches_reference_normalization_and_phase() -> None:
 def test_constant_potential_is_identity_for_atom_triatom_basis() -> None:
     triatom = make_triatom()
     system = ScattSystem(AtomSpec(), triatom, Jtot=1, system_parity=-1)
-    basis = ChannelBuilder(system, TruncSpec()).build()
+    basis = build_ChannelBasis(system, ChannelSpec())
     cos_theta_2, theta_weights_2 = roots_legendre(6)
     phi_grid, phi_weights = roots_legendre(8)
     phi = 0.5 * np.pi * (phi_grid + 1.0)
@@ -105,17 +105,17 @@ def test_solve_atom_triatom_completes_minimal_exact_calculation() -> None:
     def interaction(R: float, coordinates: np.ndarray) -> np.ndarray:
         return np.zeros(coordinates.shape[1])
 
-    system = ScattSystem(
+    system = ticc.build_ScattSystem(
         AtomSpec(),
         triatom,
         Jtot=0,
         system_parity=1,
+        channel=ChannelSpec(E_Y_cut=0.005),
         potential=PESWrapper(interaction=interaction),
         reduced_mass=1000.0,
     )
     hamiltonian = atom_triatom.build_hamiltonian(
         system,
-        trunc=TruncSpec(E_Y_cut=0.005),
         n_theta_2=4,
         n_phi=4,
     )

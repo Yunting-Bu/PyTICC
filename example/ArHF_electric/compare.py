@@ -5,14 +5,16 @@ from numpy.typing import NDArray
 
 import pyticc as ticc
 from pyticc.basis.angle import clebsch_gordan
+from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
+from pyticc.basis.rovib import RovibBasis
 from pyticc.scattering import atom_diatom
 
 
 def _zero_field_J0_transform(
-    basis_bf: ticc.ChannelBasis,
-    basis_sf: ticc.ChannelBasisElectricSF,
+    basis_bf: ChannelBasis,
+    basis_sf: ChannelBasisElectricSF,
     electric_basis: ticc.DiatomElectricBasis,
-    rovib: ticc.RovibPODVR,
+    rovib: RovibBasis,
 ) -> NDArray[np.float64]:
     r"""
     Transform the zero-field Electric-SF basis to the regular J=0 BF basis.
@@ -38,11 +40,11 @@ def _zero_field_J0_transform(
         removes the arbitrary real-eigenvector sign.
 
     Inputs:
-        basis_bf: ticc.ChannelBasis - regular J=0 positive-parity BF channels
-        basis_sf: ticc.ChannelBasisElectricSF - zero-field M=0 Electric-SF
+        basis_bf: ChannelBasis - regular J=0 positive-parity BF channels
+        basis_sf: ChannelBasisElectricSF - zero-field M=0 Electric-SF
             channels
         electric_basis: ticc.DiatomElectricBasis - zero-field dressed HF basis
-        rovib: ticc.RovibPODVR - regular zero-field HF rovibrational basis
+        rovib: RovibBasis - regular zero-field HF rovibrational basis
 
     Returns:
         transform: NDArray[np.float64] - Electric-SF to regular BF transform,
@@ -61,7 +63,7 @@ def _zero_field_J0_transform(
             alpha = int(np.argmax(np.abs(overlaps)))
             radial_phase = float(np.sign(overlaps[alpha]))
             sf_index = next(
-                channel.index for channel in basis_sf if channel.alpha == alpha and channel.m == m and channel.l == j and channel.m_l == -m
+                index for index, channel in enumerate(basis_sf) if channel.alpha == alpha and channel.m == m and channel.l == j and channel.m_l == -m
             )
             transform[sf_index, bf_index] = (-1.0) ** j * radial_phase * clebsch_gordan(j, m, j, -m, 0)
     return transform
@@ -97,23 +99,24 @@ def main() -> None:
         workdir=pes_dir,
         processes=4,
     )
-    if pes.monomer_Y is None:
-        raise RuntimeError("ArHF PES does not provide the HF monomer potential")
 
     mass_Ar, mass_H, mass_F = ticc.element_masses_au("Ar", "H", "F")
     mass_HF = ticc.reduced_mass(mass_H, mass_F)
     mass_ArHF = ticc.reduced_mass(mass_Ar, mass_H + mass_F)
-    dvr = ticc.build_SineDVR(1.5, 4.5, 100, mass_HF, pes.monomer_Y)
-    rovib = ticc.build_RovibPODVR(dvr, n_podvr=5, vmax=0, jmax=1, mass=mass_HF)
-    diatom = ticc.DiatomBasis(
-        rovib=rovib,
-        energy_zero=float(rovib.E_vj[0, 0]),
+    diatom = ticc.prepare_Diatom(
+        pes.monomer_Y,
+        r=(1.5, 4.5),
+        n_dvr=100,
+        n_podvr=5,
         vmax=0,
         jmax=1,
+        mass=mass_HF,
     )
-    electric_basis = ticc.build_DiatomElectricBasis(
-        dvr,
+    electric_basis = ticc.prepare_DiatomElectric(
+        pes.monomer_Y,
         response_file,
+        r=(1.5, 4.5),
+        n_dvr=100,
         electric_strength=0.0,
         n_podvr=5,
         jmax=1,
@@ -125,35 +128,35 @@ def main() -> None:
     )
 
     regular = atom_diatom.build_hamiltonian(
-        ticc.ScattSystem(
+        ticc.build_ScattSystem(
             ticc.AtomSpec(),
             diatom,
             Jtot=0,
             system_parity=1,
+            channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
             potential=pes,
             reduced_mass=mass_ArHF,
         ),
-        trunc=ticc.TruncSpec(E_Y_cut=2000.0 * ticc.CM2AU),
         n_theta=35,
     )
     electric = atom_diatom.build_hamiltonian_electric_sf(
-        ticc.ScattSystem(
+        ticc.build_ScattSystem(
             ticc.AtomSpec(),
             electric_basis,
             M=0,
+            lmax=1,
+            channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
             potential=pes,
             reduced_mass=mass_ArHF,
         ),
-        lmax=1,
-        E_cut=2000.0 * ticc.CM2AU,
         n_theta_r=24,
         n_theta_R=24,
-        n_delta=24,
+        n_delta=48,
     )
-    if not isinstance(regular.basis, ticc.ChannelBasis) or not isinstance(electric.basis, ticc.ChannelBasisElectricSF):
+    if not isinstance(regular.basis, ChannelBasis) or not isinstance(electric.basis, ChannelBasisElectricSF):
         raise TypeError("Unexpected channel-basis representation")
 
-    transform = _zero_field_J0_transform(regular.basis, electric.basis, electric_basis, rovib)
+    transform = _zero_field_J0_transform(regular.basis, electric.basis, electric_basis, diatom.rovib)
     propagation = ticc.Propagation(
         boundaries=(4.5, 6.5, 8.0, 12.0),
         half_steps=(0.05, 0.05, 0.05),
@@ -168,7 +171,7 @@ def main() -> None:
     transform_open = (transform @ regular_result.asymptotic_transform)[electric_open]
     projected_Smat = transform_open.T @ electric_result.Smat[0] @ transform_open
     Smat_error = _max_abs(projected_Smat - regular_result.Smat[0])
-    tolerance = 1.2e-4
+    tolerance = 2.0e-5
     regular_open = regular_result.open_channel_indices[0]
     labels = tuple(
         f"(v={regular.basis[int(index)].mis_Y.v},j={regular.basis[int(index)].mis_Y.j},l={int(round(regular_result.L[int(index)]))})"

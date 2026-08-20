@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 import pyticc.pes.fortran.compiler as compiler_module
-from pyticc.pes import load_fortran_diabatic_pes, load_fortran_pes
+from pyticc.pes import load_fortran_diabatic_pes, load_fortran_pes, load_fortran_total_pes
 
 
 def test_load_fortran_pes_reports_missing_build_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -42,6 +42,16 @@ end subroutine pyticc_diabatic_interaction_grid
 
     with pytest.raises(ValueError, match="pyticc_diabatic_monomer_grid"):
         load_fortran_diabatic_pes([source], wrapper)
+
+
+def test_load_fortran_total_pes_requires_the_total_grid_routine(tmp_path: Path) -> None:
+    source = tmp_path / "pes.f90"
+    wrapper = tmp_path / "wrapper.f90"
+    source.write_text("subroutine unused\nend subroutine unused\n")
+    wrapper.write_text("subroutine pyticc_interaction_grid\nend subroutine pyticc_interaction_grid\n")
+
+    with pytest.raises(ValueError, match="pyticc_total_grid"):
+        load_fortran_total_pes([source], wrapper)
 
 
 def test_load_fortran_diabatic_pes_validates_state_count_before_sources() -> None:

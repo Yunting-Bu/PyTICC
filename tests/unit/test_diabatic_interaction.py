@@ -39,14 +39,11 @@ def _channels(n_state: int = 2) -> ChannelBasis:
             mis_Y=MolInnerState(v=0, j=j, electronic_state=state),
             j_couple=j,
             K=K,
-            Jtot=1,
-            system_parity=1,
             E_int=0.0,
-            index=index,
         )
-        for index, (state, j, K) in enumerate(quantum_numbers)
+        for state, j, K in quantum_numbers
     )
-    return ChannelBasis(channels)
+    return ChannelBasis(channels, Jtot=1, system_parity=1)
 
 
 def _constant_pes(matrix: NDArray[np.float64]) -> DiabaticPESWrapper:
@@ -84,8 +81,8 @@ def test_diabatic_interaction_contracts_diagonal_and_offdiagonal_blocks() -> Non
     potential = vmat.sample(pes, 5.0, V_basis)
     Vmat = vmat.contract(V_basis, potential)
 
-    radial_overlap_j0 = diabatic_basis.state(0).rovib_dvr.WF_vj[:, 0, 0] @ diabatic_basis.state(1).rovib_dvr.WF_vj[:, 0, 0]
-    radial_overlap_j1 = diabatic_basis.state(0).rovib_dvr.WF_vj[:, 0, 1] @ diabatic_basis.state(1).rovib_dvr.WF_vj[:, 0, 1]
+    radial_overlap_j0 = diabatic_basis.state(0).primitive.WF_vj[:, 0, 0] @ diabatic_basis.state(1).primitive.WF_vj[:, 0, 0]
+    radial_overlap_j1 = diabatic_basis.state(0).primitive.WF_vj[:, 0, 1] @ diabatic_basis.state(1).primitive.WF_vj[:, 0, 1]
     expected = np.diag([2.0, 3.0, 2.0, 3.0])
     expected[0, 1] = expected[1, 0] = coupling * radial_overlap_j0
     expected[2, 3] = expected[3, 2] = coupling * radial_overlap_j1
@@ -175,7 +172,7 @@ def test_one_state_diabatic_contraction_reduces_to_scalar_interaction() -> None:
     cos_theta, weights = roots_legendre(6)
     theta = np.arccos(cos_theta)
     new_basis = vmat.prepare(channels, diabatic_basis, cos_theta, weights)
-    old_basis = scalar_vmat.prepare(channels, diabatic_basis.state(0).rovib, cos_theta, weights)
+    old_basis = scalar_vmat.prepare(channels, diabatic_basis.state(0).contracted, cos_theta, weights)
 
     def monomer(r: NDArray[np.float64]) -> NDArray[np.float64]:
         return np.zeros((r.size, 1))
@@ -187,7 +184,7 @@ def test_one_state_diabatic_contraction_reduces_to_scalar_interaction() -> None:
     pes = DiabaticPESWrapper(n_state=1, monomer=monomer, interaction=interaction)
     potential = vmat.sample(pes, 5.0, new_basis)
     new_Vmat = vmat.contract(new_basis, potential)
-    r_grid = diabatic_basis.state(0).rovib.grids
+    r_grid = diabatic_basis.state(0).contracted.grids
     scalar_grid = 5.0 + 0.2 * r_grid[:, None] + np.cos(theta)[None, :]
     old_Vmat = contract_scalar(old_basis, scalar_grid)
 

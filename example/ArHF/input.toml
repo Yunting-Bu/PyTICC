@@ -19,15 +19,15 @@ processes = 4
 r = [1.5, 4.5]
 n_dvr = 100
 n_podvr = 5
-vmin = 0
 vmax = 3
 jmax = 20
-jpar = 0
 
 [quadrature]
 n_theta = 35
 
-[truncation]
+[channels]
+vmin_Y = 0
+exchange_parity_Y = 0
 E_Y_cut_cm = 200000.0
 K_cut = "none"
 

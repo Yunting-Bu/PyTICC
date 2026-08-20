@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 fortran = ["meson>=1.1", "ninja>=1.11"]
+examples = ["matplotlib>=3.8"]
 cuda12 = ["jax[cuda12]>=0.4.30; sys_platform == 'linux'"]
 cuda13 = ["jax[cuda13]>=0.4.30; sys_platform == 'linux'"]
 

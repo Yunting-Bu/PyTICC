@@ -6,18 +6,18 @@ import pyticc.matrix.interaction.diatom_diatom as diatom_diatom
 from pyticc.basis.angle import clebsch_gordan, gauss_legendre_dvr
 from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF, build_ChannelBasisElectricSF
 from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis, DiatomElectricBlock
-from pyticc.basis.podvr import RovibPODVR
+from pyticc.basis.rovib import RovibBasis
 from pyticc.matrix.interaction import contract
 from pyticc.pes import PESWrapper, get_Vgrid_atom_diatom_electric_sf
 from pyticc.system import MolInnerState
 
 
-def make_rovib(n_grid: int = 1, vmax: int = 0, jmax: int = 2) -> RovibPODVR:
+def make_rovib(n_grid: int = 1, vmax: int = 0, jmax: int = 2) -> RovibBasis:
     grids = np.arange(1, n_grid + 1, dtype=np.float64)
     WF_vj = np.ones((n_grid, vmax + 1, jmax + 1), dtype=np.float64)
     if n_grid > 1:
         WF_vj[:, 0, :] = np.eye(n_grid)[:, 0, None]
-    return RovibPODVR(grids=grids, E_vj=np.zeros((vmax + 1, jmax + 1)), WF_vj=WF_vj)
+    return RovibBasis(grids=grids, E_vj=np.zeros((vmax + 1, jmax + 1)), WF_vj=WF_vj)
 
 
 def make_atom_diatom_basis() -> ChannelBasis:
@@ -28,14 +28,11 @@ def make_atom_diatom_basis() -> ChannelBasis:
             mis_Y=MolInnerState(v=0, j=j),
             j_couple=j,
             K=K,
-            Jtot=1,
-            system_parity=1,
             E_int=0.0,
-            index=index,
         )
-        for index, (j, K) in enumerate(quantum_numbers)
+        for j, K in quantum_numbers
     )
-    return ChannelBasis(channels)
+    return ChannelBasis(channels, Jtot=1, system_parity=1)
 
 
 def make_diatom_diatom_basis() -> ChannelBasis:
@@ -51,14 +48,11 @@ def make_diatom_diatom_basis() -> ChannelBasis:
             mis_Y=MolInnerState(v=0, j=j_Y),
             j_couple=j_couple,
             K=K,
-            Jtot=2,
-            system_parity=1,
             E_int=0.0,
-            index=index,
         )
-        for index, (j_X, j_Y, j_couple, K) in enumerate(quantum_numbers)
+        for j_X, j_Y, j_couple, K in quantum_numbers
     )
-    return ChannelBasis(channels)
+    return ChannelBasis(channels, Jtot=2, system_parity=1)
 
 
 def make_electric_monomer_basis() -> DiatomElectricBasis:

@@ -2,8 +2,8 @@ from pathlib import Path
 
 import numpy as np
 
-from pyticc import AU2CM, build_SineDVR, element_masses_au, reduced_mass
-from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis, build_DiatomElectricBasis
+from pyticc import AU2CM, element_masses_au, prepare_DiatomElectric, reduced_mass
+from pyticc.basis.monomer import DiatomElectricBasis
 
 ELECTRIC_STRENGTH = 1.0e-3
 REFERENCE_M0_CM = np.array([0.0, 135.557, 238.545, 348.192, 505.735])
@@ -59,17 +59,11 @@ def main() -> None:
     _, mass_H, mass_F = element_masses_au("Ar", "H", "F")
     reduced_mass_HF = reduced_mass(mass_H, mass_F)
 
-    dvr_HF = build_SineDVR(
-        a=0.75,
-        b=6.55,
+    electric_HF = prepare_DiatomElectric(
+        _peshf_reference,
+        pes_dir / "HF_ele.csv",
+        r=(0.75, 6.55),
         n_dvr=50,
-        mass=reduced_mass_HF,
-        pot_func=_peshf_reference,
-    )
-
-    electric_HF = build_DiatomElectricBasis(
-        dvr=dvr_HF,
-        response=pes_dir / "HF_ele.csv",
         electric_strength=ELECTRIC_STRENGTH,
         n_podvr=5,
         jmax=25,

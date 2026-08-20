@@ -21,26 +21,26 @@ processes = 4
 r = [0.4, 3.5]
 n_dvr = 99
 n_podvr = 5
-vmin = 0
 vmax = 0
 jmax = 2
-jpar = 1
 
 [basis_Y]
 r = [0.7, 4.7]
 n_dvr = 99
 n_podvr = 3
-vmin = 0
 vmax = 0
 jmax = 2
-jpar = 0
 
 [quadrature]
 n_theta_X = 10
 n_theta_Y = 10
 n_phi = 10
 
-[truncation]
+[channels]
+vmin_X = 0
+vmin_Y = 0
+exchange_parity_X = 1
+exchange_parity_Y = 0
 E_X_cut_cm = 1000.0
 E_Y_cut_cm = 1000.0
 K_cut = "none"

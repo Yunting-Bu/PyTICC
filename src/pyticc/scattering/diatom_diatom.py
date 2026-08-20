@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 
 import pyticc.matrix.interaction.diatom_diatom as vmat
 from pyticc.basis.angle import gauss_legendre_dvr
-from pyticc.basis.channel import ChannelBuilder, TruncSpec
+from pyticc.basis.channel import ChannelBasis
 from pyticc.basis.monomer import DiatomBasis
 from pyticc.matrix.interaction import contract
 from pyticc.pes.adiabatic import PESWrapper, get_Vgrid_diatom_diatom
@@ -19,7 +19,6 @@ from pyticc.system import ScattSystem
 def build_hamiltonian(
     system: ScattSystem,
     *,
-    trunc: TruncSpec | None = None,
     n_theta_X: int = 15,
     n_theta_Y: int = 15,
     n_phi: int = 12,
@@ -33,11 +32,19 @@ def build_hamiltonian(
         message = "Diatom-diatom Hamiltonian requires a PESWrapper"
         logger.error(message)
         raise TypeError(message)
+    if system.reduced_mass is None:
+        message = "Diatom-diatom Hamiltonian requires a collision reduced mass"
+        logger.error(message)
+        raise ValueError(message)
+    if not isinstance(system.basis, ChannelBasis):
+        message = "Diatom-diatom Hamiltonian requires channels prepared by build_ScattSystem"
+        logger.error(message)
+        raise TypeError(message)
 
     pes = system.potential
     rovib_X = system.monomer_X.rovib
     rovib_Y = system.monomer_Y.rovib
-    basis = ChannelBuilder(system, TruncSpec() if trunc is None else trunc).build()
+    basis = system.basis
     cos_theta_X, theta_weights_X = gauss_legendre_dvr(-1.0, 1.0, n_theta_X)
     cos_theta_Y, theta_weights_Y = gauss_legendre_dvr(-1.0, 1.0, n_theta_Y)
     phi, phi_weights = gauss_legendre_dvr(0.0, np.pi, n_phi)
@@ -72,9 +79,11 @@ def build_hamiltonian(
         return tuple(contract(V_basis, potential_grid, indices) for indices in channel_blocks)
 
     return ScattHamiltonian(
-        system=system,
         basis=basis,
+        reduced_mass=system.reduced_mass,
         interaction=Vmat,
+        approx=system.approx,
+        K_delta=system.K_delta,
         block_interaction=V_blocks,
         potential_grid_size=prod(V_basis.grid_shape),
     )

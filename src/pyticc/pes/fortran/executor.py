@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 
 from pyticc.pes.adiabatic import MonomerPES, PESWrapper
 from pyticc.pes.diabatic import DiabaticPESWrapper
+from pyticc.pes.total import TotalPES
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,34 @@ def create_diabatic_pes_wrapper(
         interaction_many=interaction_many,
         _close=executor.close,
     )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def create_total_pes(module_name: str, extension: Path, workdir: Path | None) -> TotalPES:
+    """
+    Load a compiled extension and expose its scalar total potential.
+
+    Inputs:
+        module_name: str - Python name embedded in the compiled extension
+        extension: Path - platform-specific compiled extension path
+        workdir: Path | None - directory containing PES runtime data files
+
+    Returns:
+        pes: TotalPES - total PES accepting ``(r_AB,r_BC,r_CA)`` bond arrays
+            in bohr and returning energies in Hartree
+    """
+    module = _load_module(module_name, extension)
+    routine: Callable[..., object] = module.pyticc_total_grid
+
+    def potential(bonds: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Evaluate bonds with shape ``(3,n_grid)``, returning shape ``(n_grid,)``."""
+        with _in_workdir(workdir):
+            return np.asarray(routine(np.asfortranarray(bonds)), dtype=np.float64)
+
+    return TotalPES(potential=potential)
 
 
 # ----------------------------------------------------------------------------------------

@@ -1,12 +1,12 @@
 from pyticc.system import MolInnerState, MonomerType
 
 
+# Structureless atom
 # ----------------------------------------------------------------------------------------
 class AtomSpec:
     """Structureless atomic monomer with one zero-energy internal state."""
 
     type = MonomerType.ATOM
-    jpar: int = 0
 
     def mis_iter(self, E_cut: float):
         """Yield the atom's only internal state."""

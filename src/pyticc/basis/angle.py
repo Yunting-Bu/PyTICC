@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Any, overload
 
 import numpy as np
 from loguru import logger
@@ -54,6 +55,14 @@ def gauss_legendre_dvr(lower: float, upper: float, n_points: int, symmetry: bool
 
 
 # --------------------------------------------------------------------------------
+@overload
+def norm_YjK(j: int, K: int, x: float) -> float: ...
+
+
+@overload
+def norm_YjK(j: int, K: int, x: NDArray[Any]) -> NDArray[np.float64]: ...
+
+
 def norm_YjK(j: int, K: int, x: float | NDArray[np.float64]) -> float | NDArray[np.float64]:
     r"""
     Get the normalization factor for the associated Legendre polynomial Y_{jK}(x).

@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import pyticc as ticc
+from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 
 
 def test_run_reads_compact_atom_diatom_input(tmp_path: Path) -> None:
@@ -25,15 +26,15 @@ method = "cs"
 r = [1.5, 4.5]
 n_dvr = 20
 n_podvr = 1
-vmin = 0
 vmax = 0
 jmax = 1
-jpar = 0
 
 [quadrature]
 n_theta = 4
 
-[truncation]
+[channels]
+vmin_Y = 0
+exchange_parity_Y = 0
 E_Y_cut_cm = 1000.0
 K_cut = "none"
 
@@ -102,7 +103,7 @@ n_theta_R = 3
 n_delta = 4
 delta_symmetry = true
 
-[truncation]
+[channels]
 E_Y_cut_cm = 1000.0
 
 [propagation]
@@ -120,7 +121,7 @@ mode = "inelastic"
     result = ticc.run(input_file, pes=pes)
 
     assert isinstance(result, ticc.ScatteringResult)
-    assert isinstance(result.basis, ticc.ChannelBasisElectricSF)
+    assert isinstance(result.basis, ChannelBasisElectricSF)
     assert result.basis.M == 0
     assert result.basis.n_channel == 1
     np.testing.assert_allclose(result.Etot * ticc.AU2CM, [300.0])
@@ -165,15 +166,15 @@ method = "exact"
 r = [1.2, 5.0]
 n_dvr = 20
 n_podvr = [1, 1]
-vmin = [0, 0]
 vmax = [0, 0]
 jmax = [0, 0]
-jpar = [1, 1]
 
 [quadrature]
 n_theta = 3
 
-[truncation]
+[channels]
+vmin_Y = [0, 0]
+exchange_parity_Y = [1, 1]
 E_Y_cut_cm = 1000.0
 K_cut = "none"
 
@@ -197,7 +198,7 @@ mode = "inelastic"
     )
 
     assert isinstance(result, ticc.ScatteringResult)
-    assert isinstance(result.basis, ticc.ChannelBasis)
+    assert isinstance(result.basis, ChannelBasis)
     assert result.basis.n_channel == 2
     assert {channel.mis_Y.electronic_state for channel in result.basis} == {0, 1}
     np.testing.assert_allclose(result.Etot * ticc.AU2CM, [100.0])
@@ -223,26 +224,26 @@ K_delta = 1
 r = [0.4, 3.5]
 n_dvr = 20
 n_podvr = 1
-vmin = 0
 vmax = 0
 jmax = 0
-jpar = 1
 
 [basis_Y]
 r = [0.7, 4.7]
 n_dvr = 20
 n_podvr = 1
-vmin = 0
 vmax = 0
 jmax = 0
-jpar = 0
 
 [quadrature]
 n_theta_X = 3
 n_theta_Y = 3
 n_phi = 4
 
-[truncation]
+[channels]
+vmin_X = 0
+vmin_Y = 0
+exchange_parity_X = 1
+exchange_parity_Y = 0
 E_X_cut_cm = 1000.0
 E_Y_cut_cm = 1000.0
 K_cut = "none"

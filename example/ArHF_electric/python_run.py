@@ -21,22 +21,15 @@ def main() -> None:
         workdir=pes_dir,
         processes=4,
     )
-    if pes.monomer_Y is None:
-        raise RuntimeError("ArHF PES does not provide the HF monomer potential")
 
     mass_Ar, mass_H, mass_F = ticc.element_masses_au("Ar", "H", "F")
     mass_HF = ticc.reduced_mass(mass_H, mass_F)
     mass_ArHF = ticc.reduced_mass(mass_Ar, mass_H + mass_F)
-    dvr_HF = ticc.build_SineDVR(
-        a=1.5,
-        b=4.5,
+    electric_HF = ticc.prepare_DiatomElectric(
+        pes.monomer_Y,
+        response_file,
+        r=(1.5, 4.5),
         n_dvr=100,
-        mass=mass_HF,
-        pot_func=pes.monomer_Y,
-    )
-    electric_HF = ticc.build_DiatomElectricBasis(
-        dvr=dvr_HF,
-        response=response_file,
         electric_strength=ELECTRIC_STRENGTH,
         n_podvr=5,
         jmax=8,
@@ -46,17 +39,17 @@ def main() -> None:
         mass=mass_HF,
     )
 
-    system = ticc.ScattSystem(
+    system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         electric_HF,
         M=M,
+        lmax=LMAX,
+        channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
         potential=pes,
         reduced_mass=mass_ArHF,
     )
     hamiltonian = atom_diatom.build_hamiltonian_electric_sf(
         system,
-        lmax=LMAX,
-        E_cut=2000.0 * ticc.CM2AU,
         n_theta_r=16,
         n_theta_R=16,
         n_delta=16,

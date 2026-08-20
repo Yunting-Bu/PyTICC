@@ -12,7 +12,7 @@ from numpy.typing import NDArray
 from pyticc.basis.angle import norm_YjK
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis, diatom_electric_amplitude
-from pyticc.basis.podvr import RovibPODVR
+from pyticc.basis.rovib import RovibBasis
 from pyticc.matrix.interaction import VBasisBF
 
 
@@ -146,7 +146,7 @@ def build_AtomDiatomVBasisElectricSF(
     B_cos = np.empty((basis.n_channel, n_grid), dtype=np.float64)
     B_sin = np.empty_like(B_cos)
 
-    for channel in basis:
+    for channel_index, channel in enumerate(basis):
         block = monomer_basis.block(channel.m)
 
         if channel.m not in amplitudes:
@@ -162,8 +162,8 @@ def build_AtomDiatomVBasisElectricSF(
 
         radial_angular = amplitudes[channel.m][channel.alpha, :, :, None, None] * angular_R[angular_key][None, None, :, None]
         phase_cos, phase_sin = azimuthal[channel.m]
-        B_cos[channel.index] = (radial_angular * phase_cos[None, None, None, :]).reshape(-1)
-        B_sin[channel.index] = (radial_angular * phase_sin[None, None, None, :]).reshape(-1)
+        B_cos[channel_index] = (radial_angular * phase_cos[None, None, None, :]).reshape(-1)
+        B_sin[channel_index] = (radial_angular * phase_sin[None, None, None, :]).reshape(-1)
 
     sin_theta_r = np.sqrt(np.clip(1.0 - x_r**2, 0.0, None))
     sin_theta_R = np.sqrt(np.clip(1.0 - x_R**2, 0.0, None))
@@ -253,7 +253,7 @@ def contract_electric_sf(
 # ----------------------------------------------------------------------------------------
 def prepare(
     basis: ChannelBasis,
-    rovib: RovibPODVR,
+    rovib: RovibBasis,
     cos_theta: NDArray[np.float64],
     theta_weights: NDArray[np.float64],
 ) -> VBasisBF:

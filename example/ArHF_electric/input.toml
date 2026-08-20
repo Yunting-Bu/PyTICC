@@ -29,7 +29,7 @@ n_theta_R = 16
 n_delta = 16
 delta_symmetry = true
 
-[truncation]
+[channels]
 E_Y_cut_cm = 2000.0
 
 [propagation]

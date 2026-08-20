@@ -6,9 +6,8 @@ from numpy.typing import NDArray
 
 import pyticc.matrix.interaction.diabatic_atom_diatom as vmat
 from pyticc.basis.angle import gauss_legendre_dvr
-from pyticc.basis.channel import ChannelBuilder, TruncSpec
-from pyticc.basis.monomer.atom import AtomSpec
-from pyticc.basis.monomer.diabatic import DiabaticDiatomBasis
+from pyticc.basis.channel import ChannelBasis
+from pyticc.basis.monomer import AtomSpec, DiabaticDiatomBasis
 from pyticc.pes.diabatic import DiabaticPESWrapper
 from pyticc.scattering.hamiltonian import ScattHamiltonian
 from pyticc.system import Approx, ScattSystem
@@ -17,7 +16,6 @@ from pyticc.system import Approx, ScattSystem
 def build_hamiltonian(
     system: ScattSystem,
     *,
-    trunc: TruncSpec | None = None,
     n_theta: int = 16,
 ) -> ScattHamiltonian:
     """Build a diabatic atom-diatom scattering Hamiltonian."""
@@ -33,6 +31,14 @@ def build_hamiltonian(
         message = "Diabatic atom-diatom Hamiltonian currently requires approx='exact'"
         logger.error(message)
         raise ValueError(message)
+    if system.reduced_mass is None:
+        message = "Diabatic atom-diatom Hamiltonian requires a collision reduced mass"
+        logger.error(message)
+        raise ValueError(message)
+    if not isinstance(system.basis, ChannelBasis):
+        message = "Diabatic atom-diatom Hamiltonian requires channels prepared by build_ScattSystem"
+        logger.error(message)
+        raise TypeError(message)
 
     diatom = system.monomer_Y
     pes = system.potential
@@ -45,8 +51,10 @@ def build_hamiltonian(
         logger.error(message)
         raise ValueError(message)
 
-    basis = ChannelBuilder(system, TruncSpec() if trunc is None else trunc).build()
-    angular_symmetry = all(jpar != 0 for jpar in diatom.rotational_parities)
+    basis = system.basis
+    exchange_parity = basis.channel_spec.exchange_parity_Y
+    exchange_parities = (exchange_parity,) if isinstance(exchange_parity, int) else exchange_parity
+    angular_symmetry = all(parity != 0 for parity in exchange_parities)
     cos_theta, theta_weights = gauss_legendre_dvr(-1.0, 1.0, n_theta, symmetry=angular_symmetry)
     V_basis = vmat.prepare(basis, diatom, cos_theta, theta_weights)
 
@@ -57,8 +65,8 @@ def build_hamiltonian(
 
     potential_grid_size = V_basis.theta.size * (sum(grid.size for grid in V_basis.diagonal_grids) + V_basis.coupling_grid.size) * diatom.n_state**2
     return ScattHamiltonian(
-        system=system,
         basis=basis,
+        reduced_mass=system.reduced_mass,
         interaction=Vmat,
         potential_grid_size=potential_grid_size,
     )

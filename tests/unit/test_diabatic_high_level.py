@@ -4,10 +4,11 @@ from numpy.typing import NDArray
 from scipy.special import roots_legendre
 
 import pyticc as ticc
+from pyticc.basis.channel import ChannelBasis
 from pyticc.scattering import diabatic_atom_diatom
 
 
-def _diabatic_basis(jpar: int | tuple[int, int] = 0) -> ticc.DiabaticDiatomBasis:
+def _diabatic_basis() -> ticc.DiabaticDiatomBasis:
     def monomer(offset: float):
         def potential(r: NDArray[np.float64]) -> NDArray[np.float64]:
             return 0.03 * (r - 2.0) ** 2 + offset
@@ -18,7 +19,7 @@ def _diabatic_basis(jpar: int | tuple[int, int] = 0) -> ticc.DiabaticDiatomBasis
         ticc.build_SineDVR(1.0, 4.0, 24, 900.0, monomer(0.0)),
         ticc.build_SineDVR(1.0, 4.0, 24, 900.0, monomer(0.01)),
     )
-    return ticc.build_DiabaticDiatomBasis(dvrs, n_podvr=6, vmax=0, jmax=0, mass=900.0, jpar=jpar)
+    return ticc.build_DiabaticDiatomBasis(dvrs, n_podvr=6, vmax=0, jmax=0, mass=900.0)
 
 
 def _pes(coupling: float, n_state: int = 2) -> ticc.DiabaticPESWrapper:
@@ -40,12 +41,14 @@ def _solve(
     *,
     n_theta: int = 6,
     propagation: ticc.Propagation | None = None,
+    channel: ticc.ChannelSpec | None = None,
 ) -> ticc.ScatteringResult:
-    system = ticc.ScattSystem(
+    system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
         Jtot=0,
         system_parity=1,
+        channel=channel,
         potential=pes,
         reduced_mass=1000.0,
     )
@@ -59,7 +62,7 @@ def _solve(
 def test_solve_diabatic_atom_diatom_returns_unitary_coupled_state_smatrix() -> None:
     result = _solve(_diabatic_basis(), _pes(0.02))
 
-    assert isinstance(result.basis, ticc.ChannelBasis)
+    assert isinstance(result.basis, ChannelBasis)
     assert result.basis.n_channel == 2
     assert {channel.mis_Y.electronic_state for channel in result.basis} == {0, 1}
     assert result.Y_propagated.shape == (1, 2, 2)
@@ -85,10 +88,11 @@ def test_solve_diabatic_atom_diatom_uses_half_angle_rule_when_all_states_have_ex
         return np.zeros((coordinates.shape[1], 2, 2))
 
     _solve(
-        _diabatic_basis(jpar=(1, 1)),
+        _diabatic_basis(),
         ticc.DiabaticPESWrapper(n_state=2, monomer=monomer, interaction=interaction),
         n_theta=3,
         propagation=ticc.Propagation((3.0, 3.2), (0.1,)),
+        channel=ticc.ChannelSpec(exchange_parity_Y=(1, 1)),
     )
 
     full_cos_theta, _ = roots_legendre(6)
@@ -98,7 +102,7 @@ def test_solve_diabatic_atom_diatom_uses_half_angle_rule_when_all_states_have_ex
 
 def test_build_diabatic_atom_diatom_validates_electronic_state_count() -> None:
     with pytest.raises(ValueError, match="electronic states"):
-        system = ticc.ScattSystem(
+        system = ticc.build_ScattSystem(
             ticc.AtomSpec(),
             _diabatic_basis(),
             Jtot=0,

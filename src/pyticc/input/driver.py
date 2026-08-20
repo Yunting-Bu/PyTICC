@@ -1,5 +1,4 @@
 import tomllib
-from dataclasses import replace
 from pathlib import Path
 from time import perf_counter, process_time
 
@@ -81,9 +80,9 @@ def run(source: str | Path, *, pes: PESWrapper | DiabaticPESWrapper | None = Non
         logger.error(message)
         raise ValueError(message)
 
-    timing = Timing(wall_seconds=perf_counter() - wall_start, cpu_seconds=process_time() - cpu_start)
-    logger.info(f"Calculation complete: {timing}")
-    return replace(result, timing=timing)
+    total_timing = Timing(wall_seconds=perf_counter() - wall_start, cpu_seconds=process_time() - cpu_start)
+    logger.info(f"Calculation complete: total {total_timing}")
+    return result
 
 
 # ----------------------------------------------------------------------------------------

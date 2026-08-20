@@ -5,8 +5,7 @@ import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
-from pyticc.basis.dvr import build_SineDVR
-from pyticc.basis.monomer import DiatomBasis, build_DiatomBasis
+from pyticc.basis.monomer import DiatomBasis, prepare_Diatom
 from pyticc.constants import CM2AU
 from pyticc.energy import EnergyInput, get_Etot
 from pyticc.pes.adiabatic import MonomerPES
@@ -170,15 +169,14 @@ def build_diatom(symbols: tuple[str, str], values: TomlTable, potential: Monomer
     mass = reduced_mass(mass_1, mass_2)
     vmax = int(required(values, "vmax"))
     jmax = int(required(values, "jmax"))
-    dvr = build_SineDVR(interval[0], interval[1], int(required(values, "n_dvr")), mass, potential)
-    basis = build_DiatomBasis(
-        dvr,
+    basis = prepare_Diatom(
+        potential,
+        r=(interval[0], interval[1]),
+        n_dvr=int(required(values, "n_dvr")),
         n_podvr=int(required(values, "n_podvr")),
         vmax=vmax,
         jmax=jmax,
         mass=mass,
-        vmin=int(values.get("vmin", 0)),
-        jpar=int(values.get("jpar", 0)),
     )
     return basis, total_mass
 

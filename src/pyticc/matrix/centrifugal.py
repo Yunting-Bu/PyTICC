@@ -56,7 +56,7 @@ def get_Umat_BF(
         K_to_index = groups.setdefault(_centrifugal_key(channel), {})
         K_to_index[channel.K] = local_index
 
-        Umat[local_index, local_index] = channel.Jtot * (channel.Jtot + 1) + channel.j_couple * (channel.j_couple + 1) - 2 * channel.K**2
+        Umat[local_index, local_index] = basis.Jtot * (basis.Jtot + 1) + channel.j_couple * (channel.j_couple + 1) - 2 * channel.K**2
 
     if not coriolis:
         return Umat
@@ -69,7 +69,7 @@ def get_Umat_BF(
 
             channel = channels[local_index]
             boundary_factor = np.sqrt(2.0) if K == 0 else 1.0
-            coupling = -boundary_factor * lambda_plus(channel.Jtot, K) * lambda_plus(channel.j_couple, K)
+            coupling = -boundary_factor * lambda_plus(basis.Jtot, K) * lambda_plus(channel.j_couple, K)
             Umat[local_index, next_index] = coupling
             Umat[next_index, local_index] = coupling
 

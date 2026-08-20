@@ -4,7 +4,7 @@ from scipy.special import roots_legendre
 
 import pyticc.basis.monomer.diatom_electric as electric_module
 from pyticc.basis.dvr import build_SineDVR
-from pyticc.basis.monomer import build_DiatomElectricBasis, diatom_electric_amplitude, required_m_values
+from pyticc.basis.monomer import build_DiatomElectricBasis, diatom_electric_amplitude, prepare_DiatomElectric, required_m_values
 from pyticc.basis.podvr import build_RovibPODVR
 from pyticc.electric import ElectricResponseTable
 
@@ -32,13 +32,67 @@ def _nonzero_response() -> ElectricResponseTable:
     )
 
 
+def _potential(r: np.ndarray) -> np.ndarray:
+    return 0.03 * (r - 1.8) ** 2
+
+
 def _dvr():
-    return build_SineDVR(0.8, 3.2, 40, 1000.0, lambda r: 0.03 * (r - 1.8) ** 2)
+    return build_SineDVR(0.8, 3.2, 40, 1000.0, _potential)
 
 
 def test_required_m_values_are_derived_from_M_lmax_and_jmax() -> None:
     assert required_m_values(M=2, lmax=3, jmax=4) == (-1, 0, 1, 2, 3, 4)
     assert required_m_values(M=-3, lmax=1, jmax=5) == (-4, -3, -2)
+
+
+def test_prepare_electric_diatom_combines_dvr_and_podvr_steps() -> None:
+    response = _nonzero_response()
+    direct = build_DiatomElectricBasis(
+        _dvr(),
+        response,
+        electric_strength=0.02,
+        n_podvr=8,
+        jmax=2,
+        M=0,
+        lmax=1,
+        n_alpha=5,
+        mass=1000.0,
+    )
+    prepared = prepare_DiatomElectric(
+        _potential,
+        response,
+        r=(0.8, 3.2),
+        n_dvr=40,
+        n_podvr=8,
+        electric_strength=0.02,
+        jmax=2,
+        M=0,
+        lmax=1,
+        n_alpha=5,
+        mass=1000.0,
+    )
+
+    np.testing.assert_allclose(prepared.grids, direct.grids, atol=0.0)
+    for prepared_block, direct_block in zip(prepared.blocks, direct.blocks, strict=True):
+        np.testing.assert_allclose(prepared_block.energies, direct_block.energies, atol=0.0)
+        np.testing.assert_allclose(prepared_block.coefficients, direct_block.coefficients, atol=0.0)
+
+
+def test_prepare_electric_diatom_reports_missing_monomer_potential() -> None:
+    with pytest.raises(ValueError, match="requires a monomer potential"):
+        prepare_DiatomElectric(
+            None,
+            _zero_response(),
+            r=(0.8, 3.2),
+            n_dvr=40,
+            n_podvr=8,
+            electric_strength=0.02,
+            jmax=2,
+            M=0,
+            lmax=1,
+            n_alpha=5,
+            mass=1000.0,
+        )
 
 
 def test_zero_field_basis_recovers_field_free_podvr_spectrum() -> None:

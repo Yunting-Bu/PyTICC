@@ -1,0 +1,61 @@
+
+#Intervals of DVR grids along r direction in bohr (x0_r,xe_r):                     
+ 0.5d0   6.0d0                                                                  
+                                                                                   
+#Intervals of propagation grids along RR direction in bohr (x0_RR,xe_RR):          
+3.5d0    30.0d0
+                                                                                   
+#The step length h of three sections respectively along RR in bohr (h1,h2,h3):     
+0.015  0.04  0.06
+                                                                                   
+#The end point of three sectionis along RR in bohr (x1_RR,x2_RR):                  
+ 8.d0  13.d0                                                                      
+                                                                                   
+#Systematic energy in cm (EE): Ref: (v=0,j=0 is 0 energy)                          
+1                                                                             
+                                                                                   
+#Basis internal energy truncation in cm (eemax):(v=0,j=0 is 0 energy)              
+ 10000000.d0                                                                          
+                                                                                   
+#The maxium quantum number of v, j (vmin, vmax, jmax):                                   
+0   0    5
+                                                                                   
+#The truncated K value (Kmax). It is of no use in CS approximation:                
+ 100000                                                                               
+                                                                                   
+#NNK
+10000
+
+# number of r-DVR and r-PODVR grids(Ndvr,Npodvr)
+100  6
+
+# number of theta grids(Nth)
+45
+
+# quantum number of initial states (vt, jt)
+0  1 
+
+# number of final states (nFinStat)
+4
+
+#Total angular momentum (Jtot):                                                    
+0
+                                                                                   
+#Total parity (tpar):+1 or -1                                                      
+1
+                                                                                   
+#AB rotational parity (jpar): (jpar=1 for para-H2; jpar=-1 for ortho-H2; jpar=0 for
+ 0                                                                                 
+                                                                                   
+#Number of implement processor (tot_thread):                                       
+ 24                                                                                
+
+# is Int_L (isINT)
+.false.
+
+# list of final states (vpt, jpt)
+0  0 
+0  2 
+0  3 
+0  4
+

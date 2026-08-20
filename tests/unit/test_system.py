@@ -15,6 +15,8 @@ def test_element_masses_au_preserves_symbol_order() -> None:
 
 def test_element_mass_au_converts_from_amu_to_atomic_units() -> None:
     assert ticc.element_mass_au("H") == pytest.approx(1.00782503223 * 1822.888486209)
+    assert ticc.element_mass_au("K") == pytest.approx(39.963998166 * 1822.888486209)
+    assert ticc.element_mass_au("Rb") == pytest.approx(86.909180531 * 1822.888486209)
 
 
 def test_element_masses_au_reuses_symbol_validation() -> None:

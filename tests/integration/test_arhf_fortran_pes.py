@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import pyticc.pes.fortran.compiler as compiler_module
-from pyticc.pes import get_Vgrid_atom_diatom, load_fortran_pes
+from pyticc.pes import get_Vgrid_atom_diatom, load_fortran_pes, load_fortran_total_pes
 
 ARHF_SOURCE = """
 subroutine arhf_point(RR, r, theta_degree, V)
@@ -84,6 +84,30 @@ subroutine pyticc_interaction_grid(RR, coordinates, V, n_coordinate, n_grid)
 end subroutine pyticc_interaction_grid
 """
 
+TOTAL_SOURCE = """
+subroutine total_point(r_ab, r_bc, r_ca, V)
+    implicit none
+    real(8), intent(in) :: r_ab, r_bc, r_ca
+    real(8), intent(out) :: V
+
+    V = r_ab + 2.0d0 * r_bc + 3.0d0 * r_ca
+end subroutine total_point
+"""
+
+TOTAL_WRAPPER = """
+subroutine pyticc_total_grid(bonds, V, n_grid)
+    implicit none
+    integer, intent(in) :: n_grid
+    real(8), intent(in) :: bonds(3, n_grid)
+    real(8), intent(out) :: V(n_grid)
+    integer :: i
+
+    do i = 1, n_grid
+        call total_point(bonds(1, i), bonds(2, i), bonds(3, i), V(i))
+    end do
+end subroutine pyticc_total_grid
+"""
+
 
 @pytest.mark.skipif(not all(compiler_module._build_tools()), reason="Fortran f2py/Meson toolchain is unavailable")
 def test_ArHF_fortran_wrapper_compiles_and_evaluates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -145,3 +169,19 @@ def test_fortran_pes_links_and_executes_lapack(tmp_path: Path, monkeypatch: pyte
     build_log = next(cache.glob("pyticc_pes_*/build.log")).read_text()
     assert "lapack=true" in build_log
     assert "dependencies=lapack" in build_log
+
+
+@pytest.mark.skipif(not all(compiler_module._build_tools()), reason="Fortran f2py/Meson toolchain is unavailable")
+def test_fortran_total_pes_compiles_and_evaluates_three_bonds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "total_pes.f90"
+    wrapper = tmp_path / "pyticc_wrapper.f90"
+    source.write_text(TOTAL_SOURCE)
+    wrapper.write_text(TOTAL_WRAPPER)
+    monkeypatch.setenv("PYTICC_CACHE_DIR", str(tmp_path / "cache"))
+    pes = load_fortran_total_pes([source], wrapper)
+    bonds = np.array([[1.0, 1.1], [2.0, 2.1], [3.0, 3.1]])
+
+    values = pes(bonds)
+
+    np.testing.assert_allclose(values, bonds[0] + 2.0 * bonds[1] + 3.0 * bonds[2])
+    pes.close()

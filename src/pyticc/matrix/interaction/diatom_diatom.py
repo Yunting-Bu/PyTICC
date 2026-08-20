@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 
 from pyticc.basis.angle import clebsch_gordan, norm_YjK
 from pyticc.basis.channel import ChannelBasis
-from pyticc.basis.podvr import RovibPODVR
+from pyticc.basis.rovib import RovibBasis
 from pyticc.matrix.interaction import VBasisBF
 
 
@@ -46,8 +46,8 @@ def _angular(
 
 def prepare(
     basis: ChannelBasis,
-    rovib_X: RovibPODVR,
-    rovib_Y: RovibPODVR,
+    rovib_X: RovibBasis,
+    rovib_Y: RovibBasis,
     cos_theta_X: NDArray[np.float64],
     theta_weights_X: NDArray[np.float64],
     cos_theta_Y: NDArray[np.float64],

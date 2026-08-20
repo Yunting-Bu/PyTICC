@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -10,12 +11,12 @@ from pyticc.pes import (
     load_fortran_diabatic_pes,
 )
 
-PES_DIR = Path(__file__).parents[2] / "example" / "dia_HO2" / "pes"
+PES_DIR = Path(__file__).parents[2] / "example" / "HO2_diabatic" / "pes"
 HAS_FORTRAN_TOOLCHAIN = all(compiler_module._build_tools())
 
 
 @pytest.fixture(scope="module")
-def ho2_pes() -> DiabaticPESWrapper:
+def ho2_pes() -> Iterator[DiabaticPESWrapper]:
     pes = load_fortran_diabatic_pes(
         [PES_DIR / "ho2-dpme.f", PES_DIR / "long_range_H_O2.f"],
         PES_DIR / "pyticc_wrapper.f90",
