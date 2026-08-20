@@ -381,7 +381,8 @@ def build_ScattSystem(
     )
 
     if isinstance(monomer_X, DelvesMonomer):
-        from pyticc.basis.delves import build_delves_channels, build_delves_diatom_basis
+        from pyticc.basis.delves import build_delves_channels
+        from pyticc.basis.monomer.delves import build_delves_diatom_basis
         from pyticc.matrix.delves import asymptotic_potential
 
         if monomer_Y is not None:

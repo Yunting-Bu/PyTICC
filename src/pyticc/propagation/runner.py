@@ -3,13 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from math import ceil
 from time import perf_counter
-from typing import cast
+from typing import TypeAlias, cast
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pyticc._typing import JaxDevice
 from pyticc.basis.channel import ChannelBasis
 from pyticc.energy import EnergyInput, get_Etot
 from pyticc.matrix.centrifugal import get_Umat_BF
@@ -20,7 +22,8 @@ from pyticc.propagation.grid import build_radial_sectors, iter_radial_windows
 from pyticc.propagation.logd import initialize_logD_capture, initialize_logD_inelastic, propagate_logD
 from pyticc.scattering.hamiltonian import ScattHamiltonian
 
-InteractionProvider = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[NDArray[np.float64], ...]]
+InteractionMatrix: TypeAlias = NDArray[np.float64] | jax.Array
+InteractionProvider = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...], JaxDevice], tuple[InteractionMatrix, ...]]
 
 
 # ----------------------------------------------------------------------------------------
@@ -55,9 +58,11 @@ def propagate(
     energies = get_Etot(Etot)
     indices = tuple(range(hamiltonian.basis.n_channel))
 
-    def interaction_provider(radial_points: NDArray[np.float64], blocks: tuple[tuple[int, ...], ...]) -> tuple[NDArray[np.float64], ...]:
+    def interaction_provider(
+        radial_points: NDArray[np.float64], blocks: tuple[tuple[int, ...], ...], device: JaxDevice
+    ) -> tuple[InteractionMatrix, ...]:
         """Evaluate the complete exact interaction matrix at new R points."""
-        return (hamiltonian.V(radial_points),)
+        return hamiltonian.V_blocks(radial_points, blocks, device)
 
     return _propagate_blocks(
         (indices,),
@@ -137,12 +142,12 @@ def _propagate_blocks(
 
     Y_states: list[jax.Array | None] = [None] * len(blocks)
     cached_R: float | None = None
-    cached_interactions: list[NDArray[np.float64] | None] = [None] * len(blocks)
+    cached_interactions: list[InteractionMatrix | None] = [None] * len(blocks)
 
     for window_index, (window, radial_points) in enumerate(windows):
         reuse_endpoint = cached_R is not None and np.isclose(radial_points[0], cached_R, rtol=0.0, atol=1.0e-12)
         new_points = radial_points[1:] if reuse_endpoint else radial_points
-        new_interactions = interaction_provider(new_points, blocks)
+        new_interactions = interaction_provider(new_points, blocks, selected_device.device)
         if len(new_interactions) != len(blocks):
             message = f"Interaction provider returned {len(new_interactions)} blocks, but expected {len(blocks)}"
             logger.error(message)
@@ -158,16 +163,25 @@ def _propagate_blocks(
 
             cached_interaction = cached_interactions[block_index]
             if reuse_endpoint and cached_interaction is not None:
-                interactions = np.concatenate((cached_interaction[None, :, :], new_interaction), axis=0)
+                concatenate = jnp.concatenate if isinstance(new_interaction, jax.Array) else np.concatenate
+                interactions = concatenate((cached_interaction[None, :, :], new_interaction), axis=0)
             else:
                 interactions = new_interaction
 
-            W_points = np.stack(
-                [
-                    get_Wmat(float(RR), 0.0, reduced_mass, E_int, Umat, interaction)
-                    for RR, interaction in zip(radial_points, interactions, strict=True)
-                ]
-            )
+            if isinstance(interactions, jax.Array):
+                radial_device = jax.device_put(radial_points, selected_device.device)
+                E_int_device = jax.device_put(E_int, selected_device.device)
+                Umat_device = jax.device_put(Umat, selected_device.device)
+                W_points = Umat_device[None, :, :] / radial_device[:, None, None] ** 2 + 2.0 * reduced_mass * interactions
+                diagonal = jnp.diag_indices(n_channel)
+                W_points = W_points.at[:, diagonal[0], diagonal[1]].add(2.0 * reduced_mass * E_int_device[None, :])
+            else:
+                W_points = np.stack(
+                    [
+                        get_Wmat(float(RR), 0.0, reduced_mass, E_int, Umat, interaction)
+                        for RR, interaction in zip(radial_points, interactions, strict=True)
+                    ]
+                )
             W_base_start = W_points[0:-1:2]
             W_base_mid = W_points[1::2]
             W_base_end = W_points[2::2]
@@ -255,7 +269,7 @@ def propagate_blocks(
         blocks,
         E_int_blocks,
         Umat_blocks,
-        hamiltonian.V_blocks,
+        lambda radial_points, selected_blocks, device: hamiltonian.V_blocks(radial_points, selected_blocks, device),
         energies,
         hamiltonian.reduced_mass,
         config,

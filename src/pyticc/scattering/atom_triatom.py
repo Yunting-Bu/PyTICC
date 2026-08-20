@@ -1,16 +1,20 @@
+from __future__ import annotations
+
 from collections.abc import Sequence
 from math import prod
 
+import jax
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
 import pyticc.matrix.interaction.atom_triatom as vmat
+from pyticc._typing import JaxDevice
 from pyticc.basis.angle import gauss_legendre_dvr
 from pyticc.basis.channel import ChannelBasis
 from pyticc.basis.monomer import AtomSpec
 from pyticc.basis.triatom import TriatomBasis
-from pyticc.matrix.interaction import contract
+from pyticc.matrix.interaction import VBasisDevice, contract, contract_device, device_basis
 from pyticc.pes.adiabatic import PESWrapper, get_Vgrid_atom_triatom
 from pyticc.scattering.hamiltonian import ScattHamiltonian
 from pyticc.system import ScattSystem
@@ -70,6 +74,7 @@ def build_hamiltonian(
         phi,
         phi_weights,
     )
+    device_bases: dict[tuple[str, int], VBasisDevice] = {}
 
     radial_1 = triatom.radial_1
     radial_2 = triatom.radial_2
@@ -94,6 +99,14 @@ def build_hamiltonian(
         potential_grid = Vgrid(radial_points)
         return tuple(contract(V_basis, potential_grid, indices) for indices in channel_blocks)
 
+    def V_blocks_device(radial_points: NDArray[np.float64], channel_blocks: tuple[tuple[int, ...], ...], device: JaxDevice) -> tuple[jax.Array, ...]:
+        """Evaluate the PES on CPU and contract channel blocks on a JAX device."""
+        key = (device.platform, device.id)
+        if key not in device_bases:
+            device_bases[key] = device_basis(V_basis, device)
+        potential_grid = Vgrid(radial_points)
+        return tuple(contract_device(V_basis, device_bases[key], potential_grid, device, indices) for indices in channel_blocks)
+
     return ScattHamiltonian(
         basis=basis,
         reduced_mass=system.reduced_mass,
@@ -101,5 +114,6 @@ def build_hamiltonian(
         approx=system.approx,
         K_delta=system.K_delta,
         block_interaction=V_blocks,
+        device_block_interaction=V_blocks_device,
         potential_grid_size=prod(V_basis.grid_shape),
     )

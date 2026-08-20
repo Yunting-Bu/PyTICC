@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from math import prod
 from typing import cast
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pyticc._typing import JaxDevice
 from pyticc.basis.angle import norm_YjK
 from pyticc.basis.channel import Channel, ChannelBasis
 from pyticc.basis.monomer import DiabaticDiatomBasis
@@ -39,6 +44,19 @@ class DiabaticVGridBF:
 
     diagonal: tuple[NDArray[np.float64], ...]
     coupling: NDArray[np.float64]
+
+
+@dataclass(frozen=True)
+class DiabaticVBasisDevice:
+    """Device-resident contraction bases for a diabatic atom-diatom interaction.
+
+    Members:
+        B_diagonal: dict[ElectronicK, jax.Array] - state-specific PODVR basis rows
+        B_coupling: dict[ElectronicK, jax.Array] - shared primitive-DVR basis rows
+    """
+
+    B_diagonal: dict[ElectronicK, jax.Array]
+    B_coupling: dict[ElectronicK, jax.Array]
 
 
 @dataclass(frozen=True)
@@ -227,6 +245,28 @@ def _contract_weighted_basis(
     return result
 
 
+@jax.jit
+def _contract_weighted_basis_device(left: jax.Array, weights: jax.Array, right: jax.Array) -> jax.Array:
+    """Contract radial batches on one JAX device."""
+    return jnp.einsum("ig,bg,jg->bij", left, weights, right, optimize=True)
+
+
+def device_basis(V_basis: DiabaticVBasisBF, device: JaxDevice) -> DiabaticVBasisDevice:
+    """Copy reusable diabatic contraction bases to one JAX device.
+
+    Inputs:
+        V_basis: DiabaticVBasisBF - host interaction bases
+        device: JaxDevice - destination contraction device
+
+    Returns:
+        basis: DiabaticVBasisDevice - device-resident contraction bases
+    """
+    return DiabaticVBasisDevice(
+        B_diagonal={key: jax.device_put(values, device) for key, values in V_basis.B_diagonal.items()},
+        B_coupling={key: jax.device_put(values, device) for key, values in V_basis.B_coupling.items()},
+    )
+
+
 def _evaluate_contraction_task(task: _ContractionTask) -> NDArray[np.float64]:
     """Evaluate one electronic-K contraction and enforce diagonal-block symmetry."""
     block = _contract_weighted_basis(task.left, task.weights, task.right)
@@ -354,5 +394,102 @@ def contract(
         Vmat[:, rows[:, None], columns[None, :]] = block
         if not task.symmetric:
             Vmat[:, columns[:, None], rows[None, :]] = np.swapaxes(block, -2, -1)
+
+    return Vmat if batched_flags[0] else Vmat[0]
+
+
+def contract_device(
+    V_basis: DiabaticVBasisBF,
+    basis_device: DiabaticVBasisDevice,
+    potential: DiabaticVGridBF,
+    device: JaxDevice,
+    channel_indices: Sequence[int] | None = None,
+) -> jax.Array:
+    r"""Contract a diabatic potential into a channel matrix on one JAX device.
+
+    Formula:
+        V[c_i,c'_j] = delta[K,K'] sum_g B[c_i,g] V[i,j,g] B[c'_j,g].
+
+    Inputs:
+        V_basis: DiabaticVBasisBF - host metadata for the interaction bases
+        basis_device: DiabaticVBasisDevice - reusable basis arrays on device
+        potential: DiabaticVGridBF - host PES values for one radial batch
+        device: JaxDevice - contraction device
+        channel_indices: Sequence[int] | None - optional complete-basis positions
+
+    Returns:
+        Vmat: jax.Array - symmetric device channel matrix, optionally preceded by R
+    """
+    if len(potential.diagonal) != V_basis.n_state:
+        message = f"Expected {V_basis.n_state} diagonal potential grids, but got {len(potential.diagonal)}"
+        logger.error(message)
+        raise ValueError(message)
+
+    diagonal_batches: list[NDArray[np.float64]] = []
+    batched_flags: list[bool] = []
+    for electronic_state, (values, radial_grid) in enumerate(zip(potential.diagonal, V_basis.diagonal_grids, strict=True)):
+        batch, batched = _as_grid_batch(values, (radial_grid.size, V_basis.theta.size), (), f"State {electronic_state} diagonal potential")
+        diagonal_batches.append(batch.reshape(batch.shape[0], -1))
+        batched_flags.append(batched)
+
+    coupling_batch, coupling_batched = _as_grid_batch(
+        potential.coupling,
+        (V_basis.coupling_grid.size, V_basis.theta.size),
+        (V_basis.n_state, V_basis.n_state),
+        "Diabatic coupling potential",
+    )
+    batched_flags.append(coupling_batched)
+    batch_sizes = {batch.shape[0] for batch in (*diagonal_batches, coupling_batch)}
+    if len(set(batched_flags)) != 1 or len(batch_sizes) != 1:
+        message = "Diagonal and coupling potential grids must use the same scalar or radial-batch shape"
+        logger.error(message)
+        raise ValueError(message)
+    if not np.allclose(coupling_batch, np.swapaxes(coupling_batch, -2, -1), rtol=1.0e-12, atol=1.0e-12):
+        message = "Diabatic coupling potential must be symmetric"
+        logger.error(message)
+        raise ValueError(message)
+
+    indices = tuple(range(V_basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    if len(set(indices)) != len(indices) or any(index < 0 or index >= V_basis.n_channel for index in indices):
+        message = "channel_indices must be unique complete-basis positions"
+        logger.error(message)
+        raise ValueError(message)
+    selected_indices = {global_index: local_index for local_index, global_index in enumerate(indices)}
+    n_batch = next(iter(batch_sizes))
+    Vmat = jnp.zeros((n_batch, len(indices), len(indices)), dtype=jnp.float64, device=device)
+    diagonal_device = tuple(jax.device_put(batch, device) for batch in diagonal_batches)
+    coupling_device = jax.device_put(coupling_batch.reshape(n_batch, prod(coupling_batch.shape[1:-2]), V_basis.n_state, V_basis.n_state), device)
+
+    for key, group_indices in V_basis.channel_indices.items():
+        electronic_state, _ = key
+        rows, positions = _selected_group(group_indices, selected_indices)
+        if rows.size == 0:
+            continue
+        B = basis_device.B_diagonal[key][rows]
+        block = _contract_weighted_basis_device(B, diagonal_device[electronic_state], B)
+        block = 0.5 * (block + jnp.swapaxes(block, -2, -1))
+        Vmat = Vmat.at[:, positions[:, None], positions[None, :]].set(block)
+
+    K_values = sorted({K for _, K in V_basis.channel_indices})
+    for K in K_values:
+        for state_a in range(V_basis.n_state):
+            key_a = (state_a, K)
+            if key_a not in V_basis.channel_indices:
+                continue
+            rows_a, positions_a = _selected_group(V_basis.channel_indices[key_a], selected_indices)
+            if rows_a.size == 0:
+                continue
+            for state_b in range(state_a + 1, V_basis.n_state):
+                key_b = (state_b, K)
+                if key_b not in V_basis.channel_indices:
+                    continue
+                rows_b, positions_b = _selected_group(V_basis.channel_indices[key_b], selected_indices)
+                if rows_b.size == 0:
+                    continue
+                B_a = basis_device.B_coupling[key_a][rows_a]
+                B_b = basis_device.B_coupling[key_b][rows_b]
+                block = _contract_weighted_basis_device(B_a, coupling_device[:, :, state_a, state_b], B_b)
+                Vmat = Vmat.at[:, positions_a[:, None], positions_b[None, :]].set(block)
+                Vmat = Vmat.at[:, positions_b[:, None], positions_a[None, :]].set(jnp.swapaxes(block, -2, -1))
 
     return Vmat if batched_flags[0] else Vmat[0]

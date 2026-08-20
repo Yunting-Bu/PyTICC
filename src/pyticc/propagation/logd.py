@@ -5,7 +5,7 @@ from jax.typing import DTypeLike
 from loguru import logger
 from numpy.typing import NDArray
 
-from pyticc.propagation.device import JaxDevice
+from pyticc._typing import JaxDevice
 
 jax.config.update("jax_enable_x64", True)
 
@@ -251,7 +251,7 @@ def propagate_logD_sector(
             (n_channel, n_channel)
         W_end: LogDInput - radial equation matrix at the sector end, shape
             (n_channel, n_channel)
-        device: jax.Device | None - optional explicit JAX execution device
+        device: JaxDevice | None - optional explicit JAX execution device
 
     Returns:
         Y_end: jax.Array - log-derivative matrix at the sector end, shape
@@ -369,7 +369,7 @@ def propagate_logD(
             shape (n_sector, n_channel, n_channel)
         W_base_end: LogDInput - energy-independent matrices at sector ends, shape
             (n_sector, n_channel, n_channel)
-        device: jax.Device | None - optional explicit JAX execution device
+        device: JaxDevice | None - optional explicit JAX execution device
 
     Returns:
         Y_final: jax.Array - final log-derivative matrices, shape

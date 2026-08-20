@@ -1,15 +1,19 @@
+from __future__ import annotations
+
 from collections.abc import Sequence
 from math import prod
 
+import jax
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
 import pyticc.matrix.interaction.atom_diatom as vmat
+from pyticc._typing import JaxDevice
 from pyticc.basis.angle import gauss_legendre_dvr
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.monomer import AtomSpec, DiatomBasis, DiatomElectricBasis
-from pyticc.matrix.interaction import contract
+from pyticc.matrix.interaction import VBasisDevice, contract, contract_device, device_basis
 from pyticc.pes.adiabatic import PESWrapper, RadialInput, get_Vgrid_atom_diatom, get_Vgrid_atom_diatom_electric_sf
 from pyticc.scattering.hamiltonian import ScattHamiltonian
 from pyticc.system import ScattSystem
@@ -56,6 +60,7 @@ def build_hamiltonian(
     cos_theta, theta_weights = gauss_legendre_dvr(-1.0, 1.0, n_theta, symmetry=all(parity != 0 for parity in exchange_parities))
     theta = np.arccos(cos_theta)
     V_basis = vmat.prepare(basis, rovib, cos_theta, theta_weights)
+    device_bases: dict[tuple[str, int], VBasisDevice] = {}
 
     def Vgrid(radial_points: float | Sequence[float] | NDArray[np.float64]) -> NDArray[np.float64]:
         """Evaluate the atom-diatom PES grid."""
@@ -73,6 +78,14 @@ def build_hamiltonian(
         potential_grid = Vgrid(radial_points)
         return tuple(contract(V_basis, potential_grid, indices) for indices in channel_blocks)
 
+    def V_blocks_device(radial_points: NDArray[np.float64], channel_blocks: tuple[tuple[int, ...], ...], device: JaxDevice) -> tuple[jax.Array, ...]:
+        """Evaluate the PES on CPU and contract channel blocks on a JAX device."""
+        key = (device.platform, device.id)
+        if key not in device_bases:
+            device_bases[key] = device_basis(V_basis, device)
+        potential_grid = Vgrid(radial_points)
+        return tuple(contract_device(V_basis, device_bases[key], potential_grid, device, indices) for indices in channel_blocks)
+
     return ScattHamiltonian(
         basis=basis,
         reduced_mass=system.reduced_mass,
@@ -80,6 +93,7 @@ def build_hamiltonian(
         approx=system.approx,
         K_delta=system.K_delta,
         block_interaction=V_blocks,
+        device_block_interaction=V_blocks_device,
         potential_grid_size=prod(V_basis.grid_shape),
     )
 
@@ -168,6 +182,7 @@ def build_hamiltonian_electric_sf(
         delta,
         delta_weights,
     )
+    electric_device_bases: dict[tuple[str, int], vmat.AtomDiatomVBasisElectricSFDevice] = {}
 
     def Vgrid(radial_points: RadialInput) -> NDArray[np.float64]:
         """Evaluate the atom-diatom PES on the prepared SF geometry grid."""
@@ -177,10 +192,21 @@ def build_hamiltonian_electric_sf(
         """Contract the SF PES grid into the fixed-M channel basis."""
         return vmat.contract_electric_sf(V_basis, Vgrid(radial_points))
 
+    def V_blocks_device(radial_points: NDArray[np.float64], channel_blocks: tuple[tuple[int, ...], ...], device: JaxDevice) -> tuple[jax.Array, ...]:
+        """Evaluate the PES on CPU and contract electric SF blocks on a JAX device."""
+        key = (device.platform, device.id)
+        if key not in electric_device_bases:
+            electric_device_bases[key] = vmat.device_basis_electric_sf(V_basis, device)
+        potential_grid = Vgrid(radial_points)
+        return tuple(
+            vmat.contract_electric_sf_device(V_basis, electric_device_bases[key], potential_grid, device, indices) for indices in channel_blocks
+        )
+
     return ScattHamiltonian(
         basis=basis,
         reduced_mass=system.reduced_mass,
         interaction=Vmat,
+        device_block_interaction=V_blocks_device,
         potential_grid_size=prod(V_basis.grid_shape),
     )
 

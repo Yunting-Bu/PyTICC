@@ -1,14 +1,19 @@
 """Atom-diatom interaction-matrix basis."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from math import prod
 from typing import cast
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pyticc._typing import JaxDevice
 from pyticc.basis.angle import norm_YjK
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis, diatom_electric_amplitude
@@ -67,6 +72,19 @@ class AtomDiatomVBasisElectricSF:
     gamma: NDArray[np.float64]
     B_cos: NDArray[np.float64]
     B_sin: NDArray[np.float64]
+
+
+@dataclass(frozen=True)
+class AtomDiatomVBasisElectricSFDevice:
+    """Device-resident electric-field SF contraction basis.
+
+    Members:
+        B_cos: jax.Array - cosine weighted basis rows
+        B_sin: jax.Array - sine weighted basis rows
+    """
+
+    B_cos: jax.Array
+    B_sin: jax.Array
 
 
 def build_AtomDiatomVBasisElectricSF(
@@ -244,6 +262,79 @@ def contract_electric_sf(
         matrix = (B_cos * values_at_R[None, :]) @ B_cos.T
         matrix += (B_sin * values_at_R[None, :]) @ B_sin.T
         Vmat[radial_index] = 0.5 * (matrix + matrix.T)
+    return Vmat if batched else Vmat[0]
+
+
+@jax.jit
+def _contract_electric_sf_device(B_cos: jax.Array, B_sin: jax.Array, potential: jax.Array) -> jax.Array:
+    """Contract one electric-field SF interaction batch on a JAX device."""
+    Vmat = jnp.einsum("ig,bg,jg->bij", B_cos, potential, B_cos, optimize=True)
+    Vmat += jnp.einsum("ig,bg,jg->bij", B_sin, potential, B_sin, optimize=True)
+    return 0.5 * (Vmat + jnp.swapaxes(Vmat, -2, -1))
+
+
+def device_basis_electric_sf(V_basis: AtomDiatomVBasisElectricSF, device: JaxDevice) -> AtomDiatomVBasisElectricSFDevice:
+    """Copy a reusable electric-field SF basis to one JAX device.
+
+    Inputs:
+        V_basis: AtomDiatomVBasisElectricSF - host contraction basis
+        device: JaxDevice - destination contraction device
+
+    Returns:
+        basis_device: AtomDiatomVBasisElectricSFDevice - device basis arrays
+    """
+    return AtomDiatomVBasisElectricSFDevice(
+        B_cos=jax.device_put(V_basis.B_cos, device),
+        B_sin=jax.device_put(V_basis.B_sin, device),
+    )
+
+
+def contract_electric_sf_device(
+    V_basis: AtomDiatomVBasisElectricSF,
+    basis_device: AtomDiatomVBasisElectricSFDevice,
+    potential: NDArray[np.float64],
+    device: JaxDevice,
+    channel_indices: Sequence[int] | None = None,
+) -> jax.Array:
+    r"""Contract an electric-field SF interaction grid on one JAX device.
+
+    Formula:
+        V_{eta' eta}(R) = sum_g Delta V(R,g)
+        [B^cos_{eta',g} B^cos_{eta,g} + B^sin_{eta',g} B^sin_{eta,g}].
+
+    Inputs:
+        V_basis: AtomDiatomVBasisElectricSF - host basis metadata
+        basis_device: AtomDiatomVBasisElectricSFDevice - device basis arrays
+        potential: NDArray[np.float64] - scalar or radial-batched PES grid
+        device: JaxDevice - contraction device
+        channel_indices: Sequence[int] | None - optional complete-basis positions
+
+    Returns:
+        Vmat: jax.Array - symmetric device matrices, optionally preceded by R
+    """
+    values = np.asarray(potential, dtype=np.float64)
+    n_grid = prod(V_basis.grid_shape)
+    if values.shape == V_basis.grid_shape:
+        batches = values.reshape(1, n_grid)
+        batched = False
+    elif values.ndim == len(V_basis.grid_shape) + 1 and values.shape[1:] == V_basis.grid_shape:
+        batches = values.reshape(values.shape[0], n_grid)
+        batched = True
+    else:
+        message = f"Potential grid has shape {values.shape}, but SF basis requires {V_basis.grid_shape} with an optional leading R axis"
+        logger.error(message)
+        raise ValueError(message)
+    indices = tuple(range(V_basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    if len(set(indices)) != len(indices) or any(index < 0 or index >= V_basis.n_channel for index in indices):
+        message = "channel_indices must be unique complete-basis positions"
+        logger.error(message)
+        raise ValueError(message)
+    positions = np.asarray(indices, dtype=np.int64)
+    Vmat = _contract_electric_sf_device(
+        basis_device.B_cos[positions],
+        basis_device.B_sin[positions],
+        jax.device_put(batches, device),
+    )
     return Vmat if batched else Vmat[0]
 
 

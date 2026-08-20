@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 import pyticc.pes.fortran.compiler as compiler_module
-from pyticc.basis.delves import build_delves_basis, build_delves_qns, delves_angular_basis, delves_theta_basis
+from pyticc.basis.delves import DelvesBasis, build_delves_qns, delves_angular_basis, delves_theta_basis
+from pyticc.basis.monomer.delves import _resolve_delves_sizes
 from pyticc.constants import AMU2AU, EV2AU
 from pyticc.matrix.delves import asymptotic_potential, get_Vgrid_delves
 from pyticc.matrix.delves_hamiltonian import get_Hmat_delves_K
@@ -24,15 +25,30 @@ def test_ho2_total_pes_drives_the_abc_basis_scan(tmp_path: Path, monkeypatch: py
     )
     mass = tuple(np.asarray([15.99492, 15.99492, 1.007825]) * AMU2AU)
 
-    basis = build_delves_basis(
+    E_max = 2.4 * EV2AU
+    masses, rho_min, scaled_r_max, n_sine, n_vib_quad, n_gamma_quad = _resolve_delves_sizes(
         asymptotic_potential(pes, mass),
         mass,
+        jmax=30,
+        E_max=E_max,
+        scaled_r_step=0.01,
+        scaled_r_scan_max=10.0,
+        tail_cut=5.0,
+    )
+    basis = DelvesBasis(
+        mass=masses,
         Jtot=0,
         system_parity=1,
         exchange_parity=0,
         jmax=30,
         K_cut=0,
-        E_max=2.4 * EV2AU,
+        E_max=E_max,
+        rho_min=rho_min,
+        scaled_r_max=scaled_r_max,
+        n_sine=n_sine,
+        n_vib_quad=n_vib_quad,
+        n_gamma_quad=n_gamma_quad,
+        angular_qns=build_delves_qns(masses, 0, 1, 0, 30, 0),
     )
 
     assert basis.rho_min == pytest.approx(3.04072, abs=1.0e-5)

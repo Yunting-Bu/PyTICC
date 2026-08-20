@@ -1,15 +1,28 @@
+import jax
 import numpy as np
+import pytest
 from scipy.special import roots_legendre
 
 import pyticc.matrix.interaction.atom_diatom as atom_diatom
 import pyticc.matrix.interaction.diatom_diatom as diatom_diatom
+from pyticc._typing import JaxDevice
 from pyticc.basis.angle import clebsch_gordan, gauss_legendre_dvr
 from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF, build_ChannelBasisElectricSF
 from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis, DiatomElectricBlock
 from pyticc.basis.rovib import RovibBasis
-from pyticc.matrix.interaction import contract
+from pyticc.matrix.interaction import contract, contract_device, device_basis
 from pyticc.pes import PESWrapper, get_Vgrid_atom_diatom_electric_sf
 from pyticc.system import MolInnerState
+
+
+def _contraction_devices() -> tuple[JaxDevice, ...]:
+    """Return one CPU and, when available, one GPU contraction device."""
+    devices: list[JaxDevice] = [jax.devices("cpu")[0]]
+    try:
+        devices.extend(jax.devices("gpu")[:1])
+    except RuntimeError:
+        pass
+    return tuple(devices)
 
 
 def make_rovib(n_grid: int = 1, vmax: int = 0, jmax: int = 2) -> RovibBasis:
@@ -166,6 +179,34 @@ def test_contract_accepts_radial_batch() -> None:
     np.testing.assert_allclose(Vmat[1], 2.0 * np.eye(basis.n_channel), atol=1.0e-13)
 
 
+@pytest.mark.parametrize("device", _contraction_devices(), ids=lambda device: device.platform)
+def test_scalar_device_contraction_matches_numpy_with_complex_basis_components(device: JaxDevice) -> None:
+    basis = make_diatom_diatom_basis()
+    rovib_X = make_rovib()
+    rovib_Y = make_rovib()
+    cos_theta_X, theta_weights_X = roots_legendre(4)
+    cos_theta_Y, theta_weights_Y = roots_legendre(4)
+    phi_x, phi_x_weights = roots_legendre(8)
+    V_basis = diatom_diatom.prepare(
+        basis,
+        rovib_X,
+        rovib_Y,
+        cos_theta_X,
+        theta_weights_X,
+        cos_theta_Y,
+        theta_weights_Y,
+        0.5 * np.pi * (phi_x + 1.0),
+        0.5 * np.pi * phi_x_weights,
+    )
+    potential = np.stack([np.ones(V_basis.grid_shape), np.full(V_basis.grid_shape, 2.0)])
+    indices = (3, 0, 1)
+    expected = contract(V_basis, potential, indices)
+    result = contract_device(V_basis, device_basis(V_basis, device), potential, device, indices)
+
+    assert result.devices() == {device}
+    np.testing.assert_allclose(result, expected, rtol=1.0e-13, atol=1.0e-13)
+
+
 def test_constant_potential_is_identity_for_electric_field_sf_basis() -> None:
     delta, delta_weights = gauss_legendre_dvr(0.0, 2.0 * np.pi, 24)
     channels, V_basis = make_electric_sf_interaction_basis(delta, delta_weights)
@@ -222,3 +263,27 @@ def test_contract_electric_sf_accepts_radial_batches_and_channel_order() -> None
 
     assert full_matrix.shape == (2, channels.n_channel, channels.n_channel)
     np.testing.assert_allclose(selected_matrix, full_matrix[:, indices, :][:, :, indices])
+
+
+@pytest.mark.parametrize("device", _contraction_devices(), ids=lambda device: device.platform)
+def test_electric_sf_device_contraction_matches_numpy(device: JaxDevice) -> None:
+    delta, delta_weights = gauss_legendre_dvr(0.0, 2.0 * np.pi, 16)
+    channels, V_basis = make_electric_sf_interaction_basis(delta, delta_weights)
+    potential = np.stack(
+        [
+            np.ones(V_basis.grid_shape),
+            np.broadcast_to(1.0 + 0.2 * np.cos(V_basis.gamma)[None, ...], V_basis.grid_shape),
+        ]
+    )
+    indices = (channels.n_channel - 1, 0)
+    expected = atom_diatom.contract_electric_sf(V_basis, potential, indices)
+    result = atom_diatom.contract_electric_sf_device(
+        V_basis,
+        atom_diatom.device_basis_electric_sf(V_basis, device),
+        potential,
+        device,
+        indices,
+    )
+
+    assert result.devices() == {device}
+    np.testing.assert_allclose(result, expected, rtol=1.0e-13, atol=1.0e-13)

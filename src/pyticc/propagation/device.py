@@ -1,25 +1,12 @@
 import re
 from dataclasses import dataclass
-from typing import Protocol
 
 import jax
 from loguru import logger
 
+from pyticc._typing import JaxDevice
+
 _DEVICE_PATTERN = re.compile(r"(?:auto|cpu(?::\d+)?|gpu(?::\d+)?)")
-
-
-class JaxDevice(Protocol):
-    """Structural type required from a concrete JAX execution device."""
-
-    @property
-    def platform(self) -> str:
-        """Return the execution platform name."""
-        ...
-
-    @property
-    def id(self) -> int:
-        """Return the device index within its platform."""
-        ...
 
 
 @dataclass(frozen=True, slots=True)

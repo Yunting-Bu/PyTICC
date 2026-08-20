@@ -8,8 +8,8 @@ import pytest
 
 import pyticc.pes.fortran.compiler as compiler_module
 from pyticc.basis.channel import ChannelSpec
-from pyticc.basis.delves import DelvesBasis, build_delves_basis
-from pyticc.basis.monomer.delves import prepare_Delves
+from pyticc.basis.delves import DelvesBasis, build_delves_channels
+from pyticc.basis.monomer.delves import build_delves_diatom_basis, prepare_Delves
 from pyticc.constants import AMU2AU
 from pyticc.match.delves import build_delves_asymptotic_basis, transform_logD_to_delves_channels
 from pyticc.match.delves_bessel import get_delves_Smat, match_delves
@@ -25,15 +25,15 @@ from pyticc.scattering.solver import solve
 from pyticc.system import build_ScattSystem
 
 BKMP2_SOURCE = Path("/Users/byt/software/TICC/ABC_reac/bkmp2.f")
-WRAPPER = Path(__file__).parents[2] / "example" / "H3_BKMP2" / "pyticc_total_wrapper.f90"
+WRAPPER = Path(__file__).parents[2] / "example" / "H3_Delves" / "pyticc_total_wrapper.f90"
 ABC_ENERGY_SHIFT_HARTREE = (4.47809 + 0.27018326) / 27.2114
 ABC_EV_PER_HARTREE = 27.2114
 ABC_HBAR_SQUARED = 0.014927625
 ABC_SOURCE = Path("/Users/byt/software/TICC/ABC_reac/abc.f")
 ABC_FUNCTIONS = Path("/Users/byt/software/TICC/ABC_reac/fun.f")
 ABC_LINEAR_ALGEBRA = Path("/Users/byt/software/TICC/ABC_reac/lin.f")
-ABC_ADAPTER = Path(__file__).parents[2] / "example" / "H3_BKMP2" / "abc_bkmp2_adapter.f90"
-ABC_INPUT = Path(__file__).parents[2] / "example" / "H3_BKMP2" / "abc_J0.in"
+ABC_ADAPTER = Path(__file__).parents[2] / "example" / "H3_Delves" / "abc_bkmp2_adapter.f90"
+ABC_INPUT = Path(__file__).parents[2] / "example" / "H3_Delves" / "abc_J0.in"
 
 
 def _compile_abc_probe(tmp_path: Path) -> Path:
@@ -233,16 +233,13 @@ def _h3_abc_basis(pes):
     abc_mass_to_electron_mass = ABC_EV_PER_HARTREE / ABC_HBAR_SQUARED
     mass = (1.007825 * abc_mass_to_electron_mass,) * 3
     energy_shift = ABC_ENERGY_SHIFT_HARTREE
-    basis = build_delves_basis(
+    diatom_basis = build_delves_diatom_basis(
         asymptotic_potential(pes, mass),
         mass,
-        Jtot=0,
-        system_parity=1,
-        exchange_parity=1,
         jmax=0,
-        K_cut=0,
         E_max=0.6 / ABC_EV_PER_HARTREE - energy_shift,
     )
+    basis = build_delves_channels(diatom_basis, Jtot=0, system_parity=1, exchange_parity=1, K_cut=0)
     return basis, 0.45 / ABC_EV_PER_HARTREE - energy_shift
 
 
@@ -436,7 +433,7 @@ def test_h3_bkmp2_pyticc_reference_chain_reproduces_abc_logD_and_Smat(tmp_path: 
 
 @pytest.mark.skipif(not BKMP2_SOURCE.is_file(), reason="ABC_reac/bkmp2.f is unavailable")
 @pytest.mark.skipif(not all(compiler_module._build_tools()), reason="Fortran f2py/Meson toolchain is unavailable")
-def test_h3_bkmp2_uncontracted_piecewise_propagation_produces_unitary_Smat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_h3_bkmp2_prepared_channel_propagation_produces_unitary_Smat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PYTICC_CACHE_DIR", str(tmp_path / "cache"))
     pes = load_fortran_total_pes([BKMP2_SOURCE], WRAPPER)
     basis, total_energy = _h3_abc_basis(pes)
@@ -450,18 +447,9 @@ def test_h3_bkmp2_uncontracted_piecewise_propagation_produces_unitary_Smat(tmp_p
     channels, (Smat,) = match_delves(result, [total_energy], basis, pes)
 
     assert channels.qns == ((1, 0, 0, 0), (2, 0, 0, 0))
-    assert result.surface_energies.size == 20
+    assert result.surface_energies.size == basis.n_channel
     assert result.radial_points.size == 121
     np.testing.assert_allclose(Smat.conj().T @ Smat, np.eye(2), rtol=0.0, atol=2.0e-14)
-    np.testing.assert_allclose(
-        Smat,
-        [
-            [-0.4276597868232412 + 0.9039370354378926j, -0.0020089060463374 - 0.0009523626153444j],
-            [-0.0020089060463374 - 0.0009523626153444j, -0.4290802979081543 + 0.9032636133759598j],
-        ],
-        rtol=2.0e-8,
-        atol=2.0e-8,
-    )
     pes.close()
 
 

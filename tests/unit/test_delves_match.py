@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from pyticc.basis.delves import DelvesBasis
+from pyticc.basis.delves import DelvesBasis, clean_sine_phases, midpoint_quad, sine_basis, sine_kinetic, sine_reference_hamiltonian
 from pyticc.match.bessel import riccati_bessel_jy
 from pyticc.match.delves import build_delves_asymptotic_basis, transform_logD_to_delves_channels
 from pyticc.match.delves_bessel import _delves_reference_matrices, get_delves_frame_transform, get_delves_Smat, match_delves
@@ -10,10 +10,26 @@ from pyticc.pes.total import TotalPES
 from pyticc.propagation.delves import DelvesPropagationResult
 
 
-def make_basis(*, E_max: float = 2.0, qns: tuple[tuple[int, int, int], ...] = ((1, 0, 0),)) -> DelvesBasis:
+def make_basis(*, E_max: float = 2.0, Jtot: int = 0, qns: tuple[tuple[int, int, int], ...] = ((1, 0, 0),)) -> DelvesBasis:
+    mass = (2.0, 3.0, 5.0)
+    n_sine = 3
+    n_vib_quad = 30
+    scaled_r_max = 4.0
+    reduced_mass, _ = mass_scale(mass)
+    grids, weights = midpoint_quad(0.0, scaled_r_max, n_vib_quad)
+    values = sine_basis(0.0, scaled_r_max, n_sine, grids)
+    kinetic = sine_kinetic(n_sine, scaled_r_max, reduced_mass, theta=False)
+    records: list[tuple[tuple[int, int, int, int], float, np.ndarray]] = []
+    for arrangement, j, K in qns:
+        effective = j * (j + 1) / (2.0 * reduced_mass * grids**2)
+        energies, coefficients = np.linalg.eigh(sine_reference_hamiltonian(values, weights, kinetic, effective))
+        coefficients = clean_sine_phases(coefficients, values)
+        for v in np.flatnonzero(energies <= E_max):
+            records.append(((arrangement, int(v), j, K), float(energies[v]), coefficients[:, v].copy()))
+    records.sort(key=lambda record: record[0])
     return DelvesBasis(
-        mass=(2.0, 3.0, 5.0),
-        Jtot=0,
+        mass=mass,
+        Jtot=Jtot,
         system_parity=1,
         exchange_parity=0,
         jmax=max(j for _, j, _ in qns),
@@ -21,10 +37,13 @@ def make_basis(*, E_max: float = 2.0, qns: tuple[tuple[int, int, int], ...] = ((
         E_max=E_max,
         rho_min=2.0,
         scaled_r_max=4.0,
-        n_sine=3,
-        n_vib_quad=30,
+        n_sine=n_sine,
+        n_vib_quad=n_vib_quad,
         n_gamma_quad=8,
         angular_qns=qns,
+        qns=tuple(record[0] for record in records),
+        energies=np.asarray([record[1] for record in records]),
+        s_coefficients=np.column_stack([record[2] for record in records]) if records else np.empty((0, 0)),
     )
 
 
@@ -73,26 +92,12 @@ def test_delves_asymptotic_basis_validates_radius_and_cutoff() -> None:
     pes = TotalPES(lambda bonds: np.zeros(bonds.shape[1]))
     with pytest.raises(ValueError, match="rho_match"):
         build_delves_asymptotic_basis(make_basis(), pes, rho_match=0.0)
-    with pytest.raises(ValueError, match="No Delves asymptotic channels"):
+    with pytest.raises(ValueError, match="requires channels"):
         build_delves_asymptotic_basis(make_basis(E_max=-1.0), pes, rho_match=20.0)
 
 
 def test_delves_frame_transform_recovers_parity_allowed_integer_L() -> None:
-    basis = DelvesBasis(
-        mass=(2.0, 3.0, 5.0),
-        Jtot=1,
-        system_parity=1,
-        exchange_parity=0,
-        jmax=1,
-        K_cut=1,
-        E_max=1.0,
-        rho_min=2.0,
-        scaled_r_max=4.0,
-        n_sine=1,
-        n_vib_quad=20,
-        n_gamma_quad=8,
-        angular_qns=((1, 1, 0), (1, 1, 1)),
-    )
+    basis = make_basis(E_max=1.0, Jtot=1, qns=((1, 1, 0), (1, 1, 1)))
     channels = build_delves_asymptotic_basis(basis, TotalPES(lambda bonds: np.zeros(bonds.shape[1])), rho_match=20.0)
 
     transform, orbital_L = get_delves_frame_transform(basis, channels)

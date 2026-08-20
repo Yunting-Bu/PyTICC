@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from pyticc.basis.delves import build_delves_basis
+from pyticc.basis.monomer.delves import _resolve_delves_sizes
 from pyticc.matrix.delves import asymptotic_potential, delves_bonds, get_Vgrid_delves, mass_scale, transform_delves_coordinates
 from pyticc.pes.total import TotalPES
 
@@ -155,7 +155,7 @@ def test_delves_potential_grid_uses_fixed_rho_coordinates(arrangement: int) -> N
     )
 
 
-def test_total_pes_adapter_connects_directly_to_build_delves_basis() -> None:
+def test_total_pes_adapter_connects_to_the_delves_size_scan() -> None:
     mass = (np.sqrt(3.0) / 2.0,) * 3
     _, scale = mass_scale(mass)
 
@@ -164,25 +164,21 @@ def test_total_pes_adapter_connects_directly_to_build_delves_basis() -> None:
         scaled_r = np.min(bonds, axis=0) / scale[0]
         return np.where((scaled_r >= 3.0) & (scaled_r <= 7.0), 0.0, 5.0)
 
-    basis = build_delves_basis(
+    _, rho_min, scaled_r_max, n_sine, n_vib_quad, n_gamma_quad = _resolve_delves_sizes(
         asymptotic_potential(TotalPES(total_pes), mass),
         mass,
-        Jtot=0,
-        system_parity=1,
-        exchange_parity=0,
         jmax=2,
-        K_cut=0,
         E_max=1.0,
         scaled_r_step=1.0,
         scaled_r_scan_max=10.0,
         tail_cut=2.0,
     )
 
-    assert basis.rho_min == pytest.approx(np.sqrt(2.0))
-    assert basis.scaled_r_max == pytest.approx(9.0)
-    assert basis.n_sine == 5
-    assert basis.n_vib_quad == 11
-    assert basis.n_gamma_quad == 9
+    assert rho_min == pytest.approx(np.sqrt(2.0))
+    assert scaled_r_max == pytest.approx(9.0)
+    assert n_sine == 5
+    assert n_vib_quad == 11
+    assert n_gamma_quad == 9
 
 
 def test_delves_coordinate_and_total_pes_validation() -> None:

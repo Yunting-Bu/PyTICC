@@ -302,7 +302,7 @@ def asymptotic_potential(
     cos_gamma: float = 0.0,
 ) -> AsymptoticPotential:
     r"""
-    Adapt a total three-bond PES to ``build_delves_basis``.
+    Adapt a total three-bond PES to the Delves asymptotic basis scan.
 
     This follows ABC's automatic-basis scan: the separated-atom coordinate is
     fixed at ``scaled_R=100`` bohr and ``cos(gamma)=0`` by default, then the
@@ -322,7 +322,8 @@ def asymptotic_potential(
 
     Returns:
         potential: AsymptoticPotential - callback accepting one-based
-            arrangement and a scaled-r array, suitable for build_delves_basis
+            arrangement and a scaled-r array, suitable for the automatic WKB
+            scan and asymptotic diatomic solve
     """
     masses = tuple(_validate_mass(mass))
     if not np.isfinite(scaled_R) or scaled_R <= 0.0:

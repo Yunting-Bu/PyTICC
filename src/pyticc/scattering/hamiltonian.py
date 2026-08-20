@@ -1,16 +1,21 @@
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+import jax
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pyticc._typing import JaxDevice
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_ElectricSF
 from pyticc.system import Approx
 
 Interaction = Callable[[float | NDArray[np.float64]], NDArray[np.float64]]
 BlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[NDArray[np.float64], ...]]
+DeviceBlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...], JaxDevice], tuple[jax.Array, ...]]
 ScatteringBasis = ChannelBasis | ChannelBasisElectricSF
 
 
@@ -39,6 +44,8 @@ class ScattHamiltonian:
             radial batch
         block_interaction: BlockInteraction | None - optimized interaction
             provider for field-free CS and NNCC channel blocks
+        device_block_interaction: DeviceBlockInteraction | None - optional
+            interaction contraction performed directly on a JAX device
         potential_grid_size: int - internal PES grid points per radial point
     """
 
@@ -48,6 +55,7 @@ class ScattHamiltonian:
     approx: Approx = Approx.EXACT
     K_delta: int = 1
     block_interaction: BlockInteraction | None = None
+    device_block_interaction: DeviceBlockInteraction | None = None
     potential_grid_size: int = 0
 
     def __post_init__(self) -> None:
@@ -94,8 +102,11 @@ class ScattHamiltonian:
         self,
         radial_points: NDArray[np.float64],
         channel_blocks: tuple[tuple[int, ...], ...],
-    ) -> tuple[NDArray[np.float64], ...]:
+        device: JaxDevice | None = None,
+    ) -> tuple[NDArray[np.float64] | jax.Array, ...]:
         """Evaluate interaction matrices for one or more channel blocks."""
+        if device is not None and device.platform == "gpu" and self.device_block_interaction is not None:
+            return self.device_block_interaction(radial_points, channel_blocks, device)
         if self.block_interaction is not None:
             return self.block_interaction(radial_points, channel_blocks)
 

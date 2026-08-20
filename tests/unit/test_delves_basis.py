@@ -3,7 +3,6 @@ import pytest
 
 from pyticc.basis.delves import (
     DelvesBasis,
-    build_delves_basis,
     build_delves_qns,
     delves_angular_basis,
     delves_theta_basis,
@@ -11,6 +10,7 @@ from pyticc.basis.delves import (
     sine_basis,
     theta_max,
 )
+from pyticc.basis.monomer.delves import _resolve_delves_sizes
 
 
 def sample_delves_basis() -> DelvesBasis:
@@ -96,7 +96,7 @@ def test_build_delves_qns_applies_parity_and_exchange_rules() -> None:
     assert {j for arrangement, j, _ in heteronuclear if arrangement == 1} == {0, 1}
 
 
-def test_build_delves_basis_matches_the_abc_integer_rules() -> None:
+def test_resolve_delves_sizes_matches_the_abc_integer_rules() -> None:
     masses = (np.sqrt(3.0) / 2.0,) * 3
     sampled_potential = np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 5.0, 5.0, 5.0])
 
@@ -105,42 +105,33 @@ def test_build_delves_basis_matches_the_abc_integer_rules() -> None:
         assert scaled_r.shape == sampled_potential.shape
         return sampled_potential
 
-    basis = build_delves_basis(
+    _, rho_min, scaled_r_max, n_sine, n_vib_quad, n_gamma_quad = _resolve_delves_sizes(
         asymptotic_potential,
         masses,
-        Jtot=0,
-        system_parity=1,
-        exchange_parity=0,
         jmax=2,
-        K_cut=0,
         E_max=1.0,
         scaled_r_step=1.0,
         scaled_r_scan_max=10.0,
         tail_cut=2.0,
     )
 
-    assert basis.rho_min == pytest.approx(np.sqrt(2.0))
-    assert basis.scaled_r_max == pytest.approx(9.0)
-    assert basis.n_sine == 5
-    assert basis.n_vib_quad == 11
-    assert basis.n_gamma_quad == 9
-    assert basis.n_primitive == 45
+    assert rho_min == pytest.approx(np.sqrt(2.0))
+    assert scaled_r_max == pytest.approx(9.0)
+    assert n_sine == 5
+    assert n_vib_quad == 11
+    assert n_gamma_quad == 9
 
 
-def test_build_delves_basis_rejects_an_unresolved_outer_tail() -> None:
+def test_resolve_delves_sizes_rejects_an_unresolved_outer_tail() -> None:
     def dissociating_potential(arrangement: int, scaled_r: np.ndarray) -> np.ndarray:
         del arrangement
         return np.zeros_like(scaled_r)
 
     with pytest.raises(ValueError, match="outer forbidden region"):
-        build_delves_basis(
+        _resolve_delves_sizes(
             dissociating_potential,
             (1.0, 1.0, 1.0),
-            Jtot=0,
-            system_parity=1,
-            exchange_parity=0,
             jmax=0,
-            K_cut=0,
             E_max=1.0,
             scaled_r_step=1.0,
             scaled_r_scan_max=10.0,

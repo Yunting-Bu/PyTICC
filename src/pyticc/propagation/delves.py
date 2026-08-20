@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter
-from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -10,15 +9,13 @@ import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pyticc._typing import JaxDevice
 from pyticc.energy import EnergyInput, get_Etot
 from pyticc.matrix.delves import mass_scale
 from pyticc.propagation.config import Propagation
-from pyticc.propagation.device import JaxDevice, resolve_device
+from pyticc.propagation.device import resolve_device
 from pyticc.propagation.grid import build_radial_sectors
 from pyticc.propagation.logd import LogDInput, initialize_logD_capture, propagate_logD
-
-if TYPE_CHECKING:
-    from pyticc.scattering.delves_hamiltonian import DelvesHamiltonian, DelvesSurface
 
 
 # ----------------------------------------------------------------------------------------
@@ -55,7 +52,7 @@ class DelvesPropagationResult:
 
 # ----------------------------------------------------------------------------------------
 def propagate_delves(
-    hamiltonian: DelvesHamiltonian,
+    hamiltonian: object,
     Etot: EnergyInput,
     config: Propagation,
 ) -> DelvesPropagationResult:
@@ -119,6 +116,12 @@ def propagate_delves(
         result: DelvesPropagationResult - final LogD, surface data, and fixed
             sector endpoints required for asymptotic matching
     """
+    from pyticc.scattering.delves_hamiltonian import DelvesHamiltonian, DelvesSurface
+
+    if not isinstance(hamiltonian, DelvesHamiltonian):
+        message = "Delves propagation requires a DelvesHamiltonian"
+        logger.error(message)
+        raise TypeError(message)
     basis = hamiltonian.basis
     energies = get_Etot(Etot)
     if not np.isclose(config.boundaries[0], basis.rho_min, rtol=0.0, atol=1.0e-12):
@@ -229,7 +232,7 @@ def _hard_wall_logD(
         surface_energies: NDArray[np.float64] - midpoint surface energies in
             Hartree, shape ``(n_surface,)``
         width: float - complete first-sector width in bohr
-        device: jax.Device - selected execution device
+        device: JaxDevice - selected execution device
 
     Returns:
         Ymat: jax.Array - real diagonal hard-wall LogD, shape

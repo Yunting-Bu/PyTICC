@@ -1,3 +1,4 @@
+import jax
 import numpy as np
 import pytest
 from numpy.typing import NDArray
@@ -5,12 +6,23 @@ from scipy.special import roots_legendre
 
 import pyticc.matrix.interaction.atom_diatom as scalar_vmat
 import pyticc.matrix.interaction.diabatic_atom_diatom as vmat
+from pyticc._typing import JaxDevice
 from pyticc.basis.channel import Channel, ChannelBasis
 from pyticc.basis.dvr import build_SineDVR
 from pyticc.basis.monomer import DiabaticDiatomBasis, build_DiabaticDiatomBasis
 from pyticc.matrix.interaction import contract as contract_scalar
 from pyticc.pes.diabatic import DiabaticPESWrapper
 from pyticc.system import MolInnerState
+
+
+def _contraction_devices() -> tuple[JaxDevice, ...]:
+    """Return one CPU and, when available, one GPU contraction device."""
+    devices: list[JaxDevice] = [jax.devices("cpu")[0]]
+    try:
+        devices.extend(jax.devices("gpu")[:1])
+    except RuntimeError:
+        pass
+    return tuple(devices)
 
 
 def _diabatic_basis(n_state: int = 2) -> DiabaticDiatomBasis:
@@ -125,6 +137,21 @@ def test_diabatic_interaction_radial_batch_matches_scalar_and_preserves_selectio
 
     assert batched.shape == (2, len(selected), len(selected))
     np.testing.assert_allclose(batched, scalar, atol=1.0e-13)
+
+
+@pytest.mark.parametrize("device", _contraction_devices(), ids=lambda device: device.platform)
+def test_diabatic_device_contraction_matches_numpy_for_radial_batch_and_selection(device: JaxDevice) -> None:
+    diabatic_basis = _diabatic_basis()
+    channels = _channels()
+    cos_theta, weights = roots_legendre(5)
+    V_basis = vmat.prepare(channels, diabatic_basis, cos_theta, weights)
+    potential = vmat.sample(_constant_pes(np.array([[2.0, 0.4], [0.4, 3.0]])), np.array([4.0, 5.0]), V_basis)
+    selected = (3, 0, 1)
+    expected = vmat.contract(V_basis, potential, selected)
+    result = vmat.contract_device(V_basis, vmat.device_basis(V_basis, device), potential, device, selected)
+
+    assert result.devices() == {device}
+    np.testing.assert_allclose(result, expected, rtol=1.0e-13, atol=1.0e-13)
 
 
 def test_diabatic_weighted_contraction_chunks_radial_batch(monkeypatch: pytest.MonkeyPatch) -> None:
