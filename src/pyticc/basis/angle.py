@@ -147,6 +147,61 @@ def norm_reduced_wigner_d(
     return float(result) if result.ndim == 0 else result
 
 
+def norm_reduced_wigner_d_half(
+    two_j: int,
+    two_K: int,
+    two_omega: int,
+    theta: float | NDArray[np.float64],
+) -> float | NDArray[np.float64]:
+    r"""
+    Return a normalized reduced Wigner d function for integer or half-integer j.
+
+    Formula:
+        d^j_{K,Omega}(theta) is evaluated from its finite factorial sum and
+
+        d_tilde^j_{K,Omega}(theta) = sqrt((2j+1)/2) d^j_{K,Omega}(theta).
+
+        Every angular momentum and projection is supplied as twice its physical
+        value, which avoids floating-point half-integer comparisons.
+
+    Inputs:
+        two_j: int - twice j
+        two_K: int - twice the BF projection K
+        two_omega: int - twice the molecular-axis projection Omega
+        theta: float | NDArray[np.float64] - angle in radians
+
+    Returns:
+        value: float | NDArray[np.float64] - normalized reduced Wigner d values
+    """
+    if min(two_j, two_j + two_K, two_j - two_K, two_j + two_omega, two_j - two_omega) < 0:
+        message = f"Invalid doubled Wigner d indices: two_j={two_j}, two_K={two_K}, two_omega={two_omega}"
+        logger.error(message)
+        raise ValueError(message)
+    if any(value % 2 for value in (two_j + two_K, two_j + two_omega)):
+        message = "j, K, and Omega must have the same integer or half-integer character"
+        logger.error(message)
+        raise ValueError(message)
+
+    j_plus_omega = (two_j + two_omega) // 2
+    j_minus_omega = (two_j - two_omega) // 2
+    j_plus_K = (two_j + two_K) // 2
+    j_minus_K = (two_j - two_K) // 2
+    K_minus_omega = (two_K - two_omega) // 2
+    angles = np.asarray(theta, dtype=np.float64)
+    cosine = np.cos(0.5 * angles)
+    sine = np.sin(0.5 * angles)
+    log_prefactor = 0.5 * (gammaln(j_plus_omega + 1.0) + gammaln(j_minus_omega + 1.0) + gammaln(j_plus_K + 1.0) + gammaln(j_minus_K + 1.0))
+    result = np.zeros_like(angles)
+    for k in range(max(0, -K_minus_omega), min(j_minus_K, j_plus_omega) + 1):
+        cosine_power = two_j + (two_omega - two_K) // 2 - 2 * k
+        sine_power = K_minus_omega + 2 * k
+        log_denominator = gammaln(j_minus_K - k + 1.0) + gammaln(j_plus_omega - k + 1.0) + gammaln(K_minus_omega + k + 1.0) + gammaln(k + 1.0)
+        phase = -1.0 if (k + sine_power) % 2 else 1.0
+        result += phase * np.exp(log_prefactor - log_denominator) * cosine**cosine_power * sine**sine_power
+    result *= np.sqrt((two_j + 1.0) / 2.0)
+    return float(result) if result.ndim == 0 else result
+
+
 # --------------------------------------------------------------------------------
 
 

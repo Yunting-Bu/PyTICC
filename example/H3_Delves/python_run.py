@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 
 import pyticc as ticc
-from pyticc.scattering import reactive_atom_diatom
+from pyticc.scattering import delves
 
 EV2AU = 1.0 / 27.2114
 
@@ -37,7 +37,7 @@ def main() -> None:
             total_potential=pes,
         )
 
-        hamiltonian = reactive_atom_diatom.build_hamiltonian(system)
+        hamiltonian = delves.build_hamiltonian(system)
         basis = hamiltonian.basis
 
         print("Delves asymptotic diatoms:")

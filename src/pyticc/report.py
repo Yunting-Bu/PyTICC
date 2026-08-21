@@ -8,12 +8,14 @@ from pyticc.basis.kblock import KBlock
 from pyticc.basis.monomer import DiabaticDiatomBasis, DiatomBasis
 from pyticc.constants import AU2CM
 from pyticc.energy import EnergyInput, get_Etot
+from pyticc.fine_structure.channel import FSChannelBasis, FSMonomerBasis
 from pyticc.match.delves import DelvesAsymptoticBasis
 from pyticc.result import CoupledStatesResult, KBlockResult, ReactiveScatteringResult, ScatteringResult
 from pyticc.system import MolInnerState
 
 QuantumSelection: TypeAlias = int | range | Sequence[int] | None
 EnergySelection: TypeAlias = int | slice | Sequence[int] | None
+ReportBasis: TypeAlias = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | DelvesAsymptoticBasis
 
 
 # ----------------------------------------------------------------------------------------
@@ -63,6 +65,37 @@ def rovib_levels(basis: DiatomBasis | DiabaticDiatomBasis) -> str:
 
 
 # ----------------------------------------------------------------------------------------
+def fine_structure_levels(basis: FSMonomerBasis) -> str:
+    """
+    Format retained open-shell diatomic fine-structure levels.
+
+    Levels are reported relative to the monomer scattering zero and sorted in
+    the stored fixed-(v,j,parity) block order.
+
+    Inputs:
+        basis: FSMonomerBasis - vibrational and fine-structure eigenbasis
+
+    Returns:
+        output: str - level table with energies in cm-1
+    """
+    rows = [
+        [
+            str(block.v),
+            str(block.two_j / 2),
+            str(tau),
+            str(block.parity),
+            f"{(energy - basis.energy_zero) * AU2CM:.8f}",
+        ]
+        for block in basis.blocks
+        for tau, energy in enumerate(block.energies)
+    ]
+    return _table(("v", "j", "tau", "epsilon", "E_int/cm-1"), rows)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _is_atom_state(state: MolInnerState) -> bool:
     return state.v is None and state.t is None and state.electronic_state is None and state.j == 0
 
@@ -96,7 +129,7 @@ def _state_value(state: MolInnerState, attribute: str) -> str:
 
 
 # ----------------------------------------------------------------------------------------
-def channels(basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasis) -> str:
+def channels(basis: ReportBasis) -> str:
     """
     Format the channel quantum numbers and internal energies as a text table.
 
@@ -104,8 +137,7 @@ def channels(basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasi
     states are shown when present, while Jtot and parity are omitted.
 
     Inputs:
-        basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasis -
-            channel basis to report
+        basis: ReportBasis - channel basis to report
 
     Returns:
         output: str - formatted channel table with energies in cm-1
@@ -137,6 +169,23 @@ def channels(basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasi
             for index, channel in enumerate(basis, start=1)
         ]
         return _table(("n", "alpha", "m", "l", "m_l", "E_int/cm-1"), rows)
+
+    if isinstance(basis, FSChannelBasis):
+        rows = []
+        for index, channel in enumerate(basis, start=1):
+            block = basis.monomer.blocks[channel.block]
+            rows.append(
+                [
+                    str(index),
+                    str(block.v),
+                    str(block.two_j / 2),
+                    str(channel.tau),
+                    str(block.parity),
+                    str(channel.two_K / 2),
+                    f"{channel.E_int * AU2CM:.6f}",
+                ]
+            )
+        return _table(("n", "v", "j", "tau", "epsilon", "K", "E_int/cm-1"), rows)
 
     if basis.n_channel == 0:
         return _table(("n", "K", "E_int/cm-1"), ())
@@ -179,13 +228,12 @@ def channels(basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasi
 
 
 # ----------------------------------------------------------------------------------------
-def open_closed(basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasis, energies: EnergyInput) -> str:
+def open_closed(basis: ReportBasis, energies: EnergyInput) -> str:
     """
     Format open and closed channel counts at each total energy.
 
     Inputs:
-        basis: ChannelBasis | ChannelBasisElectricSF | DelvesAsymptoticBasis -
-            channel basis used to classify thresholds
+        basis: ReportBasis - channel basis used to classify thresholds
         energies: EnergyInput - total energies in atomic units, or a path to a
             one-column energy file
 
@@ -330,6 +378,45 @@ def _matches_electric(
         and (ell is None or channel.l in ell)
         and (m_l is None or channel.m_l in m_l)
     )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _smatrix_fine_structure(result: ScatteringResult, energy_indices: EnergySelection) -> str:
+    """Format an open-shell atom--diatom S matrix in its asymptotic SF basis."""
+    basis = cast(FSChannelBasis, result.basis)
+    rows: list[list[str]] = []
+    for energy_index in _energy_indices(energy_indices, result.Etot.size):
+        indices = result.open_channel_indices[energy_index]
+        matrix = result.Smat[energy_index]
+        for incoming, incoming_global in enumerate(indices):
+            initial_channel = basis[int(incoming_global)]
+            initial_block = basis.monomer.blocks[initial_channel.block]
+            for outgoing, outgoing_global in enumerate(indices):
+                final_channel = basis[int(outgoing_global)]
+                final_block = basis.monomer.blocks[final_channel.block]
+                value = matrix[outgoing, incoming]
+                rows.append(
+                    [
+                        f"{result.Etot[energy_index] * AU2CM:.8f}",
+                        str(initial_block.v),
+                        str(initial_block.two_j / 2),
+                        str(initial_channel.tau),
+                        str(initial_block.parity),
+                        f"{result.L[int(incoming_global)]:.8f}",
+                        str(final_block.v),
+                        str(final_block.two_j / 2),
+                        str(final_channel.tau),
+                        str(final_block.parity),
+                        f"{result.L[int(outgoing_global)]:.8f}",
+                        f"{value.real:.16E}",
+                        f"{value.imag:.16E}",
+                    ]
+                )
+    headers = ("Etot/cm-1", "v", "j", "tau", "epsilon", "L", "v'", "j'", "tau'", "epsilon'", "L'", "Re(S)", "Im(S)")
+    return _table(headers, rows)
 
 
 # ----------------------------------------------------------------------------------------
@@ -806,6 +893,24 @@ def smatrix(
             j_prime=j_prime,
             K_prime=K_prime,
         )
+
+    if isinstance(result, ScatteringResult) and isinstance(result.basis, FSChannelBasis):
+        _reject_filters(
+            "fine-structure",
+            (
+                ("state", state),
+                ("v", v),
+                ("j", j),
+                ("state_prime", state_prime),
+                ("v_prime", v_prime),
+                ("j_prime", j_prime),
+                *diatom_filters,
+                *electric_filters,
+                *delves_filters,
+                ("block_index", block_index),
+            ),
+        )
+        return _smatrix_fine_structure(result, energy_indices)
 
     if isinstance(result, ScatteringResult) and isinstance(result.basis, ChannelBasisElectricSF):
         _reject_filters(

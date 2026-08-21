@@ -7,7 +7,8 @@ from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.delves import DelvesBasis
 from pyticc.basis.kblock import KBlock
 from pyticc.energy import EnergyInput, get_Etot
-from pyticc.match.asymptotic import get_Bmat_BF_to_SF, transform_logD_BF_to_SF
+from pyticc.fine_structure.channel import FSChannelBasis
+from pyticc.match.asymptotic import get_Bmat_BF_to_SF, get_Bmat_FS_BF_to_SF, transform_logD_BF_to_SF
 from pyticc.match.delves import build_delves_asymptotic_basis, transform_logD_to_delves_channels
 from pyticc.match.delves_bessel import get_delves_Smat
 from pyticc.match.smatrix import get_Smat
@@ -18,7 +19,7 @@ from pyticc.result import KBlockResult, LogDArray, ReactiveScatteringResult, Sca
 
 # ----------------------------------------------------------------------------------------
 def finalize_scattering(
-    basis: ChannelBasis | ChannelBasisElectricSF,
+    basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis,
     Y_propagated: LogDArray,
     Etot: EnergyInput,
     reduced_mass: float,
@@ -41,8 +42,8 @@ def finalize_scattering(
         B = I,    L_eta = l_eta,    Y_asym = Y_propagated.
 
     Inputs:
-        basis: ChannelBasis | ChannelBasisElectricSF - complete exact channel
-            basis
+        basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis -
+            complete exact channel basis
         Y_propagated: LogDArray - final log derivatives in the propagated
             representation, shape
             (n_energy, n_channel, n_channel)
@@ -60,6 +61,9 @@ def finalize_scattering(
         asymptotic_transform = np.eye(basis.n_channel, dtype=np.float64)
         L = np.asarray([channel.l for channel in basis], dtype=np.float64)
         Y_asymptotic = Y_array
+    elif isinstance(basis, FSChannelBasis):
+        asymptotic_transform, L = get_Bmat_FS_BF_to_SF(basis)
+        Y_asymptotic = transform_logD_BF_to_SF(Y_array, asymptotic_transform)
     else:
         asymptotic_transform, L = get_Bmat_BF_to_SF(basis)
         Y_asymptotic = transform_logD_BF_to_SF(Y_array, asymptotic_transform)

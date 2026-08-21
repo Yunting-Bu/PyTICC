@@ -5,6 +5,7 @@ from numpy.typing import NDArray
 
 from pyticc.basis.angle import lambda_plus
 from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF
+from pyticc.fine_structure.channel import FSChannelBasis
 from pyticc.system import MolInnerState
 
 CentrifugalKey = tuple[MolInnerState, MolInnerState, int]
@@ -118,6 +119,67 @@ def get_Umat_ElectricSF(
 
     diagonal = np.asarray([basis[index].l * (basis[index].l + 1) for index in indices], dtype=np.float64)
     return np.diag(diagonal)
+
+
+def get_Umat_FS_BF(
+    basis: FSChannelBasis,
+    channel_indices: Sequence[int] | None = None,
+    *,
+    coriolis: bool = True,
+) -> NDArray[np.float64]:
+    r"""
+    Return the BF centrifugal matrix for integer or half-integer open-shell channels.
+
+    Formula:
+        U_KK = J(J+1)+j(j+1)-2K^2,
+
+        U_{K+1,K} = -b_K sqrt[J(J+1)-K(K+1)]
+          sqrt[j(j+1)-K(K+1)],
+
+        where b_K=sqrt(2) at the parity-adapted K=0 boundary and one otherwise.
+        For half-integer J and j, the primitive Coriolis coupling between
+        K=+1/2 and K=-1/2 becomes the diagonal boundary term
+
+        Delta U_(1/2,1/2) = -s (J+1/2)(j+1/2),
+        s = P epsilon (-1)^(j-J).
+
+    Inputs:
+        basis: FSChannelBasis - fixed-(J,P) fine-structure channels
+        channel_indices: Sequence[int] | None - selected complete-basis positions
+        coriolis: bool - whether to retain nearest-neighbor K coupling
+
+    Returns:
+        matrix: NDArray[np.float64] - dimensionless centrifugal matrix
+    """
+    indices = tuple(range(basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    channels = tuple(basis[index] for index in indices)
+    matrix = np.zeros((len(channels), len(channels)), dtype=np.float64)
+    J = basis.two_J / 2.0
+    groups: dict[tuple[int, int], dict[int, int]] = {}
+    for local_index, channel in enumerate(channels):
+        block = basis.monomer.blocks[channel.block]
+        j = block.two_j / 2.0
+        K = channel.two_K / 2.0
+        matrix[local_index, local_index] = J * (J + 1.0) + j * (j + 1.0) - 2.0 * K**2
+        if channel.two_K == 1:
+            exponent = (block.two_j - basis.two_J) // 2
+            parity_phase = basis.system_parity * block.parity * (-1) ** exponent
+            matrix[local_index, local_index] -= parity_phase * (J + 0.5) * (j + 0.5)
+        groups.setdefault((channel.block, channel.tau), {})[channel.two_K] = local_index
+    if not coriolis:
+        return matrix
+    for (block_index, _), K_to_index in groups.items():
+        j = basis.monomer.blocks[block_index].two_j / 2.0
+        for two_K, local_index in K_to_index.items():
+            next_index = K_to_index.get(two_K + 2)
+            if next_index is None:
+                continue
+            K = two_K / 2.0
+            boundary = np.sqrt(2.0) if two_K == 0 else 1.0
+            coupling = -boundary * np.sqrt(J * (J + 1.0) - K * (K + 1.0)) * np.sqrt(j * (j + 1.0) - K * (K + 1.0))
+            matrix[local_index, next_index] = coupling
+            matrix[next_index, local_index] = coupling
+    return matrix
 
 
 # ----------------------------------------------------------------------------------------

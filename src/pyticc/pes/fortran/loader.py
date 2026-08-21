@@ -6,8 +6,9 @@ from loguru import logger
 
 from pyticc.pes.adiabatic import PESWrapper
 from pyticc.pes.diabatic import DiabaticPESWrapper
-from pyticc.pes.fortran.compiler import prepare_diabatic_extension, prepare_extension, prepare_total_extension
-from pyticc.pes.fortran.executor import create_diabatic_pes_wrapper, create_pes_wrapper, create_total_pes
+from pyticc.pes.fortran.compiler import prepare_diabatic_extension, prepare_extension, prepare_lambda_extension, prepare_total_extension
+from pyticc.pes.fortran.executor import create_diabatic_pes_wrapper, create_lambda_pes, create_pes_wrapper, create_total_pes
+from pyticc.pes.lambda_pes import LambdaPES
 from pyticc.pes.total import TotalPES
 
 
@@ -84,6 +85,36 @@ def load_fortran_diabatic_pes(
     source_paths, wrapper_path, runtime_dir, configured_lapack = _resolve_inputs(sources, wrapper, workdir)
     module_name, extension = prepare_diabatic_extension(source_paths, wrapper_path, lapack=requested_lapack or configured_lapack)
     return create_diabatic_pes_wrapper(module_name, extension, runtime_dir, processes, n_state)
+
+
+def load_fortran_lambda_pes(
+    sources: Sequence[str | Path] | str | Path,
+    wrapper: str | Path | None = None,
+    *,
+    workdir: str | Path | None = None,
+    processes: int = 1,
+    lapack: bool = False,
+) -> LambdaPES:
+    """
+    Compile or load a Fortran signed-Lambda interaction PES.
+
+    The wrapper must define ``pyticc_lambda_grid`` returning ``(V_sum,V_dif)``
+    in Hartree. PyTICC supplies R and internal coordinates in bohr and radians.
+
+    Inputs:
+        sources: Sequence[str | Path] | str | Path - Fortran sources or TOML file
+        wrapper: str | Path | None - source implementing the PyTICC grid routine
+        workdir: str | Path | None - PES runtime-data directory
+        processes: int - persistent workers for radial batches
+        lapack: bool - whether the native PES requires LAPACK
+
+    Returns:
+        pes: LambdaPES - validated two-component interaction interface
+    """
+    requested_lapack = _require_lapack(lapack)
+    source_paths, wrapper_path, runtime_dir, configured_lapack = _resolve_inputs(sources, wrapper, workdir)
+    module_name, extension = prepare_lambda_extension(source_paths, wrapper_path, lapack=requested_lapack or configured_lapack)
+    return create_lambda_pes(module_name, extension, runtime_dir, processes)
 
 
 # ----------------------------------------------------------------------------------------

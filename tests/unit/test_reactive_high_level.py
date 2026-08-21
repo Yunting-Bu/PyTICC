@@ -1,7 +1,7 @@
 import numpy as np
 
 import pyticc as ticc
-from pyticc.scattering import reactive_atom_diatom
+from pyticc.scattering import delves
 
 
 def toy_total_pes() -> ticc.TotalPES:
@@ -31,7 +31,7 @@ def test_reactive_system_hamiltonian_and_solve_follow_common_flow() -> None:
     )
     assert isinstance(system.basis, ticc.DelvesBasis)
     basis = system.basis
-    hamiltonian = reactive_atom_diatom.build_hamiltonian(system)
+    hamiltonian = delves.build_hamiltonian(system)
     propagation = ticc.Propagation(
         (hamiltonian.basis.rho_min, 8.0),
         (1.0,),
@@ -46,7 +46,7 @@ def test_reactive_system_hamiltonian_and_solve_follow_common_flow() -> None:
     assert not hasattr(monomer, "rho_min")
     assert isinstance(system, ticc.ScattSystem)
     assert not hasattr(ticc, "ReactiveScattSystem")
-    assert not hasattr(reactive_atom_diatom, "build_channels")
+    assert not hasattr(delves, "build_channels")
     assert basis.qns == ((1, 0, 0, 0), (2, 0, 0, 0))
     assert basis.n_channel == 2
     assert isinstance(hamiltonian, ticc.DelvesHamiltonian)
@@ -111,7 +111,7 @@ def test_minimum_energy_zero_is_equivalent_to_converted_native_energies() -> Non
         channel=ticc.ChannelSpec(exchange_parity_Y=1, E_Y_cut=0.8, K_cut=0),
         total_potential=pes,
     )
-    minimum_hamiltonian = reactive_atom_diatom.build_hamiltonian(minimum_system)
+    minimum_hamiltonian = delves.build_hamiltonian(minimum_system)
 
     native_monomer = ticc.prepare_Delves(
         pes,
@@ -126,7 +126,7 @@ def test_minimum_energy_zero_is_equivalent_to_converted_native_energies() -> Non
         channel=ticc.ChannelSpec(exchange_parity_Y=1, E_Y_cut=0.8 + minimum_monomer.energy_zero, K_cut=0),
         total_potential=pes,
     )
-    native_hamiltonian = reactive_atom_diatom.build_hamiltonian(native_system)
+    native_hamiltonian = delves.build_hamiltonian(native_system)
 
     assert minimum_hamiltonian.energy_zero < 0.0
     assert native_hamiltonian.energy_zero == 0.0

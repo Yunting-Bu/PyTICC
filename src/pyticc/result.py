@@ -5,11 +5,12 @@ from numpy.typing import NDArray
 
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF, OpenClosedChannels
 from pyticc.basis.kblock import KBlock
+from pyticc.fine_structure.channel import FSChannelBasis
 from pyticc.match.delves import DelvesAsymptoticBasis
 from pyticc.system import Approx
 
 LogDArray = NDArray[np.float64] | NDArray[np.complex128]
-ScatteringBasis = ChannelBasis | ChannelBasisElectricSF
+ScatteringBasis = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis
 
 
 def _transform_logD(Ymat: LogDArray, transform: NDArray[np.float64]) -> LogDArray:
@@ -35,7 +36,7 @@ class ScatteringResult:
     Exact scattering result in one conserved-quantity block.
 
     Members:
-        basis: ChannelBasis | ChannelBasisElectricSF - propagated channel basis
+        basis: ScatteringBasis - propagated channel basis
         Etot: NDArray[np.float64] - total energies in atomic units, shape
             (n_energy,)
         Y_propagated: NDArray - final log-derivative matrices in the propagated

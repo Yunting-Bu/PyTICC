@@ -3,7 +3,7 @@ from typing import cast
 
 from loguru import logger
 
-import pyticc.scattering.atom_diatom as geometry
+import pyticc.scattering.energy_transfer.atom_diatom as geometry
 from pyticc.basis.monomer import AtomSpec, prepare_DiatomElectric
 from pyticc.constants import CM2AU
 from pyticc.input.common import (

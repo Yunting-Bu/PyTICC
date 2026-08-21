@@ -8,13 +8,14 @@ from loguru import logger
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.kblock import KBlock, build_cs_blocks, build_nncc_blocks
 from pyticc.energy import EnergyInput, get_Etot
+from pyticc.fine_structure.channel import FSChannelBasis
 from pyticc.match.finalize import finalize_K_block, finalize_reactive_scattering, finalize_scattering
 from pyticc.propagation.config import Propagation
 from pyticc.propagation.delves import propagate_delves
 from pyticc.propagation.runner import propagate, propagate_blocks
 from pyticc.result import CoupledStatesResult, ReactiveScatteringResult, ScatteringResult, Timing
-from pyticc.scattering.delves_hamiltonian import DelvesHamiltonian
 from pyticc.scattering.hamiltonian import ScattHamiltonian
+from pyticc.scattering.reactive.delves import DelvesHamiltonian
 from pyticc.system import Approx
 
 
@@ -97,6 +98,10 @@ def solve(
         )
 
     else:
+        if isinstance(basis, FSChannelBasis):
+            message = "Fine-structure channels currently support exact coupled channels; CS/NNCC will be added after exact validation"
+            logger.error(message)
+            raise NotImplementedError(message)
         basis_bf = cast(ChannelBasis, basis)
         blocks = build_k_blocks(hamiltonian)
         channel_blocks = tuple(block.channel_indices for block in blocks)

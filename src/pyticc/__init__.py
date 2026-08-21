@@ -16,13 +16,39 @@ from pyticc.basis.monomer import (
 )
 from pyticc.basis.rovib import RovibBasis
 from pyticc.basis.triatom import TriatomBasis, build_TriatomBasis
-from pyticc.constants import ANG2AU, AU2ANG, AU2CM, CM2AU
+from pyticc.constants import (
+    ANG2AU,
+    AU2ANG,
+    AU2CM,
+    AU2GHZ,
+    AU2HZ,
+    AU2KHZ,
+    AU2MHZ,
+    CM2AU,
+    GHZ2AU,
+    HZ2AU,
+    KHZ2AU,
+    MHZ2AU,
+    EnergyUnit,
+    energy_to_au,
+)
 from pyticc.electric import ElectricResponseTable, load_electric_response_csv
+from pyticc.fine_structure import FSConstants, FSConstantsTable, FSMonomerBasis, build_fs_channels, load_fs_constants_csv, prepare_fs_monomer
 from pyticc.input import run
-from pyticc.pes import DiabaticPESWrapper, PESWrapper, TotalPES, load_fortran_diabatic_pes, load_fortran_pes, load_fortran_total_pes
+from pyticc.pes import (
+    DiabaticPESWrapper,
+    LambdaPES,
+    PESWrapper,
+    TotalPES,
+    as_lambda_pes,
+    load_fortran_diabatic_pes,
+    load_fortran_lambda_pes,
+    load_fortran_pes,
+    load_fortran_total_pes,
+)
 from pyticc.propagation import Propagation
 from pyticc.result import CoupledStatesResult, ReactiveScatteringResult, ScatteringResult
-from pyticc.scattering import DelvesHamiltonian, ScattHamiltonian, solve
+from pyticc.scattering import DelvesHamiltonian, ScattHamiltonian, build_fs_hamiltonian, solve
 from pyticc.system import Approx, ChannelSpec, ScattSystem, build_ScattSystem, element_mass_au, element_masses_au, reduced_mass
 
 from . import report
@@ -33,6 +59,10 @@ __all__ = [
     "AtomSpec",
     "AU2ANG",
     "AU2CM",
+    "AU2GHZ",
+    "AU2HZ",
+    "AU2KHZ",
+    "AU2MHZ",
     "CM2AU",
     "CoupledStatesResult",
     "DelvesBasis",
@@ -43,7 +73,16 @@ __all__ = [
     "DiatomBasis",
     "DiatomElectricBasis",
     "ElectricResponseTable",
+    "EnergyUnit",
+    "FSConstants",
+    "FSConstantsTable",
+    "FSMonomerBasis",
+    "GHZ2AU",
+    "HZ2AU",
+    "KHZ2AU",
     "PESWrapper",
+    "LambdaPES",
+    "MHZ2AU",
     "Propagation",
     "ReactiveScatteringResult",
     "RovibBasis",
@@ -56,19 +95,26 @@ __all__ = [
     "build_DiabaticDiatomBasis",
     "build_DiatomBasis",
     "build_DiatomElectricBasis",
+    "build_fs_channels",
+    "build_fs_hamiltonian",
     "prepare_Diatom",
     "prepare_DiabaticDiatom",
     "prepare_DiatomElectric",
+    "prepare_fs_monomer",
     "prepare_Delves",
     "build_TriatomBasis",
     "build_SineDVR",
     "build_ScattSystem",
     "element_mass_au",
     "element_masses_au",
+    "energy_to_au",
     "load_fortran_diabatic_pes",
+    "load_fortran_lambda_pes",
     "load_fortran_pes",
     "load_fortran_total_pes",
+    "as_lambda_pes",
     "load_electric_response_csv",
+    "load_fs_constants_csv",
     "reduced_mass",
     "report",
     "run",

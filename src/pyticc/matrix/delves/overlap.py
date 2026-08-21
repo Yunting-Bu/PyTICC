@@ -4,9 +4,9 @@ from numpy.typing import ArrayLike, NDArray
 
 from pyticc.basis.angle import norm_YjK
 from pyticc.basis.delves import DelvesBasis, delves_angular_basis, delves_theta_basis, sine_basis, theta_max
-from pyticc.matrix.delves import transform_delves_coordinates
-from pyticc.matrix.delves_overlap import _arrangement_qns, _exchange_factor, parity_rotation
-from pyticc.matrix.delves_surface import _arrangement_slices
+from pyticc.matrix.delves.coupling import _arrangement_qns, _exchange_factor, parity_rotation
+from pyticc.matrix.delves.geometry import transform_delves_coordinates
+from pyticc.matrix.delves.surface import _arrangement_slices
 
 
 # ----------------------------------------------------------------------------------------

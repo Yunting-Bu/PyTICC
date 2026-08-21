@@ -5,7 +5,8 @@ from loguru import logger
 from numpy.typing import ArrayLike, NDArray
 
 from pyticc.basis.channel import ChannelBasis
-from pyticc.matrix.centrifugal import get_Umat_BF
+from pyticc.fine_structure.channel import FSChannelBasis
+from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_FS_BF
 
 
 # ----------------------------------------------------------------------------------------
@@ -104,6 +105,48 @@ def transform_logD_BF_to_SF(Ymat: ArrayLike, Bmat: ArrayLike) -> NDArray[np.floa
         raise ValueError(message)
 
     return np.einsum("ia,...ij,jb->...ab", Bmat_array, Ymat_array, Bmat_array, optimize=True)
+
+
+def get_Bmat_FS_BF_to_SF(
+    basis: FSChannelBasis,
+    channel_indices: Sequence[int] | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    r"""
+    Diagonalize open-shell BF centrifugal ladders into asymptotic orbital L.
+
+    Formula:
+        B.T U_BF B = diag[L(L+1)],
+        L = sqrt(lambda+1/4)-1/2.
+
+        Channels are diagonalized independently for every molecular eigenstate
+        (block,tau), so degenerate thresholds never mix accidentally.
+
+    Inputs:
+        basis: FSChannelBasis - fine-structure BF channels
+        channel_indices: Sequence[int] | None - selected complete-basis positions
+
+    Returns:
+        Bmat: NDArray[np.float64] - orthogonal BF-to-SF transformation
+        L: NDArray[np.float64] - asymptotic end-over-end angular momenta
+    """
+    indices = tuple(range(basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    if not indices:
+        raise ValueError("At least one fine-structure channel is required")
+    channels = tuple(basis[index] for index in indices)
+    Umat = get_Umat_FS_BF(basis, indices)
+    Bmat = np.zeros((len(indices), len(indices)), dtype=np.float64)
+    L = np.empty(len(indices), dtype=np.float64)
+    groups: dict[tuple[int, int], list[int]] = {}
+    for local_index, channel in enumerate(channels):
+        groups.setdefault((channel.block, channel.tau), []).append(local_index)
+    for positions_list in groups.values():
+        positions = np.asarray(positions_list, dtype=np.int64)
+        eigenvalues, eigenvectors = np.linalg.eigh(Umat[np.ix_(positions, positions)])
+        signs = np.where(eigenvectors[-1] < 0.0, -1.0, 1.0)
+        eigenvectors *= signs
+        Bmat[np.ix_(positions, positions)] = eigenvectors
+        L[positions] = np.sqrt(np.maximum(eigenvalues, 0.0) + 0.25) - 0.5
+    return Bmat, L
 
 
 # ----------------------------------------------------------------------------------------

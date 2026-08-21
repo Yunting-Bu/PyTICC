@@ -4,7 +4,9 @@ from pyticc import report
 from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF, ChannelElectricSF
 from pyticc.basis.kblock import KBlock
 from pyticc.basis.monomer import DiatomBasis
+from pyticc.basis.podvr import VibPODVR
 from pyticc.basis.rovib import RovibBasis
+from pyticc.fine_structure import FSConstants, build_fs_channels, build_fs_monomer_basis
 from pyticc.match.delves import DelvesAsymptoticBasis
 from pyticc.result import ReactiveScatteringResult, ScatteringResult
 from pyticc.system import MolInnerState
@@ -165,6 +167,49 @@ def test_electric_channels_reports_alpha_m_l_and_m_l() -> None:
 
     assert output.splitlines()[0].split() == ["n", "alpha", "m", "l", "m_l", "E_int/cm-1"]
     assert output.splitlines()[-1].split()[1:5] == ["1", "-1", "1", "1"]
+
+
+def test_fine_structure_channels_report_block_quantum_numbers() -> None:
+    vib = VibPODVR(np.array([2.0]), np.array([0.0]), np.ones((1, 1)))
+    monomer = build_fs_monomer_basis(vib, (1,), 2, 1, FSConstants(A=0.01, B=0.001))
+    basis = build_fs_channels(monomer, two_J=1, system_parity=1)
+
+    channel_output = report.channels(basis)
+    count_output = report.open_closed(basis, [1.0])
+
+    assert channel_output.splitlines()[0].split() == ["n", "v", "j", "tau", "epsilon", "K", "E_int/cm-1"]
+    assert channel_output.splitlines()[-1].split()[1:6] == ["0", "0.5", "0", "1", "0.5"]
+    assert count_output.splitlines()[-1].split()[-2:] == [str(basis.n_channel), "0"]
+
+
+def test_fine_structure_levels_report_tau_parity_and_relative_energy() -> None:
+    vib = VibPODVR(np.array([2.0]), np.array([0.0]), np.ones((1, 1)))
+    monomer = build_fs_monomer_basis(vib, (1,), 2, 1, FSConstants(A=0.01, B=0.001))
+
+    output = report.fine_structure_levels(monomer)
+
+    assert output.splitlines()[0].split() == ["v", "j", "tau", "epsilon", "E_int/cm-1"]
+    assert "0.00000000" in output
+
+
+def test_fine_structure_smatrix_reports_asymptotic_quantum_numbers() -> None:
+    vib = VibPODVR(np.array([2.0]), np.array([0.0]), np.ones((1, 1)))
+    monomer = build_fs_monomer_basis(vib, (1,), 2, 1, FSConstants(A=0.01, B=0.001))
+    basis = build_fs_channels(monomer, two_J=1, system_parity=1)
+    matrix = np.arange(basis.n_channel**2, dtype=np.float64).reshape(basis.n_channel, basis.n_channel).astype(np.complex128)
+    result = ScatteringResult(
+        basis=basis,
+        Etot=np.array([1.0]),
+        Y_propagated=np.zeros((1, basis.n_channel, basis.n_channel)),
+        asymptotic_transform=np.eye(basis.n_channel),
+        L=np.ones(basis.n_channel),
+        Smat=(matrix,),
+    )
+
+    output = report.smatrix(result)
+
+    assert output.splitlines()[0].split()[1:11] == ["v", "j", "tau", "epsilon", "L", "v'", "j'", "tau'", "epsilon'", "L'"]
+    assert f"{matrix[-1, 0].real:.16E}" in output
 
 
 def test_delves_channels_and_open_closed_use_arrangement_quantum_numbers() -> None:

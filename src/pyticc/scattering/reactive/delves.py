@@ -5,10 +5,11 @@ from loguru import logger
 from numpy.typing import NDArray
 
 from pyticc.basis.delves import DelvesBasis
-from pyticc.matrix.delves_metric import get_sector_transform_delves
-from pyticc.matrix.delves_reference import get_delves_reference_basis
-from pyticc.matrix.delves_surface import get_surface_matrices_delves, solve_surface_delves
+from pyticc.basis.monomer.delves import DelvesMonomer
+from pyticc.matrix.delves.overlap import get_sector_transform_delves
+from pyticc.matrix.delves.surface import get_delves_reference_basis, get_surface_matrices_delves, solve_surface_delves
 from pyticc.pes.total import TotalPES
+from pyticc.system import ScattSystem
 
 
 # ----------------------------------------------------------------------------------------
@@ -177,6 +178,53 @@ class DelvesHamiltonian:
             surface_b.rho,
             surface_b.coefficients,
         )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def build_hamiltonian(
+    system: ScattSystem,
+    *,
+    overlap_cut: float = 1.0e-4,
+) -> DelvesHamiltonian:
+    """
+    Build a Delves Hamiltonian from a reactive scattering system.
+
+    Inputs:
+        system: ScattSystem - system containing a prepared Delves monomer,
+            channel basis, and native total PES
+        overlap_cut: float - canonical channel-overlap eigenvalue cutoff
+
+    Returns:
+        hamiltonian: DelvesHamiltonian - reactive Hamiltonian accepted by the
+            common ``solve`` entry point
+    """
+    if not isinstance(system.monomer_X, DelvesMonomer) or system.monomer_Y is not None:
+        message = "Delves Hamiltonian requires a reactive system with one prepared Delves monomer"
+        logger.error(message)
+        raise TypeError(message)
+    if not isinstance(system.basis, DelvesBasis):
+        message = "Delves Hamiltonian requires channels prepared by build_ScattSystem"
+        logger.error(message)
+        raise TypeError(message)
+    if not isinstance(system.total_potential, TotalPES):
+        message = "Delves Hamiltonian requires a TotalPES"
+        logger.error(message)
+        raise TypeError(message)
+
+    basis = system.basis
+    native_total_potential = system.total_potential
+    total_potential = native_total_potential
+    if basis.energy_zero != 0.0:
+        total_potential = TotalPES(lambda bonds: native_total_potential(bonds) - basis.energy_zero)
+    return DelvesHamiltonian(
+        basis=basis,
+        total_potential=total_potential,
+        energy_zero=basis.energy_zero,
+        overlap_cut=overlap_cut,
+    )
 
 
 # ----------------------------------------------------------------------------------------

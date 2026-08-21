@@ -344,6 +344,7 @@ build_ScattSystem(
     monomer_Y=None,
     *,
     Jtot=None,
+    two_J=None,
     system_parity=None,
     M=None,
     channel=None,
@@ -366,9 +367,10 @@ build_ScattSystem(
 | 双原子–双原子 | `DiatomBasis` | `DiatomBasis` | `Jtot`、`system_parity` | `potential`、`reduced_mass` |
 | 原子–三原子 | `AtomSpec` | `TriatomBasis` | `Jtot`、`system_parity` | `potential`、`reduced_mass` |
 | 电场原子–双原子 | `AtomSpec` | `DiatomElectricBasis` | `M`、`lmax` | `potential`、`reduced_mass` |
+| 精细结构原子–双原子 | `AtomSpec` | `FSMonomerBasis` | `two_J`、`system_parity` | `LambdaPES`、`reduced_mass` |
 | Delves 反应散射 | `DelvesMonomer` | 省略 | `Jtot`、`system_parity`、`jmax` | `total_potential` |
 
-近似方法为 `Approx.EXACT`、`Approx.CS` 或 `Approx.NNCC`。`K_delta` 仅控制 NNCC 中相邻 `K` 的耦合窗口。非绝热、电场和 Delves 反应散射目前只支持 exact CC。
+近似方法为 `Approx.EXACT`、`Approx.CS` 或 `Approx.NNCC`。`K_delta` 仅控制 NNCC 中相邻 `K` 的耦合窗口。非绝热、电场、精细结构和 Delves 反应散射目前只支持 exact CC。
 
 ## 6. Hamiltonian 构造
 
@@ -378,9 +380,10 @@ Hamiltonian 构造函数位于对应的几何子模块中：
 from pyticc.scattering import (
     atom_diatom,
     atom_triatom,
+    delves,
     diabatic_atom_diatom,
     diatom_diatom,
-    reactive_atom_diatom,
+    fine_structure_atom_diatom,
 )
 ```
 
@@ -391,7 +394,8 @@ from pyticc.scattering import (
 | `diabatic_atom_diatom.build_hamiltonian(system, *, n_theta=16)` | 非绝热原子–双原子 |
 | `diatom_diatom.build_hamiltonian(system, *, n_theta_X=15, n_theta_Y=15, n_phi=12)` | 双原子–双原子 |
 | `atom_triatom.build_hamiltonian(system, *, n_theta_1=None, n_theta_2=16, n_phi=16)` | 原子–三原子 |
-| `reactive_atom_diatom.build_hamiltonian(system, *, overlap_cut=1e-4)` | Delves 三原子反应散射 |
+| `fine_structure_atom_diatom.build_hamiltonian(system, *, n_theta=24)` | 含精细结构的原子–双原子 |
+| `delves.build_hamiltonian(system, *, overlap_cut=1e-4)` | Delves 三原子反应散射 |
 
 返回值为 `ScattHamiltonian` 或 `DelvesHamiltonian`，通常直接传给 `solve`，不建议用户手工修改其内部矩阵回调。
 

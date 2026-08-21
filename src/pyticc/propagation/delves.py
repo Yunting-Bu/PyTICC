@@ -116,7 +116,7 @@ def propagate_delves(
         result: DelvesPropagationResult - final LogD, surface data, and fixed
             sector endpoints required for asymptotic matching
     """
-    from pyticc.scattering.delves_hamiltonian import DelvesHamiltonian, DelvesSurface
+    from pyticc.scattering.reactive.delves import DelvesHamiltonian, DelvesSurface
 
     if not isinstance(hamiltonian, DelvesHamiltonian):
         message = "Delves propagation requires a DelvesHamiltonian"

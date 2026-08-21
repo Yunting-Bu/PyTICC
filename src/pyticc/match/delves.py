@@ -5,8 +5,8 @@ from loguru import logger
 from numpy.typing import ArrayLike, NDArray
 
 from pyticc.basis.delves import DelvesBasis
-from pyticc.matrix.delves_metric import get_sector_overlap_delves
-from pyticc.matrix.delves_reference import get_delves_reference_basis
+from pyticc.matrix.delves.overlap import get_sector_overlap_delves
+from pyticc.matrix.delves.surface import get_delves_reference_basis
 from pyticc.pes.total import TotalPES
 
 

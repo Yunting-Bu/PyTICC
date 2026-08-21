@@ -14,13 +14,12 @@ from pyticc.constants import AMU2AU
 from pyticc.match.delves import build_delves_asymptotic_basis, transform_logD_to_delves_channels
 from pyticc.match.delves_bessel import get_delves_Smat, match_delves
 from pyticc.matrix.delves import asymptotic_potential, delves_bonds, get_Vgrid_delves, mass_scale
-from pyticc.matrix.delves_metric import get_sector_transform_delves
-from pyticc.matrix.delves_surface import get_surface_matrices_delves, solve_surface_delves
+from pyticc.matrix.delves.overlap import get_sector_transform_delves
+from pyticc.matrix.delves.surface import get_surface_matrices_delves, solve_surface_delves
 from pyticc.pes import load_fortran_total_pes
 from pyticc.propagation import Propagation, propagate_delves
 from pyticc.result import ReactiveScatteringResult
-from pyticc.scattering.delves_hamiltonian import DelvesHamiltonian
-from pyticc.scattering.reactive_atom_diatom import build_hamiltonian
+from pyticc.scattering.reactive.delves import DelvesHamiltonian, build_hamiltonian
 from pyticc.scattering.solver import solve
 from pyticc.system import build_ScattSystem
 

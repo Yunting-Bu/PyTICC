@@ -2,7 +2,7 @@ from pathlib import Path
 
 from loguru import logger
 
-import pyticc.scattering.diabatic_atom_diatom as geometry
+import pyticc.scattering.energy_transfer.diabatic_atom_diatom as geometry
 from pyticc.basis.monomer import AtomSpec, prepare_DiabaticDiatom
 from pyticc.constants import CM2AU
 from pyticc.input.common import TomlTable, approximation, diatom_symbols, energies, k_cut, propagation, required, section, state_int

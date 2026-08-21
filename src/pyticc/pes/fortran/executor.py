@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 
 from pyticc.pes.adiabatic import MonomerPES, PESWrapper
 from pyticc.pes.diabatic import DiabaticPESWrapper
+from pyticc.pes.lambda_pes import LambdaPES
 from pyticc.pes.total import TotalPES
 
 
@@ -118,6 +119,31 @@ def create_diabatic_pes_wrapper(
         interaction_many=interaction_many,
         _close=executor.close,
     )
+
+
+def create_lambda_pes(module_name: str, extension: Path, workdir: Path | None, processes: int) -> LambdaPES:
+    """Load a compiled extension exposing V_sum and V_dif interaction grids."""
+    routine_name = "pyticc_lambda_grid"
+    spec = _FortranPESSpec(module_name, extension, workdir, routine_name)
+    module = _load_module(module_name, extension)
+    interaction = _make_interaction(module, workdir, routine_name)
+    executor = _FortranPESExecutor(spec, processes, interaction)
+    monomer_routine: Callable[..., object] | None = getattr(module, "pyticc_monomer_y_grid", None)
+
+    def interaction_many(R: NDArray[np.float64], coordinates: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Evaluate a radial batch, returning shape (n_R,n_grid,2)."""
+        return executor.evaluate(R, coordinates)
+
+    monomer_Y: MonomerPES | None = None
+    if monomer_routine is not None:
+
+        def evaluate_monomer_Y(r: NDArray[np.float64]) -> NDArray[np.float64]:
+            with _in_workdir(workdir):
+                return np.asarray(monomer_routine(np.ascontiguousarray(r)), dtype=np.float64)
+
+        monomer_Y = evaluate_monomer_Y
+
+    return LambdaPES(interaction=interaction, interaction_many=interaction_many, monomer_Y=monomer_Y, _close=executor.close)
 
 
 # ----------------------------------------------------------------------------------------

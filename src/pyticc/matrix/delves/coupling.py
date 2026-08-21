@@ -10,8 +10,8 @@ from pyticc.basis.delves import (
     sine_basis,
     theta_max,
 )
-from pyticc.matrix.delves import asymptotic_potential, get_Vgrid_delves, mass_scale, transform_delves_coordinates
-from pyticc.matrix.delves_hamiltonian import _get_Hmat_delves_grid
+from pyticc.matrix.delves.geometry import asymptotic_potential, get_Vgrid_delves, mass_scale, transform_delves_coordinates
+from pyticc.matrix.delves.hamiltonian import _get_Hmat_delves_grid
 from pyticc.pes.total import TotalPES
 
 

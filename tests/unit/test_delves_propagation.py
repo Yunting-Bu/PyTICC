@@ -7,7 +7,7 @@ from pyticc.matrix.delves import mass_scale
 from pyticc.pes.total import TotalPES
 from pyticc.propagation.config import Propagation
 from pyticc.propagation.delves import propagate_delves
-from pyticc.scattering.delves_hamiltonian import DelvesHamiltonian
+from pyticc.scattering.reactive.delves import DelvesHamiltonian
 
 
 def make_basis() -> DelvesBasis:
@@ -33,7 +33,7 @@ def make_hamiltonian(pes: TotalPES) -> DelvesHamiltonian:
 
 
 def install_scalar_surface(monkeypatch: pytest.MonkeyPatch, energy) -> None:
-    import pyticc.scattering.delves_hamiltonian as module
+    import pyticc.scattering.reactive.delves as module
 
     monkeypatch.setattr(module, "get_surface_matrices_delves", lambda basis, total_pes, rho: (np.array([[energy(rho)]]), np.eye(1)))
     monkeypatch.setattr(

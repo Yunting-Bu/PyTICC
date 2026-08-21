@@ -10,13 +10,14 @@ from numpy.typing import NDArray
 
 from pyticc._typing import JaxDevice
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
-from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_ElectricSF
+from pyticc.fine_structure.channel import FSChannelBasis
+from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_ElectricSF, get_Umat_FS_BF
 from pyticc.system import Approx
 
 Interaction = Callable[[float | NDArray[np.float64]], NDArray[np.float64]]
 BlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[NDArray[np.float64], ...]]
 DeviceBlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...], JaxDevice], tuple[jax.Array, ...]]
-ScatteringBasis = ChannelBasis | ChannelBasisElectricSF
+ScatteringBasis = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis
 
 
 # ----------------------------------------------------------------------------------------
@@ -36,7 +37,7 @@ class ScattHamiltonian:
         object retains only the data required after Hamiltonian construction.
 
     Members:
-        basis: ChannelBasis | ChannelBasisElectricSF - complete channel basis
+        basis: ScatteringBasis - complete channel basis
         reduced_mass: float - collision reduced mass in atomic units
         approx: Approx - exact CC, CS, or NNCC approximation
         K_delta: int - neighboring-K range used by NNCC
@@ -59,10 +60,6 @@ class ScattHamiltonian:
     potential_grid_size: int = 0
 
     def __post_init__(self) -> None:
-        if self.reduced_mass <= 0.0:
-            message = f"Scattering reduced_mass must be positive, but got {self.reduced_mass}"
-            logger.error(message)
-            raise ValueError(message)
         if self.K_delta < 1:
             message = f"K_delta must be positive, but got {self.K_delta}"
             logger.error(message)
@@ -87,6 +84,8 @@ class ScattHamiltonian:
         """
         if isinstance(self.basis, ChannelBasisElectricSF):
             return get_Umat_ElectricSF(self.basis, channel_indices)
+        if isinstance(self.basis, FSChannelBasis):
+            return get_Umat_FS_BF(self.basis, channel_indices)
         return get_Umat_BF(self.basis, channel_indices)
 
     @property

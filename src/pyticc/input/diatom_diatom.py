@@ -2,7 +2,7 @@ from pathlib import Path
 
 from loguru import logger
 
-import pyticc.scattering.diatom_diatom as geometry
+import pyticc.scattering.energy_transfer.diatom_diatom as geometry
 from pyticc.constants import CM2AU
 from pyticc.input.common import TomlTable, approximation, build_diatom, diatom_symbols, energies, k_cut, propagation, required, section
 from pyticc.pes.adiabatic import PESWrapper

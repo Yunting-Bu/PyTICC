@@ -14,6 +14,7 @@ from pyticc.basis.monomer.delves import DelvesMonomer
 from pyticc.constants import AMU2AU
 from pyticc.pes.adiabatic import PESWrapper
 from pyticc.pes.diabatic import DiabaticPESWrapper
+from pyticc.pes.lambda_pes import LambdaPES
 from pyticc.pes.total import TotalPES
 
 # ----------------------------------------------------------------------------------------
@@ -168,6 +169,27 @@ class ElectricMonomerSpec(Protocol):
 
 
 # ----------------------------------------------------------------------------------------
+class FineStructureMonomerSpec(Protocol):
+    @property
+    def energy_zero(self) -> float:
+        """Return the fine-structure threshold zero in atomic units."""
+        ...
+
+    @property
+    def two_lambda_abs(self) -> int:
+        """Return twice the absolute electronic orbital projection."""
+        ...
+
+    @property
+    def two_S(self) -> int:
+        """Return twice the electronic spin."""
+        ...
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 class ChannelBasisSpec(Protocol):
     @property
     def n_channel(self) -> int:
@@ -254,17 +276,19 @@ class ScattSystem:
     Members:
         monomer_X: MonomerSpec | DelvesMonomer - first monomer internal-state
             model, or physical Delves monomer information
-        monomer_Y: MonomerSpec | ElectricMonomerSpec | None - second monomer
-            internal-state model; None for a Delves calculation
+        monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None -
+            second monomer internal-state model; None for a Delves calculation
         Jtot: int | None - conserved total angular momentum for a field-free
-            calculation
+            closed-shell calculation
+        two_J: int | None - twice the conserved total angular momentum for a
+            fine-structure calculation
         system_parity: int | None - conserved total parity for a field-free
             calculation, -1 or 1
         M: int | None - conserved projection on the SF electric-field axis for
             an electric-field calculation
         approx: Approx - exact CC, CS, or NNCC approximation
         K_delta: int - neighboring-K range used by NNCC
-        potential: PESWrapper | DiabaticPESWrapper | None - interaction PES for
+        potential: PESWrapper | LambdaPES | DiabaticPESWrapper | None - interaction PES for
             a nonreactive calculation
         total_potential: TotalPES | None - scalar total three-body PES for a
             Delves reactive calculation
@@ -276,13 +300,14 @@ class ScattSystem:
     """
 
     monomer_X: MonomerSpec | DelvesMonomer
-    monomer_Y: MonomerSpec | ElectricMonomerSpec | None = None
+    monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None = None
     Jtot: int | None = None
+    two_J: int | None = None
     system_parity: int | None = None
     M: int | None = None
     approx: Approx = Approx.EXACT
     K_delta: int = 1
-    potential: PESWrapper | DiabaticPESWrapper | None = None
+    potential: PESWrapper | LambdaPES | DiabaticPESWrapper | None = None
     total_potential: TotalPES | None = None
     reduced_mass: float | None = None
     channel_spec: ChannelSpec | None = None
@@ -291,6 +316,14 @@ class ScattSystem:
     def __post_init__(self) -> None:
         if self.Jtot is not None and self.Jtot < 0:
             message = f"Invalid Jtot {self.Jtot}. Must be non-negative."
+            logger.error(message)
+            raise ValueError(message)
+        if self.two_J is not None and self.two_J < 0:
+            message = f"Invalid two_J {self.two_J}. Must be non-negative."
+            logger.error(message)
+            raise ValueError(message)
+        if self.Jtot is not None and self.two_J is not None:
+            message = "Specify Jtot for closed-shell channels or two_J for fine-structure channels, not both"
             logger.error(message)
             raise ValueError(message)
         if self.system_parity is not None and self.system_parity not in (-1, 1):
@@ -322,9 +355,10 @@ class ScattSystem:
 # ----------------------------------------------------------------------------------------
 def build_ScattSystem(
     monomer_X: MonomerSpec | DelvesMonomer,
-    monomer_Y: MonomerSpec | ElectricMonomerSpec | None = None,
+    monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None = None,
     *,
     Jtot: int | None = None,
+    two_J: int | None = None,
     system_parity: int | None = None,
     M: int | None = None,
     channel: ChannelSpec | None = None,
@@ -332,7 +366,7 @@ def build_ScattSystem(
     lmax: int | None = None,
     approx: Approx = Approx.EXACT,
     K_delta: int = 1,
-    potential: PESWrapper | DiabaticPESWrapper | None = None,
+    potential: PESWrapper | LambdaPES | DiabaticPESWrapper | None = None,
     total_potential: TotalPES | None = None,
     reduced_mass: float | None = None,
 ) -> ScattSystem:
@@ -342,9 +376,11 @@ def build_ScattSystem(
     Inputs:
         monomer_X: MonomerSpec | DelvesMonomer - prepared first monomer, or
             physical Delves monomer information
-        monomer_Y: MonomerSpec | ElectricMonomerSpec | None - prepared second
-            monomer; None for a Delves calculation
+        monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None -
+            prepared second monomer; None for a Delves calculation
         Jtot: int | None - conserved total angular momentum for a field-free block
+        two_J: int | None - twice conserved total angular momentum for a
+            fine-structure block
         system_parity: int | None - conserved field-free total parity, -1 or 1
         M: int | None - conserved SF projection for an electric-field block
         channel: ChannelSpec | None - vibrational, exchange-parity, energy, and
@@ -355,7 +391,7 @@ def build_ScattSystem(
             electric-field block
         approx: Approx - exact CC, CS, or NNCC approximation
         K_delta: int - neighboring-K range used by NNCC
-        potential: PESWrapper | DiabaticPESWrapper | None - interaction PES
+        potential: PESWrapper | LambdaPES | DiabaticPESWrapper | None - interaction PES
         total_potential: TotalPES | None - Delves scalar total three-body PES
         reduced_mass: float | None - collision reduced mass in atomic units
 
@@ -364,12 +400,14 @@ def build_ScattSystem(
     """
     from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF, build_ChannelBasis, build_ChannelBasisElectricSF
     from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis
+    from pyticc.fine_structure.channel import FSChannelBasis, FSMonomerBasis, build_fs_channels
 
     channel_spec = ChannelSpec() if channel is None else channel
     system = ScattSystem(
         monomer_X=monomer_X,
         monomer_Y=monomer_Y,
         Jtot=Jtot,
+        two_J=two_J,
         system_parity=system_parity,
         M=M,
         approx=approx,
@@ -451,12 +489,39 @@ def build_ScattSystem(
         logger.error(message)
         raise ValueError(message)
 
-    if isinstance(monomer_Y, DiatomElectricBasis):
+    if isinstance(monomer_Y, FSMonomerBasis):
+        from pyticc.basis.monomer import AtomSpec
+
+        if not isinstance(monomer_X, AtomSpec):
+            message = "Fine-structure system construction requires AtomSpec as monomer_X"
+            logger.error(message)
+            raise TypeError(message)
+        if two_J is None or system_parity is None:
+            message = "Fine-structure system construction requires two_J and system_parity"
+            logger.error(message)
+            raise ValueError(message)
+        if not isinstance(potential, LambdaPES):
+            message = "Fine-structure system construction requires a LambdaPES"
+            logger.error(message)
+            raise TypeError(message)
+        if approx is not Approx.EXACT:
+            message = "Fine-structure scattering currently supports only exact coupled channels"
+            logger.error(message)
+            raise ValueError(message)
+        two_K_cut = None if channel_spec.K_cut is None else 2 * channel_spec.K_cut
+        basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis = build_fs_channels(
+            monomer_Y,
+            two_J=two_J,
+            system_parity=system_parity,
+            E_cut=channel_spec.E_Y_cut,
+            two_K_cut=two_K_cut,
+        )
+    elif isinstance(monomer_Y, DiatomElectricBasis):
         if M is None or lmax is None:
             message = "Electric-field system construction requires M and lmax"
             logger.error(message)
             raise ValueError(message)
-        basis: ChannelBasis | ChannelBasisElectricSF = build_ChannelBasisElectricSF(
+        basis = build_ChannelBasisElectricSF(
             monomer_Y,
             M=M,
             lmax=lmax,

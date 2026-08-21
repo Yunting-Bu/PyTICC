@@ -3,7 +3,7 @@ from loguru import logger
 from numpy.typing import NDArray
 
 from pyticc.basis.delves import DelvesBasis, delves_angular_basis, delves_theta_basis
-from pyticc.matrix.delves import get_Vgrid_delves, mass_scale
+from pyticc.matrix.delves.geometry import get_Vgrid_delves, mass_scale
 from pyticc.pes.total import TotalPES
 
 

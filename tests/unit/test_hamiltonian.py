@@ -4,7 +4,7 @@ import pyticc as ticc
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF, build_ChannelBasis
 from pyticc.basis.monomer.diatom_electric import DiatomElectricBlock
 from pyticc.basis.rovib import RovibBasis
-from pyticc.scattering.atom_diatom import build_hamiltonian, build_hamiltonian_electric_sf
+from pyticc.scattering.energy_transfer.atom_diatom import build_hamiltonian, build_hamiltonian_electric_sf
 
 
 def _hamiltonian() -> ticc.ScattHamiltonian:

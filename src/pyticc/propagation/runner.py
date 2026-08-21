@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 from time import perf_counter
 from typing import TypeAlias, cast
@@ -18,12 +19,87 @@ from pyticc.matrix.centrifugal import get_Umat_BF
 from pyticc.matrix.radial import get_Wmat
 from pyticc.propagation.config import Propagation
 from pyticc.propagation.device import resolve_device
-from pyticc.propagation.grid import build_radial_sectors, iter_radial_windows
+from pyticc.propagation.grid import RadialSector, build_radial_sectors, iter_radial_windows
 from pyticc.propagation.logd import initialize_logD_capture, initialize_logD_inelastic, propagate_logD
 from pyticc.scattering.hamiltonian import ScattHamiltonian
 
 InteractionMatrix: TypeAlias = NDArray[np.float64] | jax.Array
 InteractionProvider = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...], JaxDevice], tuple[InteractionMatrix, ...]]
+RadialWindow: TypeAlias = tuple[tuple[RadialSector, ...], NDArray[np.float64]]
+InteractionWindow: TypeAlias = tuple[
+    tuple[RadialSector, ...],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    bool,
+    tuple[InteractionMatrix, ...],
+]
+
+
+def _evaluate_interaction_windows(
+    windows: Iterator[RadialWindow],
+    interaction_provider: InteractionProvider,
+    blocks: tuple[tuple[int, ...], ...],
+    device: JaxDevice,
+    *,
+    prefetch: bool,
+) -> Iterator[InteractionWindow]:
+    """Evaluate radial interactions sequentially or with one-window lookahead.
+
+    GPU propagation uses a single background thread to drive the Fortran PES
+    process pool for the next radial window while the current device contraction
+    and log-derivative propagation are in flight. CPU propagation remains
+    sequential to avoid competing with its own JAX and BLAS threads.
+
+    Inputs:
+        windows: Iterator[RadialWindow] - memory-bounded radial windows
+        interaction_provider: InteractionProvider - PES and contraction callback
+        blocks: tuple[tuple[int, ...], ...] - channel positions for each block
+        device: JaxDevice - selected contraction and propagation device
+        prefetch: bool - whether to evaluate one future window concurrently
+
+    Yields:
+        window: tuple[RadialSector, ...] - current propagation sectors
+        radial_points: NDArray[np.float64] - all start, midpoint, and end points
+        new_points: NDArray[np.float64] - points requiring new PES evaluation
+        reuse_endpoint: bool - whether the first interaction is cached
+        interactions: tuple[InteractionMatrix, ...] - new matrices per block
+    """
+    try:
+        current_window, current_points = next(windows)
+    except StopIteration:
+        return
+
+    current_reuse = False
+    current_new_points = current_points
+    current_interactions = interaction_provider(current_new_points, blocks, device)
+    if not prefetch:
+        yield current_window, current_points, current_new_points, current_reuse, current_interactions
+        previous_R = float(current_points[-1])
+        for current_window, current_points in windows:
+            current_reuse = np.isclose(current_points[0], previous_R, rtol=0.0, atol=1.0e-12)
+            current_new_points = current_points[1:] if current_reuse else current_points
+            current_interactions = interaction_provider(current_new_points, blocks, device)
+            yield current_window, current_points, current_new_points, current_reuse, current_interactions
+            previous_R = float(current_points[-1])
+        return
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pyticc-pes-prefetch") as executor:
+        while True:
+            try:
+                next_window, next_points = next(windows)
+            except StopIteration:
+                yield current_window, current_points, current_new_points, current_reuse, current_interactions
+                return
+
+            next_reuse = np.isclose(next_points[0], current_points[-1], rtol=0.0, atol=1.0e-12)
+            next_new_points = next_points[1:] if next_reuse else next_points
+            next_interactions = executor.submit(interaction_provider, next_new_points, blocks, device)
+            yield current_window, current_points, current_new_points, current_reuse, current_interactions
+            current_window = next_window
+            current_points = next_points
+            current_new_points = next_new_points
+            current_reuse = next_reuse
+            current_interactions = next_interactions.result()
 
 
 # ----------------------------------------------------------------------------------------
@@ -136,18 +212,26 @@ def _propagate_blocks(
     next_progress = progress_interval
     completed_sectors = 0
     propagation_start = perf_counter()
+    prefetch_interactions = selected_device.device.platform == "gpu"
     logger.info(f"Propagation device: {selected_device.label}, x64={jax.config.read('jax_enable_x64')}")
     if config.print_verbose:
-        logger.info(f"Propagation started: blocks={len(blocks)}, sectors={n_sector}, channels={max(block_sizes)}, energies={energies.size}")
+        logger.info(
+            f"Propagation started: blocks={len(blocks)}, sectors={n_sector}, channels={max(block_sizes)}, "
+            f"energies={energies.size}, pes_prefetch={prefetch_interactions}"
+        )
 
     Y_states: list[jax.Array | None] = [None] * len(blocks)
     cached_R: float | None = None
     cached_interactions: list[InteractionMatrix | None] = [None] * len(blocks)
 
-    for window_index, (window, radial_points) in enumerate(windows):
-        reuse_endpoint = cached_R is not None and np.isclose(radial_points[0], cached_R, rtol=0.0, atol=1.0e-12)
-        new_points = radial_points[1:] if reuse_endpoint else radial_points
-        new_interactions = interaction_provider(new_points, blocks, selected_device.device)
+    interaction_windows = _evaluate_interaction_windows(
+        windows,
+        interaction_provider,
+        blocks,
+        selected_device.device,
+        prefetch=prefetch_interactions,
+    )
+    for window_index, (window, radial_points, new_points, reuse_endpoint, new_interactions) in enumerate(interaction_windows):
         if len(new_interactions) != len(blocks):
             message = f"Interaction provider returned {len(new_interactions)} blocks, but expected {len(blocks)}"
             logger.error(message)

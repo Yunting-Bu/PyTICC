@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 from pyticc.basis.delves import DelvesBasis, build_delves_qns
-from pyticc.matrix.delves_hamiltonian import get_Hmat_delves
-from pyticc.matrix.delves_overlap import get_HSmat_delves
-from pyticc.matrix.delves_surface import get_surface_matrices_delves, solve_surface_delves
+from pyticc.matrix.delves.coupling import get_HSmat_delves
+from pyticc.matrix.delves.hamiltonian import get_Hmat_delves
+from pyticc.matrix.delves.surface import get_surface_matrices_delves, solve_surface_delves
 from pyticc.pes.total import TotalPES
 
 

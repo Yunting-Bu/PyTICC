@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Event
 
 import numpy as np
 from loguru import logger
@@ -6,7 +7,9 @@ from loguru import logger
 import pyticc as ticc
 from pyticc.basis.channel import ChannelBasis, build_ChannelBasis
 from pyticc.basis.monomer import DiatomSpec
-from pyticc.propagation.runner import propagate, propagate_blocks
+from pyticc.propagation.device import resolve_device
+from pyticc.propagation.grid import RadialSector
+from pyticc.propagation.runner import _evaluate_interaction_windows, propagate, propagate_blocks
 
 
 def _basis() -> ChannelBasis:
@@ -96,6 +99,44 @@ def test_propagate_streams_small_windows_without_repeating_endpoints() -> None:
     np.testing.assert_allclose(evaluated_R[0], [3.0, 3.1, 3.2])
     np.testing.assert_allclose(evaluated_R[1], [3.3, 3.4])
     np.testing.assert_allclose(streamed, full, rtol=1.0e-13, atol=1.0e-13)
+
+
+def test_gpu_interaction_prefetch_starts_next_window_before_current_is_consumed() -> None:
+    first_window = (RadialSector(3.0, 3.2),)
+    second_window = (RadialSector(3.2, 3.4),)
+    windows = iter(
+        (
+            (first_window, np.array([3.0, 3.1, 3.2])),
+            (second_window, np.array([3.2, 3.3, 3.4])),
+        )
+    )
+    prefetch_started = Event()
+    release_prefetch = Event()
+    evaluated_points: list[np.ndarray] = []
+
+    def interaction_provider(radial_points, blocks, device):
+        evaluated_points.append(radial_points.copy())
+        if len(evaluated_points) == 2:
+            prefetch_started.set()
+            assert release_prefetch.wait(timeout=2.0)
+        return (np.zeros((radial_points.size, 1, 1)),)
+
+    interaction_windows = _evaluate_interaction_windows(
+        windows,
+        interaction_provider,
+        ((0,),),
+        resolve_device("cpu").device,
+        prefetch=True,
+    )
+    current = next(interaction_windows)
+
+    assert current[0] == first_window
+    assert prefetch_started.wait(timeout=2.0)
+    release_prefetch.set()
+    following = next(interaction_windows)
+    assert following[0] == second_window
+    np.testing.assert_allclose(evaluated_points[0], [3.0, 3.1, 3.2])
+    np.testing.assert_allclose(evaluated_points[1], [3.3, 3.4])
 
 
 def test_propagate_blocks_selects_one_nncc_block() -> None:

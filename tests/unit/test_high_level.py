@@ -57,6 +57,15 @@ def _solve_atom(
 
 def test_common_setup_tools_are_available_from_top_level() -> None:
     assert ticc.CM2AU * ticc.AU2CM == 1.0
+    np.testing.assert_allclose(
+        [
+            ticc.HZ2AU * ticc.AU2HZ,
+            ticc.KHZ2AU * ticc.AU2KHZ,
+            ticc.MHZ2AU * ticc.AU2MHZ,
+            ticc.GHZ2AU * ticc.AU2GHZ,
+        ],
+        1.0,
+    )
     assert ticc.reduced_mass(2.0, 2.0) == 1.0
     assert callable(ticc.build_SineDVR)
     assert callable(ticc.prepare_Diatom)

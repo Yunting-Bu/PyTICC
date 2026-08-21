@@ -3,7 +3,7 @@ import pytest
 
 from pyticc.basis.delves import DelvesBasis, build_delves_qns, delves_angular_basis, delves_theta_basis
 from pyticc.matrix.delves import get_Vgrid_delves
-from pyticc.matrix.delves_hamiltonian import get_Hmat_delves, get_Hmat_delves_K
+from pyticc.matrix.delves.hamiltonian import get_Hmat_delves, get_Hmat_delves_K
 from pyticc.pes.total import TotalPES
 
 

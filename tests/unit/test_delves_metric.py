@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 from pyticc.basis.delves import DelvesBasis, build_delves_qns, delves_theta_basis, sine_basis, theta_max
-from pyticc.matrix.delves_metric import _cross_arrangement_overlap, get_sector_overlap_delves, get_sector_transform_delves
-from pyticc.matrix.delves_surface import get_surface_matrices_delves, solve_surface_delves
+from pyticc.matrix.delves.overlap import _cross_arrangement_overlap, get_sector_overlap_delves, get_sector_transform_delves
+from pyticc.matrix.delves.surface import get_surface_matrices_delves, solve_surface_delves
 from pyticc.pes.total import TotalPES
 
 

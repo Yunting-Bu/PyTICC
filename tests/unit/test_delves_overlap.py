@@ -4,7 +4,7 @@ import pytest
 from pyticc.basis.angle import norm_YjK
 from pyticc.basis.delves import DelvesBasis, build_delves_qns, delves_angular_basis, delves_theta_basis, sine_basis, theta_max
 from pyticc.matrix.delves import mass_scale, transform_delves_coordinates
-from pyticc.matrix.delves_overlap import _cross_integrals, get_HSmat_delves, get_Smat_delves, parity_rotation
+from pyticc.matrix.delves.coupling import _cross_integrals, get_HSmat_delves, get_Smat_delves, parity_rotation
 from pyticc.pes.total import TotalPES
 
 

@@ -11,9 +11,10 @@ from typing import Literal
 import numpy as np
 from loguru import logger
 
-PESABI = Literal["scalar", "diabatic", "total"]
+PESABI = Literal["scalar", "lambda", "diabatic", "total"]
 _SCALAR_ROUTINES = ("pyticc_interaction_grid", "pyticc_monomer_x_grid", "pyticc_monomer_y_grid")
 _DIABATIC_ROUTINES = ("pyticc_diabatic_interaction_grid", "pyticc_diabatic_monomer_grid")
+_LAMBDA_ROUTINES = ("pyticc_lambda_grid", "pyticc_monomer_y_grid")
 _TOTAL_ROUTINES = ("pyticc_total_grid",)
 _INCLUDE_PATTERN = re.compile(r"^\s*include\s*['\"]([^'\"]+)['\"]", re.IGNORECASE | re.MULTILINE)
 
@@ -39,6 +40,11 @@ def prepare_extension(sources: tuple[Path, ...], wrapper: Path, *, lapack: bool 
 def prepare_diabatic_extension(sources: tuple[Path, ...], wrapper: Path, *, lapack: bool = False) -> tuple[str, Path]:
     """Return a cached or newly compiled diabatic PES extension."""
     return _prepare_extension(sources, wrapper, "diabatic", lapack)
+
+
+def prepare_lambda_extension(sources: tuple[Path, ...], wrapper: Path, *, lapack: bool = False) -> tuple[str, Path]:
+    """Return a cached or newly compiled signed-Lambda PES extension."""
+    return _prepare_extension(sources, wrapper, "lambda", lapack)
 
 
 # ----------------------------------------------------------------------------------------
@@ -174,10 +180,11 @@ def _require_build_tools() -> str:
 def _find_routines(wrapper: Path, abi: PESABI = "scalar") -> set[str]:
     """Detect supported PyTICC wrapper subroutines and require one complete ABI."""
     source = wrapper.read_text(errors="ignore")
-    supported = {"scalar": _SCALAR_ROUTINES, "diabatic": _DIABATIC_ROUTINES, "total": _TOTAL_ROUTINES}[abi]
+    supported = {"scalar": _SCALAR_ROUTINES, "lambda": _LAMBDA_ROUTINES, "diabatic": _DIABATIC_ROUTINES, "total": _TOTAL_ROUTINES}[abi]
     routines = {name for name in supported if re.search(rf"^\s*subroutine\s+{name}\b", source, re.IGNORECASE | re.MULTILINE)}
     required = {
         "scalar": {"pyticc_interaction_grid"},
+        "lambda": {"pyticc_lambda_grid"},
         "diabatic": set(_DIABATIC_ROUTINES),
         "total": set(_TOTAL_ROUTINES),
     }[abi]
@@ -202,6 +209,25 @@ def _f2py_signature(module_name: str, routines: set[str], abi: PESABI = "scalar"
             integer intent(hide), depend(bonds) :: n_grid = shape(bonds, 1)
         end subroutine pyticc_total_grid"""
         return f"python module {module_name}\n    interface\n{block}\n    end interface\nend python module {module_name}\n"
+    if abi == "lambda":
+        blocks = [
+            """        subroutine pyticc_lambda_grid(RR, coordinates, V, n_coordinate, n_grid)
+            real*8 intent(in) :: RR
+            real*8 intent(in), dimension(n_coordinate, n_grid) :: coordinates
+            real*8 intent(out), dimension(n_grid, 2) :: V
+            integer intent(hide), depend(coordinates) :: n_coordinate = shape(coordinates, 0)
+            integer intent(hide), depend(coordinates) :: n_grid = shape(coordinates, 1)
+        end subroutine pyticc_lambda_grid"""
+        ]
+        if "pyticc_monomer_y_grid" in routines:
+            blocks.append(
+                """        subroutine pyticc_monomer_y_grid(r, V, n_grid)
+            real*8 intent(in), dimension(n_grid) :: r
+            real*8 intent(out), dimension(n_grid) :: V
+            integer intent(hide), depend(r) :: n_grid = shape(r, 0)
+        end subroutine pyticc_monomer_y_grid"""
+            )
+        return f"python module {module_name}\n    interface\n" + "\n".join(blocks) + f"\n    end interface\nend python module {module_name}\n"
     if abi == "diabatic":
         blocks = [
             """        subroutine pyticc_diabatic_interaction_grid(RR, coordinates, V, n_coordinate, n_grid, n_state)
