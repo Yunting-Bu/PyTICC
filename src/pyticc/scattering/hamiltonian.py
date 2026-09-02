@@ -11,13 +11,15 @@ from numpy.typing import NDArray
 from pyticc._typing import JaxDevice
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.fine_structure.channel import FSChannelBasis
-from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_ElectricSF, get_Umat_FS_BF
+from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
+from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_ElectricSF, get_Umat_FS_BF, get_Umat_FS_DiatomDiatom_BF
 from pyticc.system import Approx
 
-Interaction = Callable[[float | NDArray[np.float64]], NDArray[np.float64]]
-BlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[NDArray[np.float64], ...]]
+HamiltonianArray = NDArray[np.float64] | NDArray[np.complex128]
+Interaction = Callable[[float | NDArray[np.float64]], HamiltonianArray]
+BlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[HamiltonianArray, ...]]
 DeviceBlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...], JaxDevice], tuple[jax.Array, ...]]
-ScatteringBasis = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis
+ScatteringBasis = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis
 
 
 # ----------------------------------------------------------------------------------------
@@ -86,6 +88,8 @@ class ScattHamiltonian:
             return get_Umat_ElectricSF(self.basis, channel_indices)
         if isinstance(self.basis, FSChannelBasis):
             return get_Umat_FS_BF(self.basis, channel_indices)
+        if isinstance(self.basis, FSDiatomDiatomBasis):
+            return get_Umat_FS_DiatomDiatom_BF(self.basis, channel_indices)
         return get_Umat_BF(self.basis, channel_indices)
 
     @property
@@ -93,9 +97,9 @@ class ScattHamiltonian:
         """Return the complete dimensionless centrifugal matrix."""
         return self.centrifugal()
 
-    def V(self, R: float | NDArray[np.float64]) -> NDArray[np.float64]:
+    def V(self, R: float | NDArray[np.float64]) -> HamiltonianArray:
         """Evaluate the channel interaction matrix at one or more radial points."""
-        return np.asarray(self.interaction(R), dtype=np.float64)
+        return np.asarray(self.interaction(R))
 
     def V_blocks(
         self,
@@ -112,7 +116,7 @@ class ScattHamiltonian:
         matrices = self.V(radial_points)
         return tuple(matrices[:, indices, :][:, :, indices] for indices in channel_blocks)
 
-    def H(self, R: float, channel_indices: Sequence[int] | None = None) -> NDArray[np.float64]:
+    def H(self, R: float, channel_indices: Sequence[int] | None = None) -> HamiltonianArray:
         r"""
         Evaluate the channel Hamiltonian.
 
@@ -136,7 +140,7 @@ class ScattHamiltonian:
         matrix[diagonal] += self.E_int[positions]
         return matrix
 
-    def W(self, R: float, Etot: float, channel_indices: Sequence[int] | None = None) -> NDArray[np.float64]:
+    def W(self, R: float, Etot: float, channel_indices: Sequence[int] | None = None) -> HamiltonianArray:
         r"""
         Evaluate the radial coupled-equation matrix.
 

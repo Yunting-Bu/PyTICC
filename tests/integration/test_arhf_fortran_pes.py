@@ -141,12 +141,15 @@ def test_ArHF_fortran_wrapper_compiles_and_evaluates(tmp_path: Path, monkeypatch
     cached_pes = load_fortran_pes(config)
     np.testing.assert_allclose(get_Vgrid_atom_diatom(cached_pes, 6.0, r, theta), expected)
 
-    parallel_pes = load_fortran_pes(config, processes=2)
+    parallel_pes = load_fortran_pes(config)
     radial_batch = np.array([6.0, 7.0])
-    parallel_values = get_Vgrid_atom_diatom(parallel_pes, radial_batch, r, theta)
+    parallel_values = get_Vgrid_atom_diatom(parallel_pes, radial_batch, r, theta, processes=2)
     parallel_expected = radial_batch[:, None, None] + 2.0 * r[None, :, None] + theta[None, None, :] / np.pi
     np.testing.assert_allclose(parallel_values, parallel_expected)
-    np.testing.assert_allclose(get_Vgrid_atom_diatom(parallel_pes, np.array([8.0]), r, theta)[0], 8.0 + 2.0 * r[:, None] + theta[None, :] / np.pi)
+    np.testing.assert_allclose(
+        get_Vgrid_atom_diatom(parallel_pes, np.array([8.0]), r, theta, processes=2)[0],
+        8.0 + 2.0 * r[:, None] + theta[None, :] / np.pi,
+    )
     parallel_pes.close()
 
 

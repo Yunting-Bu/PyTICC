@@ -42,6 +42,7 @@ def prepare_diabatic_extension(sources: tuple[Path, ...], wrapper: Path, *, lapa
     return _prepare_extension(sources, wrapper, "diabatic", lapack)
 
 
+# ----------------------------------------------------------------------------------------
 def prepare_lambda_extension(sources: tuple[Path, ...], wrapper: Path, *, lapack: bool = False) -> tuple[str, Path]:
     """Return a cached or newly compiled signed-Lambda PES extension."""
     return _prepare_extension(sources, wrapper, "lambda", lapack)
@@ -319,6 +320,7 @@ def _compile_extension(
     return extension
 
 
+# ----------------------------------------------------------------------------------------
 def _run_f2py(
     command: list[str],
     build_dir: Path,
@@ -345,6 +347,7 @@ def _run_f2py(
     )
 
 
+# ----------------------------------------------------------------------------------------
 def _build_configuration(
     compiler: str,
     lapack: bool,
@@ -360,6 +363,7 @@ def _build_configuration(
     )
 
 
+# ----------------------------------------------------------------------------------------
 def _lapack_options(compiler: str, lapack: bool) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return Meson dependencies and linker flags for an optional LAPACK requirement."""
     if not lapack:
@@ -370,6 +374,7 @@ def _lapack_options(compiler: str, lapack: bool) -> tuple[tuple[str, ...], tuple
     return ("lapack",), ()
 
 
+# ----------------------------------------------------------------------------------------
 def _lapack_fallback_link_args() -> tuple[str, ...]:
     """Return portable fallback flags, preferring MKL from the active Python environment."""
     library_names = ("libmkl_rt.so", "libmkl_rt.dylib", "mkl_rt.lib")

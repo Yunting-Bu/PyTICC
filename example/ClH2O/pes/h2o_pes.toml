@@ -1,0 +1,3 @@
+sources = ["potent.f"]
+wrapper = "h2o_wrapper.f90"
+workdir = "."

@@ -1,6 +1,7 @@
 from typing import Protocol
 
 
+# ----------------------------------------------------------------------------------------
 class JaxDevice(Protocol):
     """Structural type shared by JAX CPU and accelerator devices."""
 
@@ -13,3 +14,6 @@ class JaxDevice(Protocol):
     def id(self) -> int:
         """Return the platform-local device index."""
         ...
+
+
+# ----------------------------------------------------------------------------------------

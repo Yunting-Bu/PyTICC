@@ -53,3 +53,6 @@ def get_Etot(source: EnergyInput) -> NDArray[np.float64]:
     energies = energies.copy()
     energies.setflags(write=False)
     return energies
+
+
+# ----------------------------------------------------------------------------------------

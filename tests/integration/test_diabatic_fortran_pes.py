@@ -60,9 +60,15 @@ def test_diabatic_fortran_wrapper_compiles_and_evaluates(tmp_path: Path, monkeyp
     np.testing.assert_allclose(potential[..., 0, 1], np.zeros_like(r)[:, None] + np.sin(theta)[None, :] / 6.0)
     np.testing.assert_allclose(pes.monomer_values(r), np.stack(((r - 1.5) ** 2, (r - 2.0) ** 2 + 0.25), axis=-1))
 
-    parallel_pes = load_fortran_diabatic_pes([source], wrapper, n_state=2, processes=2)
+    parallel_pes = load_fortran_diabatic_pes([source], wrapper, n_state=2)
     radial_points = np.array([5.0, 6.0])
-    parallel_values = get_diabatic_potential_grid_atom_diatom(parallel_pes, radial_points, r, theta)
+    parallel_values = get_diabatic_potential_grid_atom_diatom(
+        parallel_pes,
+        radial_points,
+        r,
+        theta,
+        processes=2,
+    )
     expected = np.stack([get_diabatic_potential_grid_atom_diatom(pes, RR, r, theta) for RR in radial_points])
     np.testing.assert_allclose(parallel_values, expected)
     parallel_pes.close()

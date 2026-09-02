@@ -5,6 +5,7 @@ from loguru import logger
 from numpy.typing import NDArray
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class RovibBasis:
     """
@@ -36,3 +37,6 @@ class RovibBasis:
             )
             logger.error(message)
             raise ValueError(message)
+
+
+# ----------------------------------------------------------------------------------------

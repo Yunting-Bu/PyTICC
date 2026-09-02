@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from time import perf_counter
 
@@ -14,7 +15,7 @@ from pyticc.energy import EnergyInput, get_Etot
 from pyticc.matrix.delves import mass_scale
 from pyticc.propagation.config import Propagation
 from pyticc.propagation.device import resolve_device
-from pyticc.propagation.grid import build_radial_sectors
+from pyticc.propagation.grid import RadialSector
 from pyticc.propagation.logd import LogDInput, initialize_logD_capture, propagate_logD
 
 
@@ -34,8 +35,7 @@ class DelvesPropagationResult:
             in Hartree, shape ``(n_surface,)``
         surface_coefficients: NDArray[np.float64] - final primitive-to-surface
             coefficients, shape ``(basis.n_primitive,n_surface)``
-        radial_points: NDArray[np.float64] - fixed sector endpoints generated
-            from ``Propagation.boundaries`` and ``Propagation.half_steps``,
+        radial_points: NDArray[np.float64] - supplied fixed-sector endpoints,
             shape ``(n_sector+1,)``
     """
 
@@ -54,6 +54,7 @@ class DelvesPropagationResult:
 def propagate_delves(
     hamiltonian: object,
     Etot: EnergyInput,
+    radial_sectors: Sequence[RadialSector],
     config: Propagation,
 ) -> DelvesPropagationResult:
     r"""
@@ -63,11 +64,6 @@ def propagate_delves(
     Hamiltonians are placed at sector midpoints, as in ABC. For an inelastic
     calculation the first sector applies the exact hard wall
     ``F(rho_min)=0``; capture mode retains its incoming-wave initialization.
-
-    ``config.boundaries`` and ``config.half_steps`` have exactly the same
-    meaning as in the fixed-channel propagators. Every user interval is divided
-    into sectors of width ``2 * half_step``; only the last sector is shortened
-    when needed to end exactly at the interval boundary.
 
     Formula:
         On a sector ``[rho_L,rho_R]`` of width ``Delta rho``, the surface point
@@ -109,8 +105,9 @@ def propagate_delves(
         hamiltonian: DelvesHamiltonian - resolved primitive basis, total PES,
             surface solver, and sector-overlap provider
         Etot: EnergyInput - total scattering energies in Hartree
-        config: Propagation - piecewise hyperradial boundaries and half-steps,
-            boundary mode, device, and logging settings
+        radial_sectors: Sequence[RadialSector] - ordered hyperradial propagation
+            sectors
+        config: Propagation - boundary mode, device, and logging settings
 
     Returns:
         result: DelvesPropagationResult - final LogD, surface data, and fixed
@@ -124,14 +121,13 @@ def propagate_delves(
         raise TypeError(message)
     basis = hamiltonian.basis
     energies = get_Etot(Etot)
-    if not np.isclose(config.boundaries[0], basis.rho_min, rtol=0.0, atol=1.0e-12):
-        message = f"Delves propagation must start at the basis hard wall rho_min={basis.rho_min}, but got {config.boundaries[0]}"
+    if not np.isclose(radial_sectors[0].radial_start, basis.rho_min, rtol=0.0, atol=1.0e-12):
+        message = f"Delves propagation must start at the basis hard wall rho_min={basis.rho_min}, but got {radial_sectors[0].radial_start}"
         logger.error(message)
         raise ValueError(message)
     selected_device = resolve_device(config.device)
     reduced_mass, _ = mass_scale(basis.mass)
-    sectors = build_radial_sectors(config.boundaries, config.half_steps)
-    n_sector = len(sectors)
+    n_sector = len(radial_sectors)
     surface_current: DelvesSurface | None = None
     Y_current: jax.Array | None = None
     propagation_start = perf_counter()
@@ -140,7 +136,7 @@ def propagate_delves(
     if config.print_verbose:
         logger.info(f"Delves propagation started: sectors={n_sector}, primitive={basis.n_primitive}, energies={energies.size}")
 
-    for sector_index, sector in enumerate(sectors, start=1):
+    for sector_index, sector in enumerate(radial_sectors, start=1):
         surface_next = hamiltonian.surface(sector.radial_mid)
         width = sector.radial_end - sector.radial_start
         if Y_current is None:
@@ -180,10 +176,10 @@ def propagate_delves(
         message = "Delves propagation produced no sectors"
         logger.error(message)
         raise RuntimeError(message)
-    radial_points = np.asarray([sectors[0].radial_start, *(sector.radial_end for sector in sectors)], dtype=np.float64)
+    radial_points = np.asarray([radial_sectors[0].radial_start, *(sector.radial_end for sector in radial_sectors)], dtype=np.float64)
     return DelvesPropagationResult(
         Y_final=Y_current,
-        rho_final=sectors[-1].radial_end,
+        rho_final=radial_sectors[-1].radial_end,
         surface_rho=surface_current.rho,
         surface_energies=surface_current.energies,
         surface_coefficients=surface_current.coefficients,
@@ -285,3 +281,6 @@ def _propagate_constant_sector(
         W_base,
         device=device,
     )
+
+
+# ----------------------------------------------------------------------------------------

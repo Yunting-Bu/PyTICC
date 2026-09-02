@@ -4,11 +4,12 @@ from typing import Any, overload
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
-from scipy.special import gammaln, lpmv, roots_legendre
+from scipy.special import eval_jacobi, gammaln, lpmv, roots_legendre
+from sympy import Rational
 from sympy.physics.wigner import clebsch_gordan as sympy_clebsch_gordan
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def gauss_legendre_dvr(lower: float, upper: float, n_points: int, symmetry: bool = False) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Return Gauss-Legendre nodes and weights on an interval.
 
@@ -51,18 +52,20 @@ def gauss_legendre_dvr(lower: float, upper: float, n_points: int, symmetry: bool
     return grids, weights
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 @overload
 def norm_YjK(j: int, K: int, x: float) -> float: ...
 
 
+# ----------------------------------------------------------------------------------------
 @overload
 def norm_YjK(j: int, K: int, x: NDArray[Any]) -> NDArray[np.float64]: ...
 
 
+# ----------------------------------------------------------------------------------------
 def norm_YjK(j: int, K: int, x: float | NDArray[np.float64]) -> float | NDArray[np.float64]:
     r"""
     Get the normalization factor for the associated Legendre polynomial Y_{jK}(x).
@@ -94,10 +97,10 @@ def norm_YjK(j: int, K: int, x: float | NDArray[np.float64]) -> float | NDArray[
     return factor * lpmv(m, j, x)
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def norm_reduced_wigner_d(
     j: int,
     K: int,
@@ -106,9 +109,6 @@ def norm_reduced_wigner_d(
 ) -> float | NDArray[np.float64]:
     r"""
     Get a reduced Wigner d function normalized for integration over cos(theta).
-
-    This follows ``DJMM(..., ID=3)`` in the ABC+D reference code, including its
-    phase convention.
 
     Formula:
         D_tilde^{j}_{K,omega}(theta)
@@ -130,23 +130,13 @@ def norm_reduced_wigner_d(
         logger.error(message)
         raise ValueError(message)
 
-    angles = np.asarray(theta, dtype=np.float64)
-    cosine = np.cos(0.5 * angles)
-    sine = np.sin(0.5 * angles)
-    log_prefactor = 0.5 * (gammaln(j + omega + 1.0) + gammaln(j - omega + 1.0) + gammaln(j + K + 1.0) + gammaln(j - K + 1.0))
-    result = np.zeros_like(angles)
-
-    for k in range(max(0, omega - K), min(j - K, j + omega) + 1):
-        cosine_power = 2 * j + omega - K - 2 * k
-        sine_power = K - omega + 2 * k
-        log_denominator = gammaln(j - K - k + 1.0) + gammaln(j + omega - k + 1.0) + gammaln(K - omega + k + 1.0) + gammaln(k + 1.0)
-        phase = -1.0 if (k + sine_power) % 2 else 1.0
-        result += phase * np.exp(log_prefactor - log_denominator) * cosine**cosine_power * sine**sine_power
-
-    result *= np.sqrt((2.0 * j + 1.0) / 2.0)
-    return float(result) if result.ndim == 0 else result
+    return norm_reduced_wigner_d_half(2 * j, 2 * K, 2 * omega, theta)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def norm_reduced_wigner_d_half(
     two_j: int,
     two_K: int,
@@ -157,12 +147,15 @@ def norm_reduced_wigner_d_half(
     Return a normalized reduced Wigner d function for integer or half-integer j.
 
     Formula:
-        d^j_{K,Omega}(theta) is evaluated from its finite factorial sum and
+        d^j_{K,Omega}(theta) is evaluated with a Jacobi-polynomial form and
 
         d_tilde^j_{K,Omega}(theta) = sqrt((2j+1)/2) d^j_{K,Omega}(theta).
 
         Every angular momentum and projection is supplied as twice its physical
-        value, which avoids floating-point half-integer comparisons.
+        value, which avoids floating-point half-integer comparisons. Symmetry
+        relations first map the projections to nonnegative Jacobi parameters;
+        unlike the direct alternating factorial sum, this remains stable at
+        high j.
 
     Inputs:
         two_j: int - twice j
@@ -182,30 +175,45 @@ def norm_reduced_wigner_d_half(
         logger.error(message)
         raise ValueError(message)
 
-    j_plus_omega = (two_j + two_omega) // 2
-    j_minus_omega = (two_j - two_omega) // 2
-    j_plus_K = (two_j + two_K) // 2
-    j_minus_K = (two_j - two_K) // 2
-    K_minus_omega = (two_K - two_omega) // 2
+    # Map d^j_{K,Omega} to an equivalent element whose first projection m'
+    # satisfies m' >= |m|.  This makes both Jacobi parameters nonnegative.
+    # The symmetry phases follow the same convention as the finite factorial
+    # sum formerly used here.
+    if two_K >= abs(two_omega):
+        two_m_prime, two_m = two_K, two_omega
+        symmetry_phase = 1.0
+    elif two_omega >= abs(two_K):
+        two_m_prime, two_m = two_omega, two_K
+        symmetry_phase = -1.0 if ((two_K - two_omega) // 2) % 2 else 1.0
+    elif -two_K >= abs(two_omega):
+        two_m_prime, two_m = -two_K, -two_omega
+        symmetry_phase = -1.0 if ((two_K - two_omega) // 2) % 2 else 1.0
+    else:
+        two_m_prime, two_m = -two_omega, -two_K
+        symmetry_phase = 1.0
+
+    alpha = (two_m_prime - two_m) // 2
+    beta = (two_m_prime + two_m) // 2
+    degree = (two_j - two_m_prime) // 2
     angles = np.asarray(theta, dtype=np.float64)
     cosine = np.cos(0.5 * angles)
     sine = np.sin(0.5 * angles)
-    log_prefactor = 0.5 * (gammaln(j_plus_omega + 1.0) + gammaln(j_minus_omega + 1.0) + gammaln(j_plus_K + 1.0) + gammaln(j_minus_K + 1.0))
-    result = np.zeros_like(angles)
-    for k in range(max(0, -K_minus_omega), min(j_minus_K, j_plus_omega) + 1):
-        cosine_power = two_j + (two_omega - two_K) // 2 - 2 * k
-        sine_power = K_minus_omega + 2 * k
-        log_denominator = gammaln(j_minus_K - k + 1.0) + gammaln(j_plus_omega - k + 1.0) + gammaln(K_minus_omega + k + 1.0) + gammaln(k + 1.0)
-        phase = -1.0 if (k + sine_power) % 2 else 1.0
-        result += phase * np.exp(log_prefactor - log_denominator) * cosine**cosine_power * sine**sine_power
+    log_prefactor = 0.5 * (
+        gammaln((two_j + two_m_prime) // 2 + 1.0)
+        + gammaln((two_j - two_m_prime) // 2 + 1.0)
+        - gammaln((two_j + two_m) // 2 + 1.0)
+        - gammaln((two_j - two_m) // 2 + 1.0)
+    )
+    jacobi_phase = -1.0 if alpha % 2 else 1.0
+    result = symmetry_phase * jacobi_phase * np.exp(log_prefactor) * sine**alpha * cosine**beta * eval_jacobi(degree, alpha, beta, np.cos(angles))
     result *= np.sqrt((two_j + 1.0) / 2.0)
     return float(result) if result.ndim == 0 else result
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 @lru_cache
 def clebsch_gordan(j1: int, m1: int, j2: int, m2: int, j_couple: int) -> float:
     r"""
@@ -225,10 +233,71 @@ def clebsch_gordan(j1: int, m1: int, j2: int, m2: int, j_couple: int) -> float:
     return float(sympy_clebsch_gordan(j1, j2, j_couple, m1, m2, M))
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
+@lru_cache
+def clebsch_gordan_half(two_j1: int, two_m1: int, two_j2: int, two_m2: int, two_j_couple: int) -> float:
+    r"""
+    Return a Clebsch--Gordan coefficient from doubled angular momenta.
+
+    Formula:
+        The returned real coefficient is
+
+        <j_1 m_1, j_2 m_2 | j_12 M>,
+        M=m_1+m_2,
+
+        with ``j_i=two_j_i/2``, ``m_i=two_m_i/2``, and
+        ``j_12=two_j_couple/2``. The Condon--Shortley convention is inherited
+        from SymPy. All angular momenta and projections may be integer or
+        half-integer, but each ``j_i`` and ``m_i`` pair must have the same
+        integer character and satisfy ``|m_i|<=j_i``.
+
+    Inputs:
+        two_j1: int - twice the first angular momentum j_1
+        two_m1: int - twice its projection m_1
+        two_j2: int - twice the second angular momentum j_2
+        two_m2: int - twice its projection m_2
+        two_j_couple: int - twice the coupled angular momentum j_12
+
+    Returns:
+        coefficient: float - real Clebsch--Gordan coefficient
+    """
+    if min(two_j1, two_j2, two_j_couple) < 0:
+        message = "Doubled angular momenta must be nonnegative"
+        logger.error(message)
+        raise ValueError(message)
+    if abs(two_m1) > two_j1 or abs(two_m2) > two_j2:
+        message = "Doubled projections must not exceed their angular momenta"
+        logger.error(message)
+        raise ValueError(message)
+    if (two_j1 - two_m1) % 2 or (two_j2 - two_m2) % 2:
+        message = "Each angular momentum and projection must have the same integer or half-integer character"
+        logger.error(message)
+        raise ValueError(message)
+    if not abs(two_j1 - two_j2) <= two_j_couple <= two_j1 + two_j2 or (two_j1 + two_j2 - two_j_couple) % 2:
+        return 0.0
+
+    two_M = two_m1 + two_m2
+    if abs(two_M) > two_j_couple or (two_j_couple - two_M) % 2:
+        return 0.0
+    return float(
+        sympy_clebsch_gordan(
+            Rational(two_j1, 2),
+            Rational(two_j2, 2),
+            Rational(two_j_couple, 2),
+            Rational(two_m1, 2),
+            Rational(two_m2, 2),
+            Rational(two_M, 2),
+        )
+    )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def lambda_plus(j, K) -> float:
     r"""
     Get lambda_plus for the given j and K.
@@ -246,10 +315,10 @@ def lambda_plus(j, K) -> float:
     return np.sqrt(j * (j + 1) - K * (K + 1))
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def lambda_minus(j, K) -> float:
     r"""
     Get lambda_minus for the given j and K.
@@ -262,3 +331,6 @@ def lambda_minus(j, K) -> float:
         K: int - projection of the angular momentum
     """
     return np.sqrt(j * (j + 1) - K * (K - 1))
+
+
+# ----------------------------------------------------------------------------------------

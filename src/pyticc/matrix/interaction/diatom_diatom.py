@@ -12,6 +12,7 @@ from pyticc.basis.rovib import RovibBasis
 from pyticc.matrix.interaction import VBasisBF
 
 
+# ----------------------------------------------------------------------------------------
 def _angular(
     j_X: int,
     j_Y: int,
@@ -44,6 +45,7 @@ def _angular(
     return real, imag
 
 
+# ----------------------------------------------------------------------------------------
 def prepare(
     basis: ChannelBasis,
     rovib_X: RovibBasis,
@@ -102,3 +104,6 @@ def prepare(
         B_imag=B_imag,
         normalization=1.0 / np.pi,
     )
+
+
+# ----------------------------------------------------------------------------------------

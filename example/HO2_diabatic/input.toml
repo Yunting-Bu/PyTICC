@@ -1,4 +1,4 @@
-type = "diabatic-atom-diatom"
+type = "A+BC_diabatic"
 atom = "H"
 diatom = ["O", "O"]
 Jtot = 0
@@ -14,7 +14,6 @@ sources = ["ho2-dpme.f", "long_range_H_O2.f"]
 wrapper = "pyticc_wrapper.f90"
 workdir = "."
 n_state = 2
-processes = 4
 lapack = true
 
 [basis]
@@ -33,9 +32,12 @@ exchange_parity_Y = [-1, 1]
 E_Y_cut_cm = 38000.0
 K_cut = "none"
 
-[propagation]
+[potential_grid]
 radial_boundaries = [0.8, 2.5, 6.0, 30.0]
 radial_half_steps = [0.002, 0.005, 0.3]
+processes = 4
+
+[propagation]
 mode = "inelastic"
 memory_limit_mb = 4096.0
 device = "auto"

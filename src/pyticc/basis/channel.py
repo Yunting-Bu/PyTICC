@@ -471,3 +471,6 @@ def build_ChannelBasis(system: ScattSystem, channel: ChannelSpec | None = None) 
         system_parity=system.system_parity,
         channel_spec=channel_spec,
     )
+
+
+# ----------------------------------------------------------------------------------------

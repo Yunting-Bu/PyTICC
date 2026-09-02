@@ -7,6 +7,7 @@ from pyticc.matrix.delves import mass_scale
 from pyticc.pes.total import TotalPES
 from pyticc.propagation.config import Propagation
 from pyticc.propagation.delves import propagate_delves
+from pyticc.propagation.grid import build_radial_sectors
 from pyticc.scattering.reactive.delves import DelvesHamiltonian
 
 
@@ -57,9 +58,10 @@ def test_delves_uses_piecewise_configured_half_steps(monkeypatch: pytest.MonkeyP
 
     install_scalar_surface(monkeypatch, energy)
     basis = make_basis()
-    config = Propagation((2.0, 2.6, 3.0), (0.2, 0.1), device="cpu")
+    radial_sectors = build_radial_sectors((2.0, 2.6, 3.0), (0.2, 0.1))
+    config = Propagation(device="cpu")
 
-    result = propagate_delves(make_hamiltonian(TotalPES(lambda bonds: np.zeros(bonds.shape[1]))), [0.0], config)
+    result = propagate_delves(make_hamiltonian(TotalPES(lambda bonds: np.zeros(bonds.shape[1]))), [0.0], radial_sectors, config)
 
     np.testing.assert_allclose(result.radial_points, [2.0, 2.4, 2.6, 2.8, 3.0], atol=1.0e-14)
     np.testing.assert_allclose(sampled_rho, [2.2, 2.5, 2.7, 2.9], atol=1.0e-14)
@@ -71,7 +73,7 @@ def test_delves_uses_piecewise_configured_half_steps(monkeypatch: pytest.MonkeyP
 
     reduced_mass, _ = mass_scale(basis.mass)
     momentum = np.sqrt(2.0 * reduced_mass * 0.5)
-    expected_logD = momentum / np.tanh(momentum * (config.boundaries[-1] - config.boundaries[0]))
+    expected_logD = momentum / np.tanh(momentum * (radial_sectors[-1].radial_end - radial_sectors[0].radial_start))
     np.testing.assert_allclose(result.Y_final[0, 0, 0], expected_logD, rtol=2.0e-14, atol=2.0e-14)
 
 
@@ -80,7 +82,8 @@ def test_delves_supports_capture_and_energy_batches(monkeypatch: pytest.MonkeyPa
     result = propagate_delves(
         make_hamiltonian(TotalPES(lambda bonds: np.zeros(bonds.shape[1]))),
         [0.0, 0.1],
-        Propagation((2.0, 2.2), (0.1,), mode="capture", device="cpu"),
+        build_radial_sectors((2.0, 2.2), (0.1,)),
+        Propagation(mode="capture", device="cpu"),
     )
 
     assert result.Y_final.shape == (2, 1, 1)
@@ -110,7 +113,8 @@ def test_delves_runs_the_real_multiple_arrangement_surface_chain() -> None:
     result = propagate_delves(
         DelvesHamiltonian(basis, pes),
         [0.05, 0.08],
-        Propagation((6.8, 7.0), (0.1,), device="cpu"),
+        build_radial_sectors((6.8, 7.0), (0.1,)),
+        Propagation(device="cpu"),
     )
 
     assert result.Y_final.shape == (2, 3, 3)

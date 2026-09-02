@@ -97,7 +97,6 @@ def main() -> None:
         [pes_dir / "interaction-PES.f"],
         pes_dir / "pyticc_wrapper.f90",
         workdir=pes_dir,
-        processes=4,
     )
 
     mass_Ar, mass_H, mass_F = ticc.element_masses_au("Ar", "H", "F")
@@ -127,43 +126,54 @@ def main() -> None:
         energy_zero=diatom.energy_zero,
     )
 
-    regular = atom_diatom.build_hamiltonian(
-        ticc.build_ScattSystem(
-            ticc.AtomSpec(),
-            diatom,
-            Jtot=0,
-            system_parity=1,
-            channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
-            potential=pes,
-            reduced_mass=mass_ArHF,
-        ),
-        n_theta=35,
+    regular_system = ticc.build_ScattSystem(
+        ticc.AtomSpec(),
+        diatom,
+        scattering_type="A+BC",
+        Jtot=0,
+        system_parity=1,
+        channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
+        potential=pes,
+        reduced_mass=mass_ArHF,
     )
-    electric = atom_diatom.build_hamiltonian_electric_sf(
-        ticc.build_ScattSystem(
-            ticc.AtomSpec(),
-            electric_basis,
-            M=0,
-            lmax=1,
-            channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
-            potential=pes,
-            reduced_mass=mass_ArHF,
-        ),
+    electric_system = ticc.build_ScattSystem(
+        ticc.AtomSpec(),
+        electric_basis,
+        scattering_type="A+BC_electric",
+        M=0,
+        lmax=1,
+        channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
+        potential=pes,
+        reduced_mass=mass_ArHF,
+    )
+    boundaries = (4.5, 6.5, 8.0, 12.0)
+    half_steps = (0.05, 0.05, 0.05)
+    regular_grid = ticc.prepare_potential(
+        regular_system,
+        boundaries,
+        half_steps,
+        n_theta=35,
+        processes=4,
+    )
+    electric_grid = ticc.prepare_potential(
+        electric_system,
+        boundaries,
+        half_steps,
         n_theta_r=24,
         n_theta_R=24,
         n_delta=48,
+        processes=4,
     )
+    regular = atom_diatom.build_hamiltonian(regular_system, potential_grid=regular_grid)
+    electric = atom_diatom.build_hamiltonian_electric_sf(electric_system, potential_grid=electric_grid)
     if not isinstance(regular.basis, ChannelBasis) or not isinstance(electric.basis, ChannelBasisElectricSF):
         raise TypeError("Unexpected channel-basis representation")
 
     transform = _zero_field_J0_transform(regular.basis, electric.basis, electric_basis, diatom.rovib)
-    propagation = ticc.Propagation(
-        boundaries=(4.5, 6.5, 8.0, 12.0),
-        half_steps=(0.05, 0.05, 0.05),
-    )
+    propagation = ticc.Propagation()
     energy = np.array([300.0 * ticc.CM2AU])
-    regular_result = ticc.solve(regular, energy, propagation)
-    electric_result = ticc.solve(electric, energy, propagation)
+    regular_result = ticc.solve(regular_system, energy, regular_grid, propagation)
+    electric_result = ticc.solve(electric_system, energy, electric_grid, propagation)
     if not isinstance(regular_result, ticc.ScatteringResult) or not isinstance(electric_result, ticc.ScatteringResult):
         raise TypeError("The exact comparison requires ScatteringResult objects")
 

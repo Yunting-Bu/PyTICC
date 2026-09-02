@@ -1,8 +1,7 @@
 import numpy as np
 import pytest
 
-from pyticc.basis.dvr import build_SineDVR
-from pyticc.basis.triatom import TriatomBasis, _match_K0_states, build_TriatomBasis
+from pyticc.basis.triatom import TriatomBasis, _match_K0_states, prepare_Triatom
 from pyticc.system import MolInnerState, MonomerType
 
 
@@ -32,7 +31,7 @@ def test_triatom_basis_returns_state_energy() -> None:
     assert triatom.energy(MolInnerState(j=1, t=0), K=1) == pytest.approx(0.02)
 
 
-def test_build_triatom_basis_solves_and_matches_K_blocks() -> None:
+def test_prepare_triatom_builds_reference_slices_and_matches_K_blocks() -> None:
     masses = (1000.0, 1800.0, 1200.0)
     equilibrium = (2.0, 2.2, 1.8)
 
@@ -40,20 +39,10 @@ def test_build_triatom_basis_solves_and_matches_K_blocks() -> None:
         r1, r2, theta = coordinates
         return 0.01 * (r1 - equilibrium[0]) ** 2 + 0.012 * (r2 - equilibrium[1]) ** 2 + 0.005 * (np.cos(theta) - np.cos(equilibrium[2])) ** 2
 
-    def potential_1(r1: np.ndarray) -> np.ndarray:
-        coordinates = np.stack((r1, np.full(r1.size, equilibrium[1]), np.full(r1.size, equilibrium[2])))
-        return potential(coordinates)
-
-    def potential_2(r2: np.ndarray) -> np.ndarray:
-        coordinates = np.stack((np.full(r2.size, equilibrium[0]), r2, np.full(r2.size, equilibrium[2])))
-        return potential(coordinates)
-
-    dvr_1 = build_SineDVR(1.2, 2.8, 16, masses[0], potential_1)
-    dvr_2 = build_SineDVR(1.4, 3.0, 16, masses[2], potential_2)
-    triatom = build_TriatomBasis(
+    triatom = prepare_Triatom(
         potential=potential,
-        dvr_1=dvr_1,
-        dvr_2=dvr_2,
+        r=((1.2, 2.8), (1.4, 3.0)),
+        n_dvr=(16, 16),
         n_podvr=(3, 3),
         vmax=(1, 1),
         masses=masses,
@@ -71,6 +60,57 @@ def test_build_triatom_basis_solves_and_matches_K_blocks() -> None:
     assert np.any(triatom.K0_available[1])
     assert np.allclose(triatom.positive_K_blocks[1].coefficients.T @ triatom.positive_K_blocks[1].coefficients, np.eye(4))
     assert np.allclose(triatom.K0_blocks[1].coefficients.T @ triatom.K0_blocks[1].coefficients, np.eye(triatom.K0_blocks[1].t_indices.size))
+
+
+def test_prepare_triatom_Kmax_zero_retains_independently_labeled_K0_states() -> None:
+    masses = (1000.0, 1800.0, 1200.0)
+    equilibrium = (2.0, 2.2, 1.8)
+
+    def potential(coordinates: np.ndarray) -> np.ndarray:
+        r1, r2, theta = coordinates
+        return 0.01 * (r1 - equilibrium[0]) ** 2 + 0.012 * (r2 - equilibrium[1]) ** 2 + 0.005 * (np.cos(theta) - np.cos(equilibrium[2])) ** 2
+
+    triatom = prepare_Triatom(
+        potential=potential,
+        r=((1.2, 2.8), (1.4, 3.0)),
+        n_dvr=(16, 16),
+        n_podvr=(3, 3),
+        vmax=(1, 1),
+        masses=masses,
+        equilibrium=equilibrium,
+        n_theta=12,
+        j1max=2,
+        j2max=1,
+        tmax=3,
+        parity_block_sign=1,
+        Kmax=0,
+    )
+
+    assert np.all(np.isfinite(triatom.Eint[1]))
+    assert triatom.K0_blocks[1].t_indices.tolist() == [0, 1, 2, 3]
+    assert triatom.K0_available is not None
+    assert np.all(triatom.K0_available[1])
+    assert triatom.positive_K_blocks == {}
+    assert triatom.positive_K_available is not None
+    assert not np.any(triatom.positive_K_available)
+
+
+def test_prepare_triatom_requires_one_physical_monomer_potential() -> None:
+    with pytest.raises(ValueError, match="requires a monomer potential"):
+        prepare_Triatom(
+            None,
+            r=((1.0, 2.0), (1.0, 2.0)),
+            n_dvr=(8, 8),
+            n_podvr=(2, 2),
+            vmax=(0, 0),
+            masses=(1000.0, 1800.0, 1000.0),
+            equilibrium=(1.5, 1.5, 1.8),
+            n_theta=6,
+            j1max=1,
+            j2max=0,
+            tmax=0,
+            parity_block_sign=1,
+        )
 
 
 def test_K0_matching_does_not_force_unrelated_states_into_assignment() -> None:

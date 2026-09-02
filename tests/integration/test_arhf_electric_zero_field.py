@@ -9,6 +9,7 @@ import pyticc.pes.fortran.compiler as compiler_module
 from pyticc.basis.angle import clebsch_gordan
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.rovib import RovibBasis
+from pyticc.propagation.grid import build_radial_sectors
 from pyticc.scattering import atom_diatom
 
 
@@ -103,6 +104,7 @@ def test_ArHF_zero_electric_field_recovers_regular_TICC_Hamiltonian() -> None:
     regular_system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
+        scattering_type="A+BC",
         Jtot=0,
         system_parity=1,
         channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
@@ -116,6 +118,7 @@ def test_ArHF_zero_electric_field_recovers_regular_TICC_Hamiltonian() -> None:
     electric_system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         electric_basis,
+        scattering_type="A+BC_electric",
         M=0,
         lmax=1,
         channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
@@ -141,12 +144,10 @@ def test_ArHF_zero_electric_field_recovers_regular_TICC_Hamiltonian() -> None:
     np.testing.assert_allclose(projected_interaction, regular.V(radial_points), rtol=0.0, atol=2.0e-8)
 
     energy = np.array([300.0 * ticc.CM2AU])
-    propagation = ticc.Propagation(
-        boundaries=(4.5, 6.5, 8.0, 12.0),
-        half_steps=(0.05, 0.05, 0.05),
-    )
-    regular_result = ticc.solve(regular, energy, propagation)
-    electric_result = ticc.solve(electric, energy, propagation)
+    radial_sectors = build_radial_sectors((4.5, 6.5, 8.0, 12.0), (0.05, 0.05, 0.05))
+    propagation = ticc.Propagation()
+    regular_result = ticc.solve(regular, energy, radial_sectors, propagation)
+    electric_result = ticc.solve(electric, energy, radial_sectors, propagation)
     assert isinstance(regular_result, ticc.ScatteringResult)
     assert isinstance(electric_result, ticc.ScatteringResult)
 

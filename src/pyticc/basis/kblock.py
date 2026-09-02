@@ -135,3 +135,6 @@ def build_nncc_blocks(channels: Sequence[Channel], K_delta: int = 1) -> tuple[KB
         )
 
     return tuple(blocks)
+
+
+# ----------------------------------------------------------------------------------------

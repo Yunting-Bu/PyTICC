@@ -15,6 +15,11 @@ from pyticc.constants import AMU2AU
 from pyticc.pes.adiabatic import PESWrapper
 from pyticc.pes.diabatic import DiabaticPESWrapper
 from pyticc.pes.lambda_pes import LambdaPES
+from pyticc.pes.spin_resolved_diatom_diatom import (
+    SpinResolvedDiatomDiatomPES,
+    allowed_total_spins,
+    orbital_product_states,
+)
 from pyticc.pes.total import TotalPES
 
 # ----------------------------------------------------------------------------------------
@@ -26,6 +31,7 @@ ELEMENT_MASS_AMU: dict[str, float] = {
     "Li": 6.938,
     "N": 14.00307400443,
     "O": 15.99491461957,
+    "C": 12.0,  # C-12, exactly 12 u by definition (IUPAC)
     "F": 18.99840316273,
     "S": 32.06,
     "Cl": 34.968852682,
@@ -47,7 +53,7 @@ def element_mass_au(symbol: str) -> float:
     Get the atomic mass of one supported element in atomic units.
 
     Inputs:
-        symbol: str - element symbol (e.g., "H", "D", "He", "Li", "N", "O", "F", "S", "Cl", "Ar", "K", "Rb")
+        symbol: str - element symbol (e.g., "H", "D", "He", "Li", "C", "N", "O", "F", "S", "Cl", "Ar", "K", "Rb")
 
     Returns:
         mass: float - atomic mass in atomic units
@@ -111,10 +117,25 @@ class MonomerType(Enum):
     TRIATOM = "3"
 
 
+# ----------------------------------------------------------------------------------------
 class Approx(Enum):
     EXACT = "exact"
     CS = "cs"
     NNCC = "nncc"
+
+
+# ----------------------------------------------------------------------------------------
+class ScatteringType(Enum):
+    """Supported scattering geometries and potential representations."""
+
+    ATOM_DIATOM = "A+BC"
+    ATOM_DIATOM_ELECTRIC = "A+BC_electric"
+    ATOM_DIATOM_FINE_STRUCTURE = "A+BC_fine_structure"
+    ATOM_DIATOM_DIABATIC = "A+BC_diabatic"
+    ATOM_DIATOM_DELVES = "A+BC_Delves"
+    DIATOM_DIATOM = "AB+CD"
+    DIATOM_DIATOM_FINE_STRUCTURE = "AB+CD_fine_structure"
+    ATOM_TRIATOM = "A+BCD"
 
 
 # ----------------------------------------------------------------------------------------
@@ -274,10 +295,12 @@ class ScattSystem:
     """Physical definition of one scattering block.
 
     Members:
-        monomer_X: MonomerSpec | DelvesMonomer - first monomer internal-state
-            model, or physical Delves monomer information
+        monomer_X: MonomerSpec | FineStructureMonomerSpec | DelvesMonomer - first
+            monomer internal-state model, or physical Delves monomer information
         monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None -
             second monomer internal-state model; None for a Delves calculation
+        scattering_type: ScatteringType | None - explicit scattering geometry
+            and potential representation; None only for low-level construction
         Jtot: int | None - conserved total angular momentum for a field-free
             closed-shell calculation
         two_J: int | None - twice the conserved total angular momentum for a
@@ -288,28 +311,33 @@ class ScattSystem:
             an electric-field calculation
         approx: Approx - exact CC, CS, or NNCC approximation
         K_delta: int - neighboring-K range used by NNCC
-        potential: PESWrapper | LambdaPES | DiabaticPESWrapper | None - interaction PES for
-            a nonreactive calculation
+        potential: PESWrapper | LambdaPES | DiabaticPESWrapper |
+            SpinResolvedDiatomDiatomPES | None - interaction PES for a
+            nonreactive calculation
         total_potential: TotalPES | None - scalar total three-body PES for a
             Delves reactive calculation
         reduced_mass: float | None - collision reduced mass in atomic units
+        magnetic_dipole_coefficient: float - electron-spin magnetic dipole
+            coefficient C_dd in Hartree bohr^3; zero disables V_dd
         channel_spec: ChannelSpec | None - channel selections used to prepare
             ``basis``; None is allowed only for low-level direct construction
         basis: ChannelBasisSpec | None - channel basis prepared together with
             the system; direct construction may leave it unset for low-level use
     """
 
-    monomer_X: MonomerSpec | DelvesMonomer
+    monomer_X: MonomerSpec | FineStructureMonomerSpec | DelvesMonomer
     monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None = None
+    scattering_type: ScatteringType | None = None
     Jtot: int | None = None
     two_J: int | None = None
     system_parity: int | None = None
     M: int | None = None
     approx: Approx = Approx.EXACT
     K_delta: int = 1
-    potential: PESWrapper | LambdaPES | DiabaticPESWrapper | None = None
+    potential: PESWrapper | LambdaPES | DiabaticPESWrapper | SpinResolvedDiatomDiatomPES | None = None
     total_potential: TotalPES | None = None
     reduced_mass: float | None = None
+    magnetic_dipole_coefficient: float = 0.0
     channel_spec: ChannelSpec | None = None
     basis: ChannelBasisSpec | None = None
 
@@ -338,6 +366,10 @@ class ScattSystem:
             message = f"Invalid reduced_mass {self.reduced_mass}. Must be positive."
             logger.error(message)
             raise ValueError(message)
+        if not np.isfinite(self.magnetic_dipole_coefficient):
+            message = f"magnetic_dipole_coefficient must be finite, but got {self.magnetic_dipole_coefficient}"
+            logger.error(message)
+            raise ValueError(message)
 
     @property
     def n_channel(self) -> int:
@@ -354,9 +386,10 @@ class ScattSystem:
 
 # ----------------------------------------------------------------------------------------
 def build_ScattSystem(
-    monomer_X: MonomerSpec | DelvesMonomer,
+    monomer_X: MonomerSpec | FineStructureMonomerSpec | DelvesMonomer,
     monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None = None,
     *,
+    scattering_type: ScatteringType | str,
     Jtot: int | None = None,
     two_J: int | None = None,
     system_parity: int | None = None,
@@ -366,18 +399,21 @@ def build_ScattSystem(
     lmax: int | None = None,
     approx: Approx = Approx.EXACT,
     K_delta: int = 1,
-    potential: PESWrapper | LambdaPES | DiabaticPESWrapper | None = None,
+    potential: PESWrapper | LambdaPES | DiabaticPESWrapper | SpinResolvedDiatomDiatomPES | None = None,
     total_potential: TotalPES | None = None,
     reduced_mass: float | None = None,
+    magnetic_dipole_coefficient: float = 0.0,
 ) -> ScattSystem:
     """
     Build a scattering system and its channel basis in one step.
 
     Inputs:
-        monomer_X: MonomerSpec | DelvesMonomer - prepared first monomer, or
-            physical Delves monomer information
+        monomer_X: MonomerSpec | FineStructureMonomerSpec | DelvesMonomer -
+            prepared first monomer, or physical Delves monomer information
         monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None -
             prepared second monomer; None for a Delves calculation
+        scattering_type: ScatteringType | str - explicit geometry and potential
+            representation, for example ``"A+BC"`` or ``"A+BC_diabatic"``
         Jtot: int | None - conserved total angular momentum for a field-free block
         two_J: int | None - twice conserved total angular momentum for a
             fine-structure block
@@ -391,19 +427,33 @@ def build_ScattSystem(
             electric-field block
         approx: Approx - exact CC, CS, or NNCC approximation
         K_delta: int - neighboring-K range used by NNCC
-        potential: PESWrapper | LambdaPES | DiabaticPESWrapper | None - interaction PES
+        potential: PESWrapper | LambdaPES | DiabaticPESWrapper |
+            SpinResolvedDiatomDiatomPES | None - interaction PES
         total_potential: TotalPES | None - Delves scalar total three-body PES
         reduced_mass: float | None - collision reduced mass in atomic units
+        magnetic_dipole_coefficient: float - electron-spin magnetic dipole
+            coefficient C_dd in Hartree bohr^3; used only by
+            ``AB+CD_fine_structure``
 
     Returns:
         system: ScattSystem - physical system containing its prepared channels
     """
     from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF, build_ChannelBasis, build_ChannelBasisElectricSF
-    from pyticc.basis.monomer.diatom_electric import DiatomElectricBasis
+    from pyticc.basis.monomer import AtomSpec, DiatomElectricBasis
     from pyticc.fine_structure.channel import FSChannelBasis, FSMonomerBasis, build_fs_channels
+    from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis, build_fs_diatom_diatom_channels
+
+    try:
+        selected_type = scattering_type if isinstance(scattering_type, ScatteringType) else ScatteringType(scattering_type)
+    except ValueError as error:
+        supported = ", ".join(value.value for value in ScatteringType)
+        message = f"Unsupported scattering_type {scattering_type!r}; supported: {supported}"
+        logger.error(message)
+        raise ValueError(message) from error
 
     channel_spec = ChannelSpec() if channel is None else channel
     system = ScattSystem(
+        scattering_type=selected_type,
         monomer_X=monomer_X,
         monomer_Y=monomer_Y,
         Jtot=Jtot,
@@ -415,14 +465,19 @@ def build_ScattSystem(
         potential=potential,
         total_potential=total_potential,
         reduced_mass=reduced_mass,
+        magnetic_dipole_coefficient=magnetic_dipole_coefficient,
         channel_spec=channel_spec,
     )
 
-    if isinstance(monomer_X, DelvesMonomer):
+    if selected_type is ScatteringType.ATOM_DIATOM_DELVES:
         from pyticc.basis.delves import build_delves_channels
         from pyticc.basis.monomer.delves import build_delves_diatom_basis
         from pyticc.matrix.delves import asymptotic_potential
 
+        if not isinstance(monomer_X, DelvesMonomer):
+            message = "A+BC_Delves requires a DelvesMonomer as monomer_X"
+            logger.error(message)
+            raise TypeError(message)
         if monomer_Y is not None:
             message = "Delves system construction accepts one prepared three-arrangement monomer object"
             logger.error(message)
@@ -489,11 +544,47 @@ def build_ScattSystem(
         logger.error(message)
         raise ValueError(message)
 
-    if isinstance(monomer_Y, FSMonomerBasis):
-        from pyticc.basis.monomer import AtomSpec
-
-        if not isinstance(monomer_X, AtomSpec):
-            message = "Fine-structure system construction requires AtomSpec as monomer_X"
+    if selected_type is ScatteringType.DIATOM_DIATOM_FINE_STRUCTURE:
+        if not isinstance(monomer_X, FSMonomerBasis) or not isinstance(monomer_Y, FSMonomerBasis):
+            message = "AB+CD_fine_structure requires two FSMonomerBasis monomers"
+            logger.error(message)
+            raise TypeError(message)
+        if two_J is None or system_parity is None:
+            message = "AB+CD_fine_structure system construction requires two_J and system_parity"
+            logger.error(message)
+            raise ValueError(message)
+        if not isinstance(potential, PESWrapper | SpinResolvedDiatomDiatomPES):
+            message = "AB+CD_fine_structure requires a scalar PESWrapper or SpinResolvedDiatomDiatomPES"
+            logger.error(message)
+            raise TypeError(message)
+        if isinstance(potential, SpinResolvedDiatomDiatomPES):
+            expected_spins = allowed_total_spins(monomer_X.two_S, monomer_Y.two_S)
+            if set(potential.two_total_spins) != set(expected_spins):
+                message = f"Spin-resolved PES total spins {potential.two_total_spins} do not match required {expected_spins}"
+                logger.error(message)
+                raise ValueError(message)
+            expected_orbitals = orbital_product_states(monomer_X.two_lambda_abs, monomer_Y.two_lambda_abs)
+            if set(potential.orbital_states) != set(expected_orbitals):
+                message = "Spin-resolved PES orbital_states do not match the two monomer signed-Lambda manifolds"
+                logger.error(message)
+                raise ValueError(message)
+        if approx is not Approx.EXACT:
+            message = "AB+CD_fine_structure currently supports only exact coupled channels"
+            logger.error(message)
+            raise ValueError(message)
+        two_K_cut = None if channel_spec.K_cut is None else 2 * channel_spec.K_cut
+        basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis = build_fs_diatom_diatom_channels(
+            monomer_X,
+            monomer_Y,
+            two_J=two_J,
+            system_parity=system_parity,
+            E_X_cut=channel_spec.E_X_cut,
+            E_Y_cut=channel_spec.E_Y_cut,
+            two_K_cut=two_K_cut,
+        )
+    elif selected_type is ScatteringType.ATOM_DIATOM_FINE_STRUCTURE:
+        if not isinstance(monomer_X, AtomSpec) or not isinstance(monomer_Y, FSMonomerBasis):
+            message = "A+BC_fine_structure requires AtomSpec and FSMonomerBasis monomers"
             logger.error(message)
             raise TypeError(message)
         if two_J is None or system_parity is None:
@@ -509,14 +600,22 @@ def build_ScattSystem(
             logger.error(message)
             raise ValueError(message)
         two_K_cut = None if channel_spec.K_cut is None else 2 * channel_spec.K_cut
-        basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis = build_fs_channels(
+        basis = build_fs_channels(
             monomer_Y,
             two_J=two_J,
             system_parity=system_parity,
             E_cut=channel_spec.E_Y_cut,
             two_K_cut=two_K_cut,
         )
-    elif isinstance(monomer_Y, DiatomElectricBasis):
+    elif selected_type is ScatteringType.ATOM_DIATOM_ELECTRIC:
+        if not isinstance(monomer_X, AtomSpec) or not isinstance(monomer_Y, DiatomElectricBasis):
+            message = "A+BC_electric requires AtomSpec and DiatomElectricBasis monomers"
+            logger.error(message)
+            raise TypeError(message)
+        if not isinstance(potential, PESWrapper):
+            message = "A+BC_electric requires a scalar PESWrapper"
+            logger.error(message)
+            raise TypeError(message)
         if M is None or lmax is None:
             message = "Electric-field system construction requires M and lmax"
             logger.error(message)

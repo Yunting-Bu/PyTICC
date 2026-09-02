@@ -4,7 +4,7 @@ import pyticc as ticc
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF, build_ChannelBasis
 from pyticc.basis.monomer.diatom_electric import DiatomElectricBlock
 from pyticc.basis.rovib import RovibBasis
-from pyticc.scattering.energy_transfer.atom_diatom import build_hamiltonian, build_hamiltonian_electric_sf
+from pyticc.scattering.energy_transfer.atom_diatom import build_hamiltonian_electric_sf
 
 
 def _hamiltonian() -> ticc.ScattHamiltonian:
@@ -48,6 +48,7 @@ def _electric_system(pes: ticc.PESWrapper) -> ticc.ScattSystem:
     return ticc.build_ScattSystem(
         ticc.AtomSpec(),
         _electric_monomer(),
+        scattering_type="A+BC_electric",
         M=0,
         lmax=1,
         potential=pes,
@@ -74,22 +75,29 @@ def test_system_build_hamiltonian_solve_flow() -> None:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
+        scattering_type="A+BC",
         Jtot=0,
         system_parity=1,
         potential=potential,
         reduced_mass=2.0,
     )
 
-    hamiltonian = build_hamiltonian(system, n_theta=4)
+    potential_grid = ticc.prepare_potential(
+        system,
+        (3.0, 3.2),
+        (0.1,),
+        n_theta=4,
+    )
     result = ticc.solve(
-        hamiltonian,
+        system,
         [0.1],
-        ticc.Propagation(boundaries=(3.0, 3.2), half_steps=(0.1,)),
+        potential_grid,
+        ticc.Propagation(),
     )
 
     assert isinstance(result, ticc.ScatteringResult)
-    assert isinstance(hamiltonian.basis, ChannelBasis)
-    assert hamiltonian.basis.Jtot == system.Jtot
+    assert isinstance(result.basis, ChannelBasis)
+    assert result.basis.Jtot == system.Jtot
     np.testing.assert_allclose(np.abs(result.Smat[0]), 1.0, atol=1.0e-13)
 
 
@@ -135,17 +143,21 @@ def test_hamiltonian_electric_sf_accepts_radial_batches_and_selected_channel_ord
 
 def test_solve_electric_sf_propagates_and_matches_in_the_same_basis() -> None:
     pes = ticc.PESWrapper(interaction=lambda R, coordinates: np.zeros(coordinates.shape[1]))
-    hamiltonian = build_hamiltonian_electric_sf(
-        _electric_system(pes),
+    system = _electric_system(pes)
+    potential_grid = ticc.prepare_potential(
+        system,
+        (3.0, 3.2),
+        (0.1,),
         n_theta_r=3,
         n_theta_R=3,
         n_delta=4,
     )
 
     result = ticc.solve(
-        hamiltonian,
+        system,
         [0.1],
-        ticc.Propagation(boundaries=(3.0, 3.2), half_steps=(0.1,)),
+        potential_grid,
+        ticc.Propagation(),
     )
 
     assert isinstance(result, ticc.ScatteringResult)

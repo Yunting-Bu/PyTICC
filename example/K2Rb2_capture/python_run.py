@@ -3,7 +3,6 @@ from pathlib import Path
 import numpy as np
 
 import pyticc as ticc
-from pyticc.scattering import diatom_diatom
 
 
 def main() -> None:
@@ -12,7 +11,6 @@ def main() -> None:
         [pes_dir / "pes_interface.f"],
         pes_dir / "pyticc_wrapper.f90",
         workdir=pes_dir,
-        processes=4,
     )
 
     try:
@@ -30,6 +28,7 @@ def main() -> None:
         system = ticc.build_ScattSystem(
             diatom_KRb,
             diatom_KRb,
+            scattering_type="AB+CD",
             Jtot=2,
             system_parity=1,
             approx=ticc.Approx.NNCC,
@@ -46,18 +45,20 @@ def main() -> None:
             potential=pes,
             reduced_mass=ticc.reduced_mass(mass_KRb, mass_KRb),
         )
-        hamiltonian = diatom_diatom.build_hamiltonian(
+        potential_grid = ticc.prepare_potential(
             system,
+            (20.0, 25.0, 60.0, 100.0),
+            (0.05, 0.5, 1.0),
             n_theta_X=21,
             n_theta_Y=15,
             n_phi=21,
+            processes=4,
         )
         result = ticc.solve(
-            hamiltonian,
+            system,
             np.array([1.0e-8, 1.0e-7, 1.0e-6, 1.0e-5, 1.0e-4, 1.0]) * ticc.CM2AU,
+            potential_grid,
             ticc.Propagation(
-                boundaries=(20.0, 25.0, 60.0, 100.0),
-                half_steps=(0.05, 0.5, 1.0),
                 mode="capture",
                 memory_mb=512.0,
                 device="auto",

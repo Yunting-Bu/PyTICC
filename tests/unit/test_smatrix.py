@@ -1,6 +1,6 @@
 import numpy as np
 
-from pyticc.match import get_Smat, modified_bessel_IK_logD, riccati_bessel_jy
+from pyticc.match import get_Smat, modified_bessel_IK_logD, modified_bessel_K_logD, riccati_bessel_jy
 from pyticc.propagation import propagate_logD
 
 
@@ -110,6 +110,39 @@ def test_get_Smat_includes_closed_channels_before_extracting_open_block() -> Non
 
     assert Smat.shape == (1, 1)
     np.testing.assert_allclose(Smat[0, 0], expected, rtol=1.0e-12, atol=1.0e-12)
+
+
+def test_closed_channel_elimination_matches_full_reaction_matrix() -> None:
+    energy = 0.3
+    Rmatch = 9.0
+    reduced_mass = 2.5
+    E_int = np.array([0.0, 0.12, 0.55, 1.1])
+    L = np.array([0.0, 1.0, 2.3, 4.2])
+    Ymat = np.array(
+        [
+            [0.4, 0.03, 0.08, -0.02],
+            [0.03, -0.2, 0.04, 0.06],
+            [0.08, 0.04, -1.1, 0.05],
+            [-0.02, 0.06, 0.05, -1.4],
+        ]
+    )
+    J, N, J_prime, N_prime = _reference_matrices(energy, Rmatch, reduced_mass, E_int, L)
+    reaction_full = -np.linalg.solve(Ymat @ N - N_prime, Ymat @ J - J_prime)
+    reaction_open = reaction_full[:2, :2]
+    identity = np.eye(2)
+    expected = np.linalg.solve(identity + 1.0j * reaction_open, identity - 1.0j * reaction_open)
+
+    (Smat,) = get_Smat(Ymat[None, :, :], Rmatch, [energy], reduced_mass, E_int, L)
+
+    np.testing.assert_allclose(Smat, expected, rtol=2.0e-13, atol=2.0e-13)
+
+
+def test_decaying_closed_reference_log_derivative_remains_finite_at_large_argument() -> None:
+    combined_K_logD = modified_bessel_IK_logD(48.5, 2500.0)[1]
+    decay_K_logD = modified_bessel_K_logD(48.5, 2500.0)
+
+    assert np.isfinite(decay_K_logD)
+    np.testing.assert_allclose(decay_K_logD, combined_K_logD, rtol=1.0e-14, atol=1.0e-14)
 
 
 def test_get_Smat_complex_capture_boundary_is_nonunitary() -> None:

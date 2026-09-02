@@ -2,15 +2,27 @@ from pathlib import Path
 
 from loguru import logger
 
-import pyticc.scattering.energy_transfer.diatom_diatom as geometry
 from pyticc.constants import CM2AU
-from pyticc.input.common import TomlTable, approximation, build_diatom, diatom_symbols, energies, k_cut, propagation, required, section
+from pyticc.input.common import (
+    TomlTable,
+    approximation,
+    build_diatom,
+    diatom_symbols,
+    energies,
+    k_cut,
+    potential_grid_settings,
+    propagation,
+    required,
+    section,
+)
 from pyticc.pes.adiabatic import PESWrapper
 from pyticc.result import CoupledStatesResult, ScatteringResult
+from pyticc.scattering.potential import prepare_potential
 from pyticc.scattering.solver import solve
-from pyticc.system import ChannelSpec, build_ScattSystem, reduced_mass
+from pyticc.system import ChannelSpec, ScatteringType, build_ScattSystem, reduced_mass
 
 
+# ----------------------------------------------------------------------------------------
 def run(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | CoupledStatesResult:
     """Run a diatom-diatom calculation from parsed TOML data."""
     if pes.monomer_X is None or pes.monomer_Y is None:
@@ -26,6 +38,7 @@ def run(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | Co
     system = build_ScattSystem(
         basis_X,
         basis_Y,
+        scattering_type=ScatteringType.DIATOM_DIATOM,
         Jtot=int(required(config, "Jtot")),
         system_parity=int(required(config, "system_parity")),
         approx=approx,
@@ -42,10 +55,17 @@ def run(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | Co
         potential=pes,
         reduced_mass=reduced_mass(mass_X, mass_Y),
     )
-    hamiltonian = geometry.build_hamiltonian(
+    boundaries, half_steps, processes = potential_grid_settings(config)
+    potential_grid = prepare_potential(
         system,
+        boundaries,
+        half_steps,
         n_theta_X=int(required(quadrature, "n_theta_X")),
         n_theta_Y=int(required(quadrature, "n_theta_Y")),
         n_phi=int(required(quadrature, "n_phi")),
+        processes=processes,
     )
-    return solve(hamiltonian, energies(required(config, "energies_cm"), base), propagation(config))
+    return solve(system, energies(required(config, "energies_cm"), base), potential_grid, propagation(config))
+
+
+# ----------------------------------------------------------------------------------------

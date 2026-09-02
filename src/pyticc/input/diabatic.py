@@ -2,14 +2,25 @@ from pathlib import Path
 
 from loguru import logger
 
-import pyticc.scattering.energy_transfer.diabatic_atom_diatom as geometry
 from pyticc.basis.monomer import AtomSpec, prepare_DiabaticDiatom
 from pyticc.constants import CM2AU
-from pyticc.input.common import TomlTable, approximation, diatom_symbols, energies, k_cut, propagation, required, section, state_int
+from pyticc.input.common import (
+    TomlTable,
+    approximation,
+    diatom_symbols,
+    energies,
+    k_cut,
+    potential_grid_settings,
+    propagation,
+    required,
+    section,
+    state_int,
+)
 from pyticc.pes.diabatic import DiabaticPESWrapper
 from pyticc.result import ScatteringResult
+from pyticc.scattering.potential import prepare_potential
 from pyticc.scattering.solver import solve
-from pyticc.system import Approx, ChannelSpec, build_ScattSystem, element_masses_au, reduced_mass
+from pyticc.system import Approx, ChannelSpec, ScatteringType, build_ScattSystem, element_masses_au, reduced_mass
 
 
 # ----------------------------------------------------------------------------------------
@@ -47,6 +58,7 @@ def run(config: TomlTable, base: Path, pes: DiabaticPESWrapper) -> ScatteringRes
     system = build_ScattSystem(
         AtomSpec(),
         diatom,
+        scattering_type=ScatteringType.ATOM_DIATOM_DIABATIC,
         Jtot=int(required(config, "Jtot")),
         system_parity=int(required(config, "system_parity")),
         channel=ChannelSpec(
@@ -58,11 +70,15 @@ def run(config: TomlTable, base: Path, pes: DiabaticPESWrapper) -> ScatteringRes
         potential=pes,
         reduced_mass=reduced_mass(atom_mass, diatom_mass),
     )
-    hamiltonian = geometry.build_hamiltonian(
+    boundaries, half_steps, processes = potential_grid_settings(config)
+    potential_grid = prepare_potential(
         system,
+        boundaries,
+        half_steps,
         n_theta=int(required(quadrature, "n_theta")),
+        processes=processes,
     )
-    result = solve(hamiltonian, energies(required(config, "energies_cm"), base), propagation(config))
+    result = solve(system, energies(required(config, "energies_cm"), base), potential_grid, propagation(config))
     if not isinstance(result, ScatteringResult):
         message = "Diabatic atom-diatom solver returned a coupled-states result"
         logger.error(message)

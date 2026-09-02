@@ -1,14 +1,14 @@
-import atexit
 import importlib.util
 import multiprocessing as mp
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from multiprocessing.pool import Pool
 from pathlib import Path
 from threading import RLock
+from time import perf_counter
 from types import ModuleType
 
 import numpy as np
@@ -21,6 +21,7 @@ from pyticc.pes.lambda_pes import LambdaPES
 from pyticc.pes.total import TotalPES
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class _FortranPESSpec:
     """Compiled module identity and optional runtime-data directory."""
@@ -32,6 +33,9 @@ class _FortranPESSpec:
     interaction_args: tuple[int, ...] = ()
 
 
+# ----------------------------------------------------------------------------------------
+
+
 _MODULE: ModuleType | None = None
 _COORDINATES: NDArray[np.float64] | None = None
 _INTERACTION_ROUTINE = "pyticc_interaction_grid"
@@ -40,7 +44,7 @@ _FORTRAN_LOCK = RLock()
 
 
 # ----------------------------------------------------------------------------------------
-def create_pes_wrapper(module_name: str, extension: Path, workdir: Path | None, processes: int) -> PESWrapper:
+def create_pes_wrapper(module_name: str, extension: Path, workdir: Path | None) -> PESWrapper:
     """
     Load a compiled extension and expose its scalar, batched, and monomer PES calls.
 
@@ -48,19 +52,24 @@ def create_pes_wrapper(module_name: str, extension: Path, workdir: Path | None, 
         module_name: str - Python name embedded in the compiled extension
         extension: Path - platform-specific compiled extension path
         workdir: Path | None - directory containing PES runtime data files
-        processes: int - persistent processes used for batched radial evaluation
-
     Returns:
         pes: PESWrapper - compiled monomer and interaction potential interfaces
     """
     spec = _FortranPESSpec(module_name, extension, workdir)
     module = _load_module(module_name, extension)
     interaction = _make_interaction(module, workdir, spec.interaction_routine, spec.interaction_args)
-    executor = _FortranPESExecutor(spec, processes, interaction)
 
     def interaction_many(R: NDArray[np.float64], coordinates: NDArray[np.float64]) -> NDArray[np.float64]:
         """Evaluate R with shape (n_R,), returning potential values of shape (n_R, n_grid)."""
-        return executor.evaluate(R, coordinates)
+        return interaction_many_processes(R, coordinates, 1)
+
+    def interaction_many_processes(
+        R: NDArray[np.float64],
+        coordinates: NDArray[np.float64],
+        processes: int,
+    ) -> NDArray[np.float64]:
+        """Evaluate one radial batch with temporary Fortran worker processes."""
+        return _evaluate_many_processes(spec, processes, interaction, R, coordinates)
 
     def monomer(name: str) -> MonomerPES | None:
         """Wrap an optional compiled monomer routine by its exported name."""
@@ -80,7 +89,7 @@ def create_pes_wrapper(module_name: str, extension: Path, workdir: Path | None, 
         interaction_many=interaction_many,
         monomer_X=monomer("pyticc_monomer_x_grid"),
         monomer_Y=monomer("pyticc_monomer_y_grid"),
-        _close=executor.close,
+        _interaction_many_processes=interaction_many_processes,
     )
 
 
@@ -92,7 +101,6 @@ def create_diabatic_pes_wrapper(
     module_name: str,
     extension: Path,
     workdir: Path | None,
-    processes: int,
     n_state: int,
 ) -> DiabaticPESWrapper:
     """Load a compiled extension and expose its diabatic monomer and interaction matrices."""
@@ -100,12 +108,19 @@ def create_diabatic_pes_wrapper(
     spec = _FortranPESSpec(module_name, extension, workdir, routine_name, (n_state,))
     module = _load_module(module_name, extension)
     interaction = _make_interaction(module, workdir, routine_name, (n_state,))
-    executor = _FortranPESExecutor(spec, processes, interaction)
     monomer_routine: Callable[..., object] = module.pyticc_diabatic_monomer_grid
 
     def interaction_many(R: NDArray[np.float64], coordinates: NDArray[np.float64]) -> NDArray[np.float64]:
         """Evaluate a radial batch, returning shape ``(n_R, n_grid, n_state, n_state)``."""
-        return executor.evaluate(R, coordinates)
+        return interaction_many_processes(R, coordinates, 1)
+
+    def interaction_many_processes(
+        R: NDArray[np.float64],
+        coordinates: NDArray[np.float64],
+        processes: int,
+    ) -> NDArray[np.float64]:
+        """Evaluate one radial batch with temporary Fortran worker processes."""
+        return _evaluate_many_processes(spec, processes, interaction, R, coordinates)
 
     def monomer(r: NDArray[np.float64]) -> NDArray[np.float64]:
         """Evaluate all monomer states, returning shape ``(n_grid, n_state)``."""
@@ -117,22 +132,33 @@ def create_diabatic_pes_wrapper(
         monomer=monomer,
         interaction=interaction,
         interaction_many=interaction_many,
-        _close=executor.close,
+        _interaction_many_processes=interaction_many_processes,
     )
 
 
-def create_lambda_pes(module_name: str, extension: Path, workdir: Path | None, processes: int) -> LambdaPES:
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def create_lambda_pes(module_name: str, extension: Path, workdir: Path | None) -> LambdaPES:
     """Load a compiled extension exposing V_sum and V_dif interaction grids."""
     routine_name = "pyticc_lambda_grid"
     spec = _FortranPESSpec(module_name, extension, workdir, routine_name)
     module = _load_module(module_name, extension)
     interaction = _make_interaction(module, workdir, routine_name)
-    executor = _FortranPESExecutor(spec, processes, interaction)
     monomer_routine: Callable[..., object] | None = getattr(module, "pyticc_monomer_y_grid", None)
 
     def interaction_many(R: NDArray[np.float64], coordinates: NDArray[np.float64]) -> NDArray[np.float64]:
         """Evaluate a radial batch, returning shape (n_R,n_grid,2)."""
-        return executor.evaluate(R, coordinates)
+        return interaction_many_processes(R, coordinates, 1)
+
+    def interaction_many_processes(
+        R: NDArray[np.float64],
+        coordinates: NDArray[np.float64],
+        processes: int,
+    ) -> NDArray[np.float64]:
+        """Evaluate one radial batch with temporary Fortran worker processes."""
+        return _evaluate_many_processes(spec, processes, interaction, R, coordinates)
 
     monomer_Y: MonomerPES | None = None
     if monomer_routine is not None:
@@ -143,7 +169,12 @@ def create_lambda_pes(module_name: str, extension: Path, workdir: Path | None, p
 
         monomer_Y = evaluate_monomer_Y
 
-    return LambdaPES(interaction=interaction, interaction_many=interaction_many, monomer_Y=monomer_Y, _close=executor.close)
+    return LambdaPES(
+        interaction=interaction,
+        interaction_many=interaction_many,
+        monomer_Y=monomer_Y,
+        _interaction_many_processes=interaction_many_processes,
+    )
 
 
 # ----------------------------------------------------------------------------------------
@@ -262,8 +293,11 @@ def _evaluate_worker(RR: float) -> NDArray[np.float64]:
 
 
 # ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 class _FortranPESExecutor:
-    """Keep spawned Fortran PES workers alive across radial windows."""
+    """Manage spawned Fortran PES workers for one radial-batch evaluation."""
 
     def __init__(
         self,
@@ -271,13 +305,16 @@ class _FortranPESExecutor:
         processes: int,
         interaction: Callable[[float, NDArray[np.float64]], NDArray[np.float64]],
     ) -> None:
+        if not isinstance(processes, int) or isinstance(processes, bool) or processes < 1:
+            message = f"processes must be a positive integer, but got {processes!r}"
+            logger.error(message)
+            raise ValueError(message)
         self.spec = spec
         self.processes = processes
         self.interaction = interaction
         self._pool: Pool | None = None
         self._coordinates: NDArray[np.float64] | None = None
         self._lock = RLock()
-        atexit.register(self.close)
 
     def _close_unlocked(self, terminate: bool = False) -> None:
         """Shut down the active pool while the caller holds the executor lock."""
@@ -313,20 +350,66 @@ class _FortranPESExecutor:
         radial_points = np.asarray(R, dtype=np.float64)
         if radial_points.size == 0:
             return np.empty((0, coordinates.shape[1]), dtype=np.float64)
+        started = perf_counter()
         if self.processes == 1:
-            return np.stack([self.interaction(float(RR), coordinates) for RR in radial_points])
+            values = (self.interaction(float(RR), coordinates) for RR in radial_points)
+            return self._collect(values, radial_points, started)
 
         with self._lock:
             pool = self._ensure_pool(coordinates)
             chunksize = max(1, radial_points.size // (4 * self.processes))
             try:
-                values = pool.map(_evaluate_worker, radial_points, chunksize=chunksize)
+                values = self._collect(pool.imap(_evaluate_worker, radial_points, chunksize=chunksize), radial_points, started)
             except BaseException:
                 self._close_unlocked(terminate=True)
                 raise
-        return np.stack(values)
+        return values
+
+    @staticmethod
+    def _collect(
+        values: Iterable[NDArray[np.float64]],
+        radial_points: NDArray[np.float64],
+        started: float,
+    ) -> NDArray[np.float64]:
+        """Collect ordered radial results and log about ten progress updates."""
+        iterator = iter(values)
+        total = radial_points.size
+        progress_interval = max(1, (total + 9) // 10)
+        next_progress = progress_interval
+        collected: list[NDArray[np.float64]] = []
+        for completed, value in enumerate(iterator, start=1):
+            collected.append(value)
+            if completed == total or completed >= next_progress:
+                logger.info(
+                    f"Potential: {completed}/{total} radial points, R={radial_points[completed - 1]:.6f} bohr, wall={perf_counter() - started:.3f} s"
+                )
+                while next_progress <= completed:
+                    next_progress += progress_interval
+        return np.stack(collected)
 
     def close(self) -> None:
-        """Close and join persistent worker processes; repeated calls are safe."""
+        """Close and join active worker processes; repeated calls are safe."""
         with self._lock:
             self._close_unlocked()
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _evaluate_many_processes(
+    spec: _FortranPESSpec,
+    processes: int,
+    interaction: Callable[[float, NDArray[np.float64]], NDArray[np.float64]],
+    R: NDArray[np.float64],
+    coordinates: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Evaluate one radial batch and always release its temporary worker pool."""
+    executor = _FortranPESExecutor(spec, processes, interaction)
+    try:
+        return executor.evaluate(R, coordinates)
+    finally:
+        executor.close()
+
+
+# ----------------------------------------------------------------------------------------

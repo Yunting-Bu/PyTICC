@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 from time import perf_counter
-from typing import TypeAlias, cast
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 import jax
 import jax.numpy as jnp
@@ -19,11 +19,13 @@ from pyticc.matrix.centrifugal import get_Umat_BF
 from pyticc.matrix.radial import get_Wmat
 from pyticc.propagation.config import Propagation
 from pyticc.propagation.device import resolve_device
-from pyticc.propagation.grid import RadialSector, build_radial_sectors, iter_radial_windows
+from pyticc.propagation.grid import RadialSector, iter_radial_windows
 from pyticc.propagation.logd import initialize_logD_capture, initialize_logD_inelastic, propagate_logD
-from pyticc.scattering.hamiltonian import ScattHamiltonian
 
-InteractionMatrix: TypeAlias = NDArray[np.float64] | jax.Array
+if TYPE_CHECKING:
+    from pyticc.scattering.hamiltonian import ScattHamiltonian
+
+InteractionMatrix: TypeAlias = NDArray[np.float64] | NDArray[np.complex128] | jax.Array
 InteractionProvider = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...], JaxDevice], tuple[InteractionMatrix, ...]]
 RadialWindow: TypeAlias = tuple[tuple[RadialSector, ...], NDArray[np.float64]]
 InteractionWindow: TypeAlias = tuple[
@@ -35,6 +37,7 @@ InteractionWindow: TypeAlias = tuple[
 ]
 
 
+# ----------------------------------------------------------------------------------------
 def _evaluate_interaction_windows(
     windows: Iterator[RadialWindow],
     interaction_provider: InteractionProvider,
@@ -45,10 +48,10 @@ def _evaluate_interaction_windows(
 ) -> Iterator[InteractionWindow]:
     """Evaluate radial interactions sequentially or with one-window lookahead.
 
-    GPU propagation uses a single background thread to drive the Fortran PES
-    process pool for the next radial window while the current device contraction
-    and log-derivative propagation are in flight. CPU propagation remains
-    sequential to avoid competing with its own JAX and BLAS threads.
+    GPU propagation uses a single background thread to prepare and contract the
+    next radial window while the current log-derivative propagation is in
+    flight. CPU propagation remains sequential to avoid competing with its own
+    JAX and BLAS threads.
 
     Inputs:
         windows: Iterator[RadialWindow] - memory-bounded radial windows
@@ -106,6 +109,7 @@ def _evaluate_interaction_windows(
 def propagate(
     hamiltonian: ScattHamiltonian,
     Etot: EnergyInput,
+    radial_sectors: Sequence[RadialSector],
     config: Propagation,
 ) -> jax.Array:
     r"""
@@ -124,8 +128,9 @@ def propagate(
     Inputs:
         hamiltonian: ScattHamiltonian - projected channel Hamiltonian
         Etot: EnergyInput - total energies in atomic units
-        config: Propagation - radial grid, boundary condition, memory limit,
-            logging, and device settings
+        radial_sectors: Sequence[RadialSector] - ordered propagation sectors
+        config: Propagation - boundary condition, memory limit, logging, and
+            device settings
 
     Returns:
         Y_final: jax.Array - final log-derivative matrices in the propagated
@@ -147,6 +152,7 @@ def propagate(
         interaction_provider,
         energies,
         hamiltonian.reduced_mass,
+        radial_sectors,
         config,
         hamiltonian.potential_grid_size,
     )[0]
@@ -160,6 +166,7 @@ def _propagate_blocks(
     interaction_provider: InteractionProvider,
     energies: NDArray[np.float64],
     reduced_mass: float,
+    radial_sectors: Sequence[RadialSector],
     config: Propagation,
     potential_grid_size: int,
 ) -> tuple[jax.Array, ...]:
@@ -182,8 +189,9 @@ def _propagate_blocks(
             each batch has shape (n_new_R, n_channel_block, n_channel_block)
         energies: NDArray[np.float64] - total energies, shape (n_energy,)
         reduced_mass: float - collision reduced mass in atomic units
-        config: Propagation - radial grid, boundary condition, memory limit,
-            logging, and device settings
+        radial_sectors: Sequence[RadialSector] - ordered propagation sectors
+        config: Propagation - boundary condition, memory limit, logging, and
+            device settings
         potential_grid_size: int - internal PES grid points per R used by the
             memory estimator
 
@@ -197,17 +205,16 @@ def _propagate_blocks(
         logger.error(message)
         raise ValueError(message)
 
-    sectors = build_radial_sectors(config.boundaries, config.half_steps)
     block_sizes = tuple(len(indices) for indices in blocks)
     windows = iter_radial_windows(
-        sectors,
+        radial_sectors,
         n_grid=potential_grid_size,
         n_channel=max(block_sizes),
         n_energy=energies.size,
         memory_limit_mb=config.memory_mb,
         state_matrix_elements=sum(size**2 for size in block_sizes),
     )
-    n_sector = len(sectors)
+    n_sector = len(radial_sectors)
     progress_interval = max(1, ceil(n_sector / 10))
     next_progress = progress_interval
     completed_sectors = 0
@@ -317,6 +324,7 @@ def propagate_blocks(
     hamiltonian: ScattHamiltonian,
     channel_blocks: Sequence[Sequence[int]],
     Etot: EnergyInput,
+    radial_sectors: Sequence[RadialSector],
     config: Propagation,
 ) -> tuple[jax.Array, ...]:
     r"""
@@ -334,7 +342,8 @@ def propagate_blocks(
         channel_blocks: Sequence[Sequence[int]] - complete-basis positions for
             each propagation block
         Etot: EnergyInput - total energies in atomic units
-        config: Propagation - radial grid and runtime settings
+        radial_sectors: Sequence[RadialSector] - ordered propagation sectors
+        config: Propagation - boundary condition and runtime settings
 
     Returns:
         Y_blocks: tuple[jax.Array, ...] - final BF log derivatives, one array
@@ -356,6 +365,7 @@ def propagate_blocks(
         lambda radial_points, selected_blocks, device: hamiltonian.V_blocks(radial_points, selected_blocks, device),
         energies,
         hamiltonian.reduced_mass,
+        radial_sectors,
         config,
         hamiltonian.potential_grid_size,
     )

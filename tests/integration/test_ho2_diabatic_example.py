@@ -74,11 +74,16 @@ def test_ho2_adapter_initializes_independently_in_worker_processes(ho2_pes: Diab
         [PES_DIR / "ho2-dpme.f", PES_DIR / "long_range_H_O2.f"],
         PES_DIR / "pyticc_wrapper.f90",
         workdir=PES_DIR,
-        processes=2,
         lapack=True,
     )
     try:
-        actual = get_diabatic_potential_grid_atom_diatom(parallel_pes, radial_points, r_oo, theta)
+        actual = get_diabatic_potential_grid_atom_diatom(
+            parallel_pes,
+            radial_points,
+            r_oo,
+            theta,
+            processes=2,
+        )
         expected = np.stack([get_diabatic_potential_grid_atom_diatom(ho2_pes, R, r_oo, theta) for R in radial_points])
         np.testing.assert_allclose(actual, expected, atol=1.0e-13)
     finally:

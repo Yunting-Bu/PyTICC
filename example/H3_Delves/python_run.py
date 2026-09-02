@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 
 import pyticc as ticc
+from pyticc.propagation.grid import build_radial_sectors
 from pyticc.scattering import delves
 
 EV2AU = 1.0 / 27.2114
@@ -30,6 +31,7 @@ def main() -> None:
 
         system = ticc.build_ScattSystem(
             monomer,
+            scattering_type="A+BC_Delves",
             Jtot=0,
             system_parity=1,
             jmax=0,
@@ -57,15 +59,11 @@ def main() -> None:
             arrangement, v, j, K = qns
             print(f"{index:3d}: a={arrangement}, v={v}, j={j}, K={K}, threshold={threshold / EV2AU: .10f} eV")
 
-        result = ticc.solve(
-            hamiltonian,
-            total_energies,
-            ticc.Propagation(
-                boundaries=(hamiltonian.basis.rho_min, 12.0),
-                half_steps=((12.0 - hamiltonian.basis.rho_min) / 240.0,),
-                device="auto",
-            ),
+        radial_sectors = build_radial_sectors(
+            (hamiltonian.basis.rho_min, 12.0),
+            ((12.0 - hamiltonian.basis.rho_min) / 240.0,),
         )
+        result = ticc.solve(hamiltonian, total_energies, radial_sectors, ticc.Propagation(device="auto"))
 
         print(f"\npropagation sectors={result.radial_points.size - 1}")
 

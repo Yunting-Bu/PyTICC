@@ -18,21 +18,18 @@ def load_fortran_pes(
     wrapper: str | Path | None = None,
     *,
     workdir: str | Path | None = None,
-    processes: int = 1,
     lapack: bool = False,
 ) -> PESWrapper:
     """
     Compile or load fixed-interface Fortran potential-energy surfaces.
 
     ``sources`` can also be a short TOML file. Relative paths in TOML are
-    resolved from the directory containing that TOML file. ``processes`` affects
-    only batched radial evaluation; workers keep isolated PES copies alive.
+    resolved from the directory containing that TOML file.
 
     Inputs:
         sources: Sequence[str | Path] | str | Path - Fortran sources or a TOML file
         wrapper: str | Path | None - source implementing the PyTICC grid routines
         workdir: str | Path | None - directory containing PES runtime data files
-        processes: int - worker processes used when several R values are evaluated
         lapack: bool - whether the PES requires LAPACK
 
     Returns:
@@ -42,7 +39,7 @@ def load_fortran_pes(
     requested_lapack = _require_lapack(lapack)
     source_paths, wrapper_path, runtime_dir, configured_lapack = _resolve_inputs(sources, wrapper, workdir)
     module_name, extension = prepare_extension(source_paths, wrapper_path, lapack=requested_lapack or configured_lapack)
-    return create_pes_wrapper(module_name, extension, runtime_dir, processes)
+    return create_pes_wrapper(module_name, extension, runtime_dir)
 
 
 # ----------------------------------------------------------------------------------------
@@ -55,7 +52,6 @@ def load_fortran_diabatic_pes(
     *,
     n_state: int = 2,
     workdir: str | Path | None = None,
-    processes: int = 1,
     lapack: bool = False,
 ) -> DiabaticPESWrapper:
     """
@@ -71,7 +67,6 @@ def load_fortran_diabatic_pes(
         wrapper: str | Path | None - source implementing the diabatic PyTICC grid routines
         n_state: int - number of diabatic electronic states
         workdir: str | Path | None - directory containing PES runtime data files
-        processes: int - worker processes used for batched radial evaluation
         lapack: bool - whether the PES requires LAPACK
 
     Returns:
@@ -84,15 +79,18 @@ def load_fortran_diabatic_pes(
     requested_lapack = _require_lapack(lapack)
     source_paths, wrapper_path, runtime_dir, configured_lapack = _resolve_inputs(sources, wrapper, workdir)
     module_name, extension = prepare_diabatic_extension(source_paths, wrapper_path, lapack=requested_lapack or configured_lapack)
-    return create_diabatic_pes_wrapper(module_name, extension, runtime_dir, processes, n_state)
+    return create_diabatic_pes_wrapper(module_name, extension, runtime_dir, n_state)
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def load_fortran_lambda_pes(
     sources: Sequence[str | Path] | str | Path,
     wrapper: str | Path | None = None,
     *,
     workdir: str | Path | None = None,
-    processes: int = 1,
     lapack: bool = False,
 ) -> LambdaPES:
     """
@@ -105,7 +103,6 @@ def load_fortran_lambda_pes(
         sources: Sequence[str | Path] | str | Path - Fortran sources or TOML file
         wrapper: str | Path | None - source implementing the PyTICC grid routine
         workdir: str | Path | None - PES runtime-data directory
-        processes: int - persistent workers for radial batches
         lapack: bool - whether the native PES requires LAPACK
 
     Returns:
@@ -114,7 +111,7 @@ def load_fortran_lambda_pes(
     requested_lapack = _require_lapack(lapack)
     source_paths, wrapper_path, runtime_dir, configured_lapack = _resolve_inputs(sources, wrapper, workdir)
     module_name, extension = prepare_lambda_extension(source_paths, wrapper_path, lapack=requested_lapack or configured_lapack)
-    return create_lambda_pes(module_name, extension, runtime_dir, processes)
+    return create_lambda_pes(module_name, extension, runtime_dir)
 
 
 # ----------------------------------------------------------------------------------------
@@ -212,6 +209,10 @@ def _resolve_path(path: str | Path, base: Path) -> Path:
     return value.resolve() if value.is_absolute() else (base / value).resolve()
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _require_lapack(value: object) -> bool:
     """Return a validated LAPACK switch."""
     if not isinstance(value, bool):
@@ -219,3 +220,6 @@ def _require_lapack(value: object) -> bool:
         logger.error(message)
         raise ValueError(message)
     return value
+
+
+# ----------------------------------------------------------------------------------------

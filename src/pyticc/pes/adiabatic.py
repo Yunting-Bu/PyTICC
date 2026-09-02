@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 MonomerPES = Callable[[NDArray[np.float64]], NDArray[np.float64]]
 InteractionPES = Callable[[float, NDArray[np.float64]], NDArray[np.float64]]
 InteractionManyPES = Callable[[NDArray[np.float64], NDArray[np.float64]], NDArray[np.float64]]
+InteractionManyProcessesPES = Callable[[NDArray[np.float64], NDArray[np.float64], int], NDArray[np.float64]]
 RadialInput: TypeAlias = float | Sequence[float] | NDArray[np.float64]
 
 
@@ -34,6 +35,7 @@ class PESWrapper:
     monomer_X: MonomerPES | None = None
     monomer_Y: MonomerPES | None = None
     interaction_many: InteractionManyPES | None = None
+    _interaction_many_processes: InteractionManyProcessesPES | None = field(default=None, repr=False, compare=False)
     _close: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
     def close(self) -> None:
@@ -46,11 +48,25 @@ class PESWrapper:
 
 
 # ----------------------------------------------------------------------------------------
+def _validate_processes(processes: int) -> None:
+    """Validate the worker-process count requested for one radial batch."""
+    if not isinstance(processes, int) or isinstance(processes, bool) or processes < 1:
+        message = f"processes must be a positive integer, but got {processes!r}"
+        logger.error(message)
+        raise ValueError(message)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def _evaluate(
     pes: PESWrapper,
     R: RadialInput,
     coordinates: NDArray[np.float64],
     grid_shape: tuple[int, ...],
+    *,
+    processes: int,
 ) -> NDArray[np.float64]:
     """
     Dispatch scalar or batched radial PES evaluation and restore tensor-grid axes.
@@ -58,6 +74,7 @@ def _evaluate(
     ``coordinates`` has shape (n_coordinate, n_grid). A scalar R returns
     ``grid_shape``; R with shape (n_R,) returns shape (n_R, *grid_shape).
     """
+    _validate_processes(processes)
     radial_points = np.asarray(R, dtype=np.float64)
     if radial_points.ndim == 0:
         values = np.asarray(pes.interaction(float(radial_points), coordinates), dtype=np.float64)
@@ -66,6 +83,8 @@ def _evaluate(
     elif radial_points.ndim == 1:
         if radial_points.size == 0:
             values = np.empty((0, coordinates.shape[1]), dtype=np.float64)
+        elif pes._interaction_many_processes is not None:
+            values = np.asarray(pes._interaction_many_processes(radial_points, coordinates, processes), dtype=np.float64)
         elif pes.interaction_many is None:
             values = np.stack([pes.interaction(float(RR), coordinates) for RR in radial_points])
         else:
@@ -93,6 +112,8 @@ def get_Vgrid_atom_diatom(
     R: RadialInput,
     r: NDArray[np.float64],
     theta: NDArray[np.float64],
+    *,
+    processes: int = 1,
 ) -> NDArray[np.float64]:
     """
     Evaluate an atom-diatom interaction PES on tensor-product internal grids.
@@ -105,6 +126,7 @@ def get_Vgrid_atom_diatom(
             (n_r,)
         theta: NDArray[np.float64] - Jacobi-angle grids in radians, shape
             (n_theta,)
+        processes: int - temporary Fortran worker processes for a radial batch
 
     Returns:
         V: NDArray[np.float64] - interaction grid with shape (n_r, n_theta) for
@@ -112,7 +134,7 @@ def get_Vgrid_atom_diatom(
     """
     grids = np.meshgrid(r, theta, indexing="ij")
     coordinates = np.asfortranarray(np.stack(tuple(grid.reshape(-1) for grid in grids)))
-    return _evaluate(pes, R, coordinates, grids[0].shape)
+    return _evaluate(pes, R, coordinates, grids[0].shape, processes=processes)
 
 
 # ----------------------------------------------------------------------------------------
@@ -124,6 +146,8 @@ def get_Vgrid_atom_diatom_electric_sf(
     R: RadialInput,
     r: NDArray[np.float64],
     gamma: NDArray[np.float64],
+    *,
+    processes: int = 1,
 ) -> NDArray[np.float64]:
     """
     Evaluate an atom-diatom interaction PES on an SF angular geometry grid.
@@ -136,6 +160,7 @@ def get_Vgrid_atom_diatom_electric_sf(
             units, shape (n_r,)
         gamma: NDArray[np.float64] - Jacobi angles in radians with arbitrary
             angular tensor shape (n_theta_r,n_theta_R,n_delta)
+        processes: int - temporary Fortran worker processes for a radial batch
 
     Returns:
         V: NDArray[np.float64] - interaction grid with shape
@@ -147,7 +172,7 @@ def get_Vgrid_atom_diatom_electric_sf(
     radial_coordinates = np.broadcast_to(radial_grid.reshape((-1, *(1 for _ in angle_grid.shape))), grid_shape)
     angular_coordinates = np.broadcast_to(angle_grid[None, ...], grid_shape)
     coordinates = np.asfortranarray(np.stack((radial_coordinates.reshape(-1), angular_coordinates.reshape(-1))))
-    return _evaluate(pes, R, coordinates, grid_shape)
+    return _evaluate(pes, R, coordinates, grid_shape, processes=processes)
 
 
 # ----------------------------------------------------------------------------------------
@@ -162,6 +187,8 @@ def get_Vgrid_atom_triatom(
     theta_1: NDArray[np.float64],
     theta_2: NDArray[np.float64],
     phi: NDArray[np.float64],
+    *,
+    processes: int = 1,
 ) -> NDArray[np.float64]:
     """
     Evaluate an atom-triatom interaction PES on tensor-product internal grids.
@@ -174,9 +201,11 @@ def get_Vgrid_atom_triatom(
         r_2: NDArray[np.float64] - second triatomic radial grid, shape (n_r2,)
         theta_1: NDArray[np.float64] - triatomic bend grids in radians, shape
             (n_theta_1,)
-        theta_2: NDArray[np.float64] - external polar grids in radians, shape
-            (n_theta_2,)
-        phi: NDArray[np.float64] - dihedral grids in radians, shape (n_phi,)
+        theta_2: NDArray[np.float64] - polar grids of the corrected Radau
+            bisector-z MF axis relative to R, in radians, shape (n_theta_2,)
+        phi: NDArray[np.float64] - rotations of the molecular plane about the
+            corrected bisector-z MF axis, in radians, shape (n_phi,)
+        processes: int - temporary Fortran worker processes for a radial batch
 
     Returns:
         V: NDArray[np.float64] - interaction grid with shape
@@ -185,7 +214,7 @@ def get_Vgrid_atom_triatom(
     """
     grids = np.meshgrid(r_1, r_2, theta_1, theta_2, phi, indexing="ij")
     coordinates = np.asfortranarray(np.stack(tuple(grid.reshape(-1) for grid in grids)))
-    return _evaluate(pes, R, coordinates, grids[0].shape)
+    return _evaluate(pes, R, coordinates, grids[0].shape, processes=processes)
 
 
 # ----------------------------------------------------------------------------------------
@@ -200,6 +229,8 @@ def get_Vgrid_diatom_diatom(
     theta_X: NDArray[np.float64],
     theta_Y: NDArray[np.float64],
     phi: NDArray[np.float64],
+    *,
+    processes: int = 1,
 ) -> NDArray[np.float64]:
     """
     Evaluate a diatom-diatom interaction PES on tensor-product internal grids.
@@ -213,6 +244,7 @@ def get_Vgrid_diatom_diatom(
         theta_X: NDArray[np.float64] - first polar-angle grids, shape (n_theta_X,)
         theta_Y: NDArray[np.float64] - second polar-angle grids, shape (n_theta_Y,)
         phi: NDArray[np.float64] - dihedral-angle grids, shape (n_phi,)
+        processes: int - temporary Fortran worker processes for a radial batch
 
     Returns:
         V: NDArray[np.float64] - interaction grid with shape
@@ -221,4 +253,7 @@ def get_Vgrid_diatom_diatom(
     """
     grids = np.meshgrid(r_X, r_Y, theta_X, theta_Y, phi, indexing="ij")
     coordinates = np.asfortranarray(np.stack(tuple(grid.reshape(-1) for grid in grids)))
-    return _evaluate(pes, R, coordinates, grids[0].shape)
+    return _evaluate(pes, R, coordinates, grids[0].shape, processes=processes)
+
+
+# ----------------------------------------------------------------------------------------

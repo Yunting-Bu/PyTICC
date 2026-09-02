@@ -4,6 +4,7 @@ from pyticc.scattering.energy_transfer import (
     diabatic_atom_diatom,
     diatom_diatom,
     fine_structure_atom_diatom,
+    fine_structure_diatom_diatom,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "diabatic_atom_diatom",
     "diatom_diatom",
     "fine_structure_atom_diatom",
+    "fine_structure_diatom_diatom",
 ]

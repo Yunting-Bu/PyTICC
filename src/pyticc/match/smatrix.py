@@ -3,34 +3,49 @@ from loguru import logger
 from numpy.typing import ArrayLike, NDArray
 
 from pyticc.energy import EnergyInput, get_Etot
-from pyticc.match.bessel import modified_bessel_IK_logD, riccati_bessel_jy
+from pyticc.match.bessel import modified_bessel_K_logD, riccati_bessel_jy
 
 
 # ----------------------------------------------------------------------------------------
-def _reference_matrices(
+def _reference_functions(
     energy: float,
     Rmatch: float,
     reduced_mass: float,
     E_int: NDArray[np.float64],
     L: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.bool_]]:
-    """
-    Evaluate diagonal open- and closed-channel reference functions at Rmatch.
+) -> tuple[
+    NDArray[np.int64],
+    NDArray[np.int64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+]:
+    r"""
+    Evaluate open-channel reference functions and closed-channel decay log derivatives.
+
+    Closed-channel growing reference functions are not evaluated because the physical
+    scattering boundary condition contains only the decaying solution.
+
+    Formula:
+        J_o = k_o^{-1/2} \hat j_L(k_o R),
+        N_o = k_o^{-1/2} \hat n_L(k_o R),
+        Gamma_c = d/dR ln[sqrt(kappa_c R) K_{L+1/2}(kappa_c R)].
 
     Inputs:
         E_int: NDArray[np.float64] - channel thresholds, shape (n_channel,)
         L: NDArray[np.float64] - orbital angular momenta, shape (n_channel,)
 
     Returns:
-        J: NDArray[np.float64] - regular reference values, shape
-            (n_channel, n_channel)
-        N: NDArray[np.float64] - irregular reference values, shape
-            (n_channel, n_channel)
-        J_prime: NDArray[np.float64] - regular derivatives, shape
-            (n_channel, n_channel)
-        N_prime: NDArray[np.float64] - irregular derivatives, shape
-            (n_channel, n_channel)
-        open_mask: NDArray[np.bool_] - open-channel flags, shape (n_channel,)
+        open_indices: NDArray[np.int64] - global open-channel indices, shape (n_open,)
+        closed_indices: NDArray[np.int64] - global closed-channel indices, shape (n_closed,)
+        J_open: NDArray[np.float64] - regular open reference values, shape (n_open,)
+        N_open: NDArray[np.float64] - irregular open reference values, shape (n_open,)
+        J_prime_open: NDArray[np.float64] - regular open reference derivatives, shape (n_open,)
+        N_prime_open: NDArray[np.float64] - irregular open reference derivatives, shape (n_open,)
+        Gamma_closed: NDArray[np.float64] - decaying closed-reference log derivatives,
+            shape (n_closed,)
     """
     energy_difference = energy - E_int
     if np.any(energy_difference == 0.0):
@@ -38,28 +53,83 @@ def _reference_matrices(
         logger.error(message)
         raise ValueError(message)
 
-    open_mask = energy_difference > 0.0
-    n_channel = E_int.size
-    J = np.ones(n_channel, dtype=np.float64)
-    N = np.ones(n_channel, dtype=np.float64)
-    J_prime = np.empty(n_channel, dtype=np.float64)
-    N_prime = np.empty(n_channel, dtype=np.float64)
+    open_indices = np.asarray(np.flatnonzero(energy_difference > 0.0), dtype=np.int64)
+    closed_indices = np.asarray(np.flatnonzero(energy_difference < 0.0), dtype=np.int64)
+    J_open = np.empty(open_indices.size, dtype=np.float64)
+    N_open = np.empty(open_indices.size, dtype=np.float64)
+    J_prime_open = np.empty(open_indices.size, dtype=np.float64)
+    N_prime_open = np.empty(open_indices.size, dtype=np.float64)
+    Gamma_closed = np.empty(closed_indices.size, dtype=np.float64)
 
-    for index in range(n_channel):
-        wave_number = np.sqrt(2.0 * reduced_mass * abs(energy_difference[index]))
+    for open_position, index in enumerate(open_indices):
+        wave_number = float(np.sqrt(2.0 * reduced_mass * abs(energy_difference[index])))
         argument = wave_number * Rmatch
-        if open_mask[index]:
-            j_value, n_value, j_derivative, n_derivative = riccati_bessel_jy(float(L[index]), argument)
-            J[index] = j_value / np.sqrt(wave_number)
-            N[index] = n_value / np.sqrt(wave_number)
-            J_prime[index] = np.sqrt(wave_number) * j_derivative
-            N_prime[index] = np.sqrt(wave_number) * n_derivative
-        else:
-            I_logD, K_logD = modified_bessel_IK_logD(float(L[index] + 0.5), argument)
-            J_prime[index] = 0.5 / Rmatch + wave_number * I_logD
-            N_prime[index] = 0.5 / Rmatch + wave_number * K_logD
+        j_value, n_value, j_derivative, n_derivative = riccati_bessel_jy(float(L[index]), argument)
+        J_open[open_position] = j_value / np.sqrt(wave_number)
+        N_open[open_position] = n_value / np.sqrt(wave_number)
+        J_prime_open[open_position] = np.sqrt(wave_number) * j_derivative
+        N_prime_open[open_position] = np.sqrt(wave_number) * n_derivative
 
-    return np.diag(J), np.diag(N), np.diag(J_prime), np.diag(N_prime), open_mask
+    for closed_position, index in enumerate(closed_indices):
+        wave_number = float(np.sqrt(2.0 * reduced_mass * abs(energy_difference[index])))
+        argument = wave_number * Rmatch
+        K_logD = modified_bessel_K_logD(float(L[index] + 0.5), argument)
+        Gamma_closed[closed_position] = 0.5 / Rmatch + wave_number * K_logD
+
+    return open_indices, closed_indices, J_open, N_open, J_prime_open, N_prime_open, Gamma_closed
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _open_reaction_matrix(
+    Y: NDArray[np.float64] | NDArray[np.complex128],
+    open_indices: NDArray[np.int64],
+    closed_indices: NDArray[np.int64],
+    J_open: NDArray[np.float64],
+    N_open: NDArray[np.float64],
+    J_prime_open: NDArray[np.float64],
+    N_prime_open: NDArray[np.float64],
+    Gamma_closed: NDArray[np.float64],
+) -> NDArray[np.complex128]:
+    r"""
+    Eliminate closed channels and construct the physical open-open reaction matrix.
+
+    Formula:
+        Y_eff = Y_oo - Y_oc (Y_cc - Gamma_c)^(-1) Y_co,
+
+        K_oo = -(Y_eff N_o - N'_o)^(-1) (Y_eff J_o - J'_o).
+
+    Here ``Gamma_c = N'_c N_c^(-1)`` is the logarithmic derivative of the
+    exponentially decaying closed-channel solution. Thus all propagated closed-channel
+    couplings remain in ``Y_eff`` while no growing closed-channel reference function is
+    constructed. Open reference functions are energy normalized.
+
+    Inputs:
+        Y: NDArray - asymptotic SF log-derivative matrix, shape (n_channel,n_channel)
+        open_indices: NDArray[np.int64] - global open-channel indices, shape (n_open,)
+        closed_indices: NDArray[np.int64] - global closed-channel indices, shape (n_closed,)
+        J_open: NDArray[np.float64] - regular open reference values, shape (n_open,)
+        N_open: NDArray[np.float64] - irregular open reference values, shape (n_open,)
+        J_prime_open: NDArray[np.float64] - regular open reference derivatives, shape (n_open,)
+        N_prime_open: NDArray[np.float64] - irregular open reference derivatives, shape (n_open,)
+        Gamma_closed: NDArray[np.float64] - decaying closed-reference log derivatives,
+            shape (n_closed,)
+
+    Returns:
+        reaction_open: NDArray - physical reaction matrix, shape (n_open,n_open)
+    """
+    Y_open = Y[np.ix_(open_indices, open_indices)]
+    if closed_indices.size:
+        Y_open_closed = Y[np.ix_(open_indices, closed_indices)]
+        Y_closed_open = Y[np.ix_(closed_indices, open_indices)]
+        closed_operator = Y[np.ix_(closed_indices, closed_indices)] - np.diag(Gamma_closed)
+        Y_open = Y_open - Y_open_closed @ np.linalg.solve(closed_operator, Y_closed_open)
+
+    left = Y_open * N_open[np.newaxis, :] - np.diag(N_prime_open)
+    right = Y_open * J_open[np.newaxis, :] - np.diag(J_prime_open)
+    return np.asarray(-np.linalg.solve(left, right), dtype=np.complex128)
 
 
 # ----------------------------------------------------------------------------------------
@@ -78,12 +148,14 @@ def get_Smat(
     Match SF log-derivative matrices to asymptotic scattering matrices.
 
     Open channels use energy-normalized Riccati-Bessel reference functions. Closed
-    channels use logarithmic derivatives of modified Bessel functions and remain in
-    the full reaction matrix until its open-open block is extracted. The returned
-    matrices follow the order of ``flatnonzero(E_int < Etot[i])``.
+    channels are eliminated through their decaying-reference logarithmic derivatives,
+    leaving the physical open-open reaction matrix without evaluating growing closed
+    solutions. The returned matrices follow the order of
+    ``flatnonzero(E_int < Etot[i])``.
 
     Formula:
-        K = -(Y @ N - N')**(-1) @ (Y @ J - J'),
+        Y_eff = Y_oo - Y_oc @ (Y_cc - Gamma_c)**(-1) @ Y_co,
+        K_oo = -(Y_eff @ N_o - N'_o)**(-1) @ (Y_eff @ J_o - J'_o),
         S = (I + i * K_oo)**(-1) @ (I - i * K_oo).
 
     Inputs:
@@ -127,15 +199,23 @@ def get_Smat(
 
     scattering_matrices: list[NDArray[np.complex128]] = []
     for energy_index, energy in enumerate(energies):
-        J, N, J_prime, N_prime, open_mask = _reference_matrices(float(energy), Rmatch, reduced_mass, E_int_array, L_array)
-        open_indices = np.flatnonzero(open_mask)
+        references = _reference_functions(float(energy), Rmatch, reduced_mass, E_int_array, L_array)
+        open_indices, closed_indices, J_open, N_open, J_prime_open, N_prime_open, Gamma_closed = references
         if open_indices.size == 0:
             scattering_matrices.append(np.empty((0, 0), dtype=np.complex128))
             continue
 
         Y = Ymat_array[energy_index]
-        reaction_matrix = -np.linalg.solve(Y @ N - N_prime, Y @ J - J_prime)
-        reaction_open = reaction_matrix[np.ix_(open_indices, open_indices)]
+        reaction_open = _open_reaction_matrix(
+            Y,
+            open_indices,
+            closed_indices,
+            J_open,
+            N_open,
+            J_prime_open,
+            N_prime_open,
+            Gamma_closed,
+        )
         identity = np.eye(open_indices.size, dtype=np.complex128)
         Smat = np.linalg.solve(identity + 1.0j * reaction_open, identity - 1.0j * reaction_open)
         scattering_matrices.append(np.asarray(Smat, dtype=np.complex128))

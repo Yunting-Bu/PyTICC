@@ -6,7 +6,6 @@ from numpy.typing import NDArray
 
 import pyticc as ticc
 from pyticc.basis.channel import ChannelBasis
-from pyticc.scattering import atom_diatom
 
 INITIAL_STATE = (0, 5)
 FINAL_STATE = (0, 2)
@@ -71,7 +70,6 @@ def main() -> None:
         [pes_dir / "interaction-PES.f"],
         pes_dir / "pyticc_wrapper.f90",
         workdir=pes_dir,
-        processes=4,
     )
 
     try:
@@ -97,6 +95,7 @@ def main() -> None:
             label: ticc.build_ScattSystem(
                 ticc.AtomSpec(),
                 diatom,
+                scattering_type="A+BC",
                 Jtot=JTOT,
                 system_parity=SYSTEM_PARITY,
                 channel=channel,
@@ -111,11 +110,18 @@ def main() -> None:
         initial_threshold = float(diatom.Eint[INITIAL_STATE])
         collision_energies_cm = np.geomspace(0.1, 100.0, 31)
         total_energies = initial_threshold + collision_energies_cm * ticc.CM2AU
-        propagation = ticc.Propagation((3.0, 6.0, 10.0, 50.0), (0.01, 0.03, 0.05))
+        potential_grid = ticc.prepare_potential(
+            next(iter(systems.values())),
+            (3.0, 6.0, 10.0, 50.0),
+            (0.01, 0.03, 0.05),
+            n_theta=30,
+            processes=4,
+        )
+        propagation = ticc.Propagation()
 
         probabilities: dict[str, NDArray[np.float64]] = {}
         for label, system in systems.items():
-            result = ticc.solve(atom_diatom.build_hamiltonian(system, n_theta=30), total_energies, propagation)
+            result = ticc.solve(system, total_energies, potential_grid, propagation)
             probabilities[label] = state_to_state_probability(result, INITIAL_STATE, FINAL_STATE)
 
         figure, axes = plt.subplots(figsize=(6.4, 4.2), constrained_layout=True)

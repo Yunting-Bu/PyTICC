@@ -9,11 +9,7 @@ from pyticc.fine_structure import load_fs_constants_csv
 def test_load_fs_constants_csv_supports_mixed_units_and_sparse_constants(tmp_path: Path) -> None:
     path = tmp_path / "NO_constants.csv"
     path.write_text(
-        "v,constant,value,unit\n"
-        "1,Q,-38.9,MHz\n"
-        "0,A,123.146,cm-1\n"
-        "0,B,508083.0,MHz\n"
-        "1,A,122.831,cm-1\n",
+        "v,constant,value,unit\n1,Q,-38.9,MHz\n0,A,123.146,cm-1\n0,B,508083.0,MHz\n1,A,122.831,cm-1\n",
         encoding="utf-8",
     )
 

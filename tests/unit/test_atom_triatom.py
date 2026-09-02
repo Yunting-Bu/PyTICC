@@ -3,7 +3,7 @@ from scipy.special import roots_legendre
 
 import pyticc as ticc
 import pyticc.matrix.interaction.atom_triatom as vmat
-from pyticc.basis.angle import norm_reduced_wigner_d
+from pyticc.basis.angle import norm_reduced_wigner_d, norm_YjK
 from pyticc.basis.channel import ChannelSpec, build_ChannelBasis
 from pyticc.basis.monomer import AtomSpec
 from pyticc.basis.podvr import VibPODVR
@@ -78,6 +78,47 @@ def test_constant_potential_is_identity_for_atom_triatom_basis() -> None:
     np.testing.assert_allclose(Vmat, 1.75 * np.eye(basis.n_channel), atol=1.0e-13)
 
 
+def test_K0_grid_wavefunction_uses_fortran_adapted_positive_omega_basis() -> None:
+    radial_1 = VibPODVR(grids=np.array([2.0]), energies=np.array([0.0]), wavefunctions=np.ones((1, 1)))
+    radial_2 = VibPODVR(grids=np.array([2.2]), energies=np.array([0.0]), wavefunctions=np.ones((1, 1)))
+    qn = np.array([[1, 1, 0, 0]], dtype=np.int64)
+    block = TriatomBlock(j=1, K=0, qn=qn, coefficients=np.ones((1, 1)), t_indices=np.array([0], dtype=np.int64))
+    triatom = TriatomBasis(
+        Eint=np.array([[np.inf], [0.0]]),
+        jmax=1,
+        tmax=0,
+        parity_block_sign=1,
+        K0_available=np.array([[False], [True]]),
+        positive_K_available=np.zeros((2, 1), dtype=bool),
+        K0_blocks={1: block},
+        radial_1=radial_1,
+        radial_2=radial_2,
+    )
+    cos_theta_1, weight_theta_1 = roots_legendre(4)
+    cos_theta_2, weight_theta_2 = roots_legendre(4)
+    phi = np.array([0.3, 1.2])
+    weight_phi = np.array([0.7, 0.9])
+
+    real, imag = vmat._triatom_grid_wavefunction(
+        triatom,
+        1,
+        0,
+        0,
+        cos_theta_1,
+        weight_theta_1,
+        cos_theta_2,
+        weight_theta_2,
+        phi,
+        weight_phi,
+    )
+
+    internal = np.sqrt(weight_theta_1) * np.asarray(norm_YjK(1, 1, cos_theta_1))
+    external = np.sqrt(weight_theta_2) * np.asarray(norm_reduced_wigner_d(1, 0, 1, np.arccos(cos_theta_2)))
+    common = internal[:, None, None] * external[None, :, None] * np.sqrt(weight_phi)[None, None, :]
+    np.testing.assert_allclose(real[0, 0], common * np.cos(phi)[None, None, :], atol=1.0e-15)
+    np.testing.assert_allclose(imag[0, 0], common * np.sin(phi)[None, None, :], atol=1.0e-15)
+
+
 def test_atom_triatom_pes_grid_accepts_radial_batch() -> None:
     def interaction(R: float, coordinates: np.ndarray) -> np.ndarray:
         r_1, r_2, theta_1, theta_2, phi = coordinates
@@ -108,18 +149,21 @@ def test_solve_atom_triatom_completes_minimal_exact_calculation() -> None:
     system = ticc.build_ScattSystem(
         AtomSpec(),
         triatom,
+        scattering_type="A+BCD",
         Jtot=0,
         system_parity=1,
         channel=ChannelSpec(E_Y_cut=0.005),
         potential=PESWrapper(interaction=interaction),
         reduced_mass=1000.0,
     )
-    hamiltonian = atom_triatom.build_hamiltonian(
+    potential_grid = atom_triatom.prepare_potential(
         system,
+        (4.0, 4.2),
+        (0.05,),
         n_theta_2=4,
         n_phi=4,
     )
-    result = ticc.solve(hamiltonian, np.array([0.02]), ticc.Propagation((4.0, 4.2), (0.05,)))
+    result = ticc.solve(system, np.array([0.02]), potential_grid, ticc.Propagation())
 
     assert isinstance(result, ticc.ScatteringResult)
     assert result.basis.n_channel == 1

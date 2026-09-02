@@ -81,3 +81,45 @@ def modified_bessel_IK_logD(nu: float, x: float) -> tuple[float, float]:
         raise ValueError(message)
 
     return I_logD, K_logD
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def modified_bessel_K_logD(nu: float, x: float) -> float:
+    r"""
+    Evaluate the logarithmic derivative of the decaying closed-channel solution.
+
+    The exponentially scaled function ``kve`` avoids underflow when the closed-channel
+    wave number times the matching distance is large.
+
+    Formula:
+        K'_nu(x) / K_nu(x) = -K_{nu-1}(x) / K_nu(x) - nu / x,
+
+        where ``nu`` is the modified-Bessel order and ``x > 0`` is its argument.
+
+    Inputs:
+        nu: float - non-negative modified-Bessel order
+        x: float - positive dimensionless argument
+
+    Returns:
+        K_logD: float - logarithmic derivative ``K'_nu(x) / K_nu(x)``
+    """
+    if x <= 0.0 or nu < 0.0:
+        message = f"x must be positive and nu must be non-negative, but got x={x}, nu={nu}"
+        logger.error(message)
+        raise ValueError(message)
+
+    K_nu = special.kve(nu, x)
+    Km_nu = special.kve(nu - 1.0, x)
+    K_logD = float(-Km_nu / K_nu - nu / x)
+    if not np.isfinite(K_logD):
+        message = f"Modified Bessel K logarithmic derivative must be finite, but got {K_logD}"
+        logger.error(message)
+        raise ValueError(message)
+
+    return K_logD
+
+
+# ----------------------------------------------------------------------------------------

@@ -28,6 +28,7 @@ class VBasisBF:
     normalization: float = 1.0
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class VBasisDevice:
     """Device-resident BF bases for scalar interaction contraction.
@@ -61,6 +62,7 @@ def _contract_block(
     return 0.5 * (Vmat + Vmat.T)
 
 
+# ----------------------------------------------------------------------------------------
 @jax.jit
 def _contract_block_device(B_real: jax.Array, B_imag: jax.Array | None, potential: jax.Array, normalization: float) -> jax.Array:
     """Contract one exact-K scalar interaction block on a JAX device."""
@@ -71,6 +73,7 @@ def _contract_block_device(B_real: jax.Array, B_imag: jax.Array | None, potentia
     return 0.5 * (Vmat + jnp.swapaxes(Vmat, -2, -1))
 
 
+# ----------------------------------------------------------------------------------------
 def device_basis(basis: VBasisBF, device: JaxDevice) -> VBasisDevice:
     """Copy reusable scalar-interaction bases to one JAX device.
 
@@ -143,10 +146,14 @@ def contract(
     return Vmat if batched else Vmat[0]
 
 
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
 def contract_device(
     basis: VBasisBF,
     basis_device: VBasisDevice,
-    potential: NDArray[np.float64],
+    potential: NDArray[np.float64] | jax.Array,
     device: JaxDevice,
     channel_indices: Sequence[int] | None = None,
 ) -> jax.Array:
@@ -155,7 +162,8 @@ def contract_device(
     Inputs:
         basis: VBasisBF - host basis metadata and channel grouping
         basis_device: VBasisDevice - reusable basis arrays on device
-        potential: NDArray[np.float64] - scalar or radial-batched PES grid
+        potential: NDArray[np.float64] | jax.Array - scalar or radial-batched
+            PES grid on the host or contraction device
         device: JaxDevice - contraction device
         channel_indices: Sequence[int] | None - optional complete-basis positions
 
@@ -168,7 +176,7 @@ def contract_device(
         logger.error(message)
         raise ValueError(message)
     n_grid = prod(basis.grid_shape)
-    values = np.asarray(potential, dtype=np.float64)
+    values = potential if isinstance(potential, jax.Array) else np.asarray(potential, dtype=np.float64)
     if values.shape == basis.grid_shape or values.shape == (n_grid,):
         batches = values.reshape(1, n_grid)
         batched = False
@@ -185,7 +193,7 @@ def contract_device(
 
     selected_indices = {global_index: local_index for local_index, global_index in enumerate(indices)}
     potential_device = jax.device_put(batches, device)
-    Vmat = jax.device_put(np.zeros((batches.shape[0], len(indices), len(indices)), dtype=np.float64), device)
+    Vmat = jnp.zeros((batches.shape[0], len(indices), len(indices)), dtype=jnp.float64, device=device)
     for K, group_indices in basis.channel_indices.items():
         selected = tuple(
             (basis_index, selected_indices[global_index])

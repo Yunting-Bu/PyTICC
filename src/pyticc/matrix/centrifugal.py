@@ -6,6 +6,7 @@ from numpy.typing import NDArray
 from pyticc.basis.angle import lambda_plus
 from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF
 from pyticc.fine_structure.channel import FSChannelBasis
+from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.system import MolInnerState
 
 CentrifugalKey = tuple[MolInnerState, MolInnerState, int]
@@ -121,6 +122,7 @@ def get_Umat_ElectricSF(
     return np.diag(diagonal)
 
 
+# ----------------------------------------------------------------------------------------
 def get_Umat_FS_BF(
     basis: FSChannelBasis,
     channel_indices: Sequence[int] | None = None,
@@ -177,6 +179,86 @@ def get_Umat_FS_BF(
             K = two_K / 2.0
             boundary = np.sqrt(2.0) if two_K == 0 else 1.0
             coupling = -boundary * np.sqrt(J * (J + 1.0) - K * (K + 1.0)) * np.sqrt(j * (j + 1.0) - K * (K + 1.0))
+            matrix[local_index, next_index] = coupling
+            matrix[next_index, local_index] = coupling
+    return matrix
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def get_Umat_FS_DiatomDiatom_BF(
+    basis: FSDiatomDiatomBasis,
+    channel_indices: Sequence[int] | None = None,
+    *,
+    coriolis: bool = True,
+) -> NDArray[np.float64]:
+    r"""
+    Return the BF centrifugal matrix for two fine-structure diatoms.
+
+    Formula:
+        With ``j_12=j_X+j_Y`` and nonnegative parity-adapted helicity K,
+
+        U_KK = J(J+1)+j_12(j_12+1)-2K^2,
+
+        U_(K+1,K) = -b_K
+          sqrt[J(J+1)-K(K+1)]
+          sqrt[j_12(j_12+1)-K(K+1)],
+
+        where ``b_K=sqrt(2)`` at the integer K=0 boundary and one otherwise.
+        For half-integer J and j_12, folding the primitive K=-1/2 channel into
+        the parity-adapted K=+1/2 channel adds
+
+        Delta U_(1/2,1/2)
+          = -s (J+1/2)(j_12+1/2),
+
+        s = P epsilon_X epsilon_Y (-1)^(j_12-J).
+
+        The matrix is dimensionless. Its row and column order follows
+        ``channel_indices`` or the complete basis order. Coriolis coupling is
+        restricted to channels with identical monomer eigenlevels and j_12.
+
+    Inputs:
+        basis: FSDiatomDiatomBasis - fixed-(J,P) two-diatom channels
+        channel_indices: Sequence[int] | None - selected complete-basis positions
+        coriolis: bool - whether to retain nearest-neighbor K coupling
+
+    Returns:
+        matrix: NDArray[np.float64] - dimensionless BF centrifugal matrix,
+            shape ``(n_selected,n_selected)``
+    """
+    indices = tuple(range(basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    channels = tuple(basis[index] for index in indices)
+    matrix = np.zeros((len(channels), len(channels)), dtype=np.float64)
+    J = basis.two_J / 2.0
+    groups: dict[tuple[int, int, int, int, int], dict[int, int]] = {}
+
+    for local_index, channel in enumerate(channels):
+        block_X = basis.monomer_X.blocks[channel.block_X]
+        block_Y = basis.monomer_Y.blocks[channel.block_Y]
+        j12 = channel.two_j12 / 2.0
+        K = channel.two_K / 2.0
+        matrix[local_index, local_index] = J * (J + 1.0) + j12 * (j12 + 1.0) - 2.0 * K**2
+        if channel.two_K == 1:
+            exponent = (channel.two_j12 - basis.two_J) // 2
+            parity_phase = basis.system_parity * block_X.parity * block_Y.parity * (-1) ** exponent
+            matrix[local_index, local_index] -= parity_phase * (J + 0.5) * (j12 + 0.5)
+        key = (channel.block_X, channel.tau_X, channel.block_Y, channel.tau_Y, channel.two_j12)
+        groups.setdefault(key, {})[channel.two_K] = local_index
+
+    if not coriolis:
+        return matrix
+
+    for key, K_to_index in groups.items():
+        j12 = key[-1] / 2.0
+        for two_K, local_index in K_to_index.items():
+            next_index = K_to_index.get(two_K + 2)
+            if next_index is None:
+                continue
+            K = two_K / 2.0
+            boundary = np.sqrt(2.0) if two_K == 0 else 1.0
+            coupling = -boundary * np.sqrt(J * (J + 1.0) - K * (K + 1.0)) * np.sqrt(j12 * (j12 + 1.0) - K * (K + 1.0))
             matrix[local_index, next_index] = coupling
             matrix[next_index, local_index] = coupling
     return matrix

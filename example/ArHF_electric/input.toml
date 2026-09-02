@@ -1,4 +1,4 @@
-type = "electric-atom-diatom"
+type = "A+BC_electric"
 atom = "Ar"
 diatom = ["H", "F"]
 M = 0
@@ -9,7 +9,6 @@ path = "../ArHF/pes"
 sources = ["interaction-PES.f"]
 wrapper = "pyticc_wrapper.f90"
 workdir = "."
-processes = 4
 
 [basis]
 r = [1.5, 4.5]
@@ -32,9 +31,12 @@ delta_symmetry = true
 [channels]
 E_Y_cut_cm = 2000.0
 
-[propagation]
+[potential_grid]
 radial_boundaries = [4.5, 6.5, 8.0, 12.0]
 radial_half_steps = [0.05, 0.08, 0.10]
+processes = 4
+
+[propagation]
 mode = "inelastic"
 memory_limit_mb = 512.0
 device = "auto"

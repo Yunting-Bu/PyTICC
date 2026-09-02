@@ -1,10 +1,14 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import prod
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
+from pyticc._typing import JaxDevice
 from pyticc.basis.angle import norm_reduced_wigner_d_half
 from pyticc.fine_structure.basis import FSState
 from pyticc.fine_structure.channel import FSChannelBasis
@@ -31,6 +35,19 @@ class FSVBasis:
     pair_rows: NDArray[np.int64]
     pair_columns: NDArray[np.int64]
     kernel: NDArray[np.float64]
+
+
+# ----------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class FSVBasisDevice:
+    """Device-resident fine-structure interaction kernel.
+
+    Members:
+        kernel: jax.Array - flattened V_sum/V_dif lower-triangle contraction
+            operator, shape (2*n_grid,n_pair)
+    """
+
+    kernel: jax.Array
 
 
 # ----------------------------------------------------------------------------------------
@@ -147,6 +164,95 @@ def contract(V_basis: FSVBasis, potential: NDArray[np.float64]) -> NDArray[np.fl
     matrix = np.empty((batches.shape[0], V_basis.n_channel, V_basis.n_channel), dtype=np.float64)
     matrix[:, V_basis.pair_rows, V_basis.pair_columns] = contracted
     matrix[:, V_basis.pair_columns, V_basis.pair_rows] = contracted
+    return matrix if batched else matrix[0]
+
+
+# ----------------------------------------------------------------------------------------
+@jax.jit
+def _contract_device(potential: jax.Array, kernel: jax.Array) -> jax.Array:
+    """Contract radial batches with selected packed-triangle kernels."""
+    return potential @ kernel
+
+
+# ----------------------------------------------------------------------------------------
+def device_basis(V_basis: FSVBasis, device: JaxDevice) -> FSVBasisDevice:
+    """Copy the reusable fine-structure interaction kernel to one JAX device.
+
+    Inputs:
+        V_basis: FSVBasis - host fine-structure contraction basis
+        device: JaxDevice - destination contraction device
+
+    Returns:
+        basis_device: FSVBasisDevice - device-resident contraction kernel
+    """
+    return FSVBasisDevice(kernel=jax.device_put(V_basis.kernel, device))
+
+
+# ----------------------------------------------------------------------------------------
+def contract_device(
+    V_basis: FSVBasis,
+    basis_device: FSVBasisDevice,
+    potential: NDArray[np.float64] | jax.Array,
+    device: JaxDevice,
+    channel_indices: Sequence[int] | None = None,
+) -> jax.Array:
+    r"""Contract V_sum and V_dif grids into channel matrices on a JAX device.
+
+    Formula:
+        For selected channels c_i, the packed lower-triangle elements are
+
+        V_{i k}(R) = sum_g [G_sum(c_i,c_k;g)V_sum(R,g)
+                            +G_dif(c_i,c_k;g)V_dif(R,g)],  i >= k,
+
+        and the upper triangle is filled by V_{k i}=V_{i k}. The PES is
+        evaluated on the host; its radial batch and the reusable quadrature
+        kernel are contracted on ``device``.
+
+    Inputs:
+        V_basis: FSVBasis - host basis metadata
+        basis_device: FSVBasisDevice - reusable kernel on ``device``
+        potential: NDArray[np.float64] | jax.Array - host- or device-resident
+            values with shape (*grid_shape,2) or (n_R,*grid_shape,2)
+        device: JaxDevice - contraction device
+        channel_indices: Sequence[int] | None - optional unique complete-basis
+            positions in the requested output order
+
+    Returns:
+        matrix: jax.Array - symmetric device matrix, optionally preceded by R
+    """
+    indices = tuple(range(V_basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    if len(set(indices)) != len(indices) or any(index < 0 or index >= V_basis.n_channel for index in indices):
+        message = "channel_indices must be unique complete-basis positions"
+        logger.error(message)
+        raise ValueError(message)
+
+    values = potential if isinstance(potential, jax.Array) else np.asarray(potential, dtype=np.float64)
+    if values.shape == (*V_basis.grid_shape, 2):
+        batches = values.reshape(1, 2 * prod(V_basis.grid_shape))
+        batched = False
+    elif values.ndim == 4 and values.shape[1:] == (*V_basis.grid_shape, 2):
+        batches = values.reshape(values.shape[0], 2 * prod(V_basis.grid_shape))
+        batched = True
+    else:
+        message = f"FS PES grid has shape {values.shape}, expected {(*V_basis.grid_shape, 2)} with optional leading R axis"
+        logger.error(message)
+        raise ValueError(message)
+
+    pair_rows, pair_columns = np.tril_indices(len(indices))
+    selected = np.asarray(indices, dtype=np.int64)
+    global_rows = selected[pair_rows]
+    global_columns = selected[pair_columns]
+    packed_rows = np.maximum(global_rows, global_columns)
+    packed_columns = np.minimum(global_rows, global_columns)
+    packed_positions = packed_rows * (packed_rows + 1) // 2 + packed_columns
+
+    potential_device = jax.device_put(batches, device)
+    complete_basis = indices == tuple(range(V_basis.n_channel))
+    selected_kernel = basis_device.kernel if complete_basis else basis_device.kernel[:, packed_positions]
+    contracted = _contract_device(potential_device, selected_kernel)
+    matrix = jnp.zeros((batches.shape[0], len(indices), len(indices)), dtype=jnp.float64, device=device)
+    matrix = matrix.at[:, pair_rows, pair_columns].set(contracted)
+    matrix = matrix.at[:, pair_columns, pair_rows].set(contracted)
     return matrix if batched else matrix[0]
 
 

@@ -1,9 +1,12 @@
+from dataclasses import replace
+
 import numpy as np
+from loguru import logger
 from scipy.special import roots_legendre
 
 import pyticc as ticc
 from pyticc.basis.rovib import RovibBasis
-from pyticc.scattering import atom_diatom, diatom_diatom
+from pyticc.scattering import atom_diatom
 from pyticc.scattering.solver import build_k_blocks
 
 
@@ -36,12 +39,15 @@ def _solve_atom(
     n_theta: int = 4,
     approx: ticc.Approx = ticc.Approx.EXACT,
     K_delta: int = 1,
+    boundaries: tuple[float, ...] = (3.0, 3.2),
+    half_steps: tuple[float, ...] = (0.1,),
     propagation: ticc.Propagation | None = None,
     channel: ticc.ChannelSpec | None = None,
 ) -> ticc.ScatteringResult | ticc.CoupledStatesResult:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
+        scattering_type="A+BC",
         Jtot=Jtot,
         system_parity=1,
         approx=approx,
@@ -50,9 +56,9 @@ def _solve_atom(
         potential=pes,
         reduced_mass=2.0,
     )
-    hamiltonian = atom_diatom.build_hamiltonian(system, n_theta=n_theta)
-    radial = ticc.Propagation((3.0, 3.2), (0.1,)) if propagation is None else propagation
-    return ticc.solve(hamiltonian, energies, radial)
+    potential_grid = ticc.prepare_potential(system, boundaries, half_steps, n_theta=n_theta)
+    runtime = ticc.Propagation() if propagation is None else propagation
+    return ticc.solve(system, energies, potential_grid, runtime)
 
 
 def test_common_setup_tools_are_available_from_top_level() -> None:
@@ -71,12 +77,25 @@ def test_common_setup_tools_are_available_from_top_level() -> None:
     assert callable(ticc.prepare_Diatom)
     assert callable(ticc.prepare_DiabaticDiatom)
     assert callable(ticc.prepare_DiatomElectric)
+    assert callable(ticc.prepare_Triatom)
     assert "solve" in ticc.__all__
+    assert "ScatteringType" in ticc.__all__
     assert "build_k_blocks" not in ticc.__all__
     assert "report" in ticc.__all__
     assert "get_Wmat" not in ticc.__all__
     for legacy_name in ("run_atom_diatom", "run_diatom_diatom", "run_atom_triatom", "run_diabatic_atom_diatom"):
         assert not hasattr(ticc, legacy_name)
+
+
+def test_build_scatt_system_requires_a_supported_explicit_type() -> None:
+    with np.testing.assert_raises_regex(ValueError, "Unsupported scattering_type"):
+        ticc.build_ScattSystem(
+            ticc.AtomSpec(),
+            _diatom(_rovib()),
+            scattering_type="atom-diatom",
+            Jtot=0,
+            system_parity=1,
+        )
 
 
 def test_solve_atom_diatom_returns_complete_scattering_result() -> None:
@@ -95,6 +114,29 @@ def test_solve_atom_diatom_returns_complete_scattering_result() -> None:
     assert result.timing.wall_seconds >= 0.0
     assert result.timing.cpu_seconds >= 0.0
     np.testing.assert_allclose(np.abs(result.Smat[0]), 1.0, atol=1.0e-13)
+
+
+def test_prepare_potential_logs_start_and_completion() -> None:
+    diatom = _diatom(_rovib())
+    pes = ticc.PESWrapper(interaction=lambda RR, coordinates: np.zeros(coordinates.shape[1]))
+    system = ticc.build_ScattSystem(
+        ticc.AtomSpec(),
+        diatom,
+        scattering_type="A+BC",
+        Jtot=0,
+        system_parity=1,
+        potential=pes,
+        reduced_mass=2.0,
+    )
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(message.record["message"]), level="INFO")
+    try:
+        ticc.prepare_potential(system, (3.0, 3.2), (0.1,), n_theta=4, processes=1)
+    finally:
+        logger.remove(sink)
+
+    assert any("Potential preparation started" in message and "radial_points=3" in message for message in messages)
+    assert any("Potential preparation complete" in message and "wall=" in message for message in messages)
 
 
 def test_solve_atom_diatom_uses_half_angle_rule_for_rotational_exchange_parity() -> None:
@@ -127,24 +169,46 @@ def test_solve_diatom_diatom_returns_complete_scattering_result() -> None:
     system = ticc.build_ScattSystem(
         diatom_X,
         diatom_Y,
+        scattering_type="AB+CD",
         Jtot=0,
         system_parity=1,
         potential=pes,
         reduced_mass=2.0,
     )
-    hamiltonian = diatom_diatom.build_hamiltonian(
+    potential_grid = ticc.prepare_potential(
         system,
+        (3.0, 3.2),
+        (0.1,),
         n_theta_X=3,
         n_theta_Y=3,
         n_phi=4,
     )
-    result = ticc.solve(hamiltonian, [0.1], ticc.Propagation((3.0, 3.2), (0.1,)))
+    result = ticc.solve(system, [0.1], potential_grid, ticc.Propagation())
 
     assert isinstance(result, ticc.ScatteringResult)
     assert result.basis.n_channel == 1
     assert result.Y_asymptotic.shape == (1, 1, 1)
     assert result.Smat[0].shape == (1, 1)
     np.testing.assert_allclose(np.abs(result.Smat[0]), 1.0, atol=1.0e-13)
+
+
+def test_solve_rejects_potential_grid_from_another_scattering_type() -> None:
+    diatom = _diatom(_rovib())
+    pes = ticc.PESWrapper(interaction=lambda RR, coordinates: np.zeros(coordinates.shape[1]))
+    system = ticc.build_ScattSystem(
+        ticc.AtomSpec(),
+        diatom,
+        scattering_type="A+BC",
+        Jtot=0,
+        system_parity=1,
+        potential=pes,
+        reduced_mass=2.0,
+    )
+    potential_grid = ticc.prepare_potential(system, (3.0, 3.2), (0.1,), n_theta=4)
+    wrong_grid = replace(potential_grid, scattering_type=ticc.ScatteringType.DIATOM_DIATOM)
+
+    with np.testing.assert_raises_regex(TypeError, "cannot use"):
+        ticc.solve(system, [0.1], wrong_grid, ticc.Propagation())
 
 
 def test_solve_atom_diatom_cs_returns_independent_K_blocks() -> None:
@@ -158,6 +222,7 @@ def test_solve_atom_diatom_cs_returns_independent_K_blocks() -> None:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
+        scattering_type="A+BC",
         Jtot=2,
         system_parity=1,
         approx=ticc.Approx.CS,
@@ -216,11 +281,11 @@ def test_solve_atom_diatom_nncc_shares_each_radial_window_across_blocks() -> Non
         Jtot=4,
         n_theta=8,
         approx=ticc.Approx.NNCC,
-        propagation=ticc.Propagation((3.0, 3.4), (0.1,), memory_mb=1.0e-6),
+        boundaries=(3.0, 3.4),
+        propagation=ticc.Propagation(memory_mb=1.0e-6),
     )
 
     assert isinstance(result, ticc.CoupledStatesResult)
     assert len(result.blocks) == 3
-    assert len(evaluated_R) == 2
-    np.testing.assert_allclose(evaluated_R[0], [3.0, 3.1, 3.2])
-    np.testing.assert_allclose(evaluated_R[1], [3.3, 3.4])
+    assert len(evaluated_R) == 1
+    np.testing.assert_allclose(evaluated_R[0], [3.0, 3.1, 3.2, 3.3, 3.4])

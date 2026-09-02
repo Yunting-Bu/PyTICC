@@ -3,6 +3,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from loguru import logger
 
 import pyticc.pes.fortran.executor as executor_module
 
@@ -14,8 +15,8 @@ class _FakePool:
         self.terminate_calls = 0
         self.join_calls = 0
 
-    def map(self, function: Any, radial_points: np.ndarray, chunksize: int) -> list[np.ndarray]:
-        return [np.full(self.coordinates.shape[1], RR) for RR in radial_points]
+    def imap(self, function: Any, radial_points: np.ndarray, chunksize: int):
+        return (np.full(self.coordinates.shape[1], RR) for RR in radial_points)
 
     def close(self) -> None:
         self.close_calls += 1
@@ -62,3 +63,22 @@ def test_fortran_executor_reuses_workers_until_coordinates_change(monkeypatch: p
     executor.close()
     assert context.pools[1].close_calls == 1
     assert context.pools[1].join_calls == 1
+
+
+def test_fortran_executor_logs_completed_radial_points(monkeypatch: pytest.MonkeyPatch) -> None:
+    context = _FakeContext()
+    monkeypatch.setattr(executor_module.mp, "get_context", lambda method: context)
+    executor = executor_module._FortranPESExecutor(
+        executor_module._FortranPESSpec("fake", Path("fake.so"), None),
+        processes=2,
+        interaction=lambda RR, coordinates: np.full(coordinates.shape[1], RR),
+    )
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(message.record["message"]), level="INFO")
+    try:
+        executor.evaluate(np.linspace(3.0, 4.0, 11), np.arange(6.0).reshape(2, 3))
+    finally:
+        logger.remove(sink)
+        executor.close()
+
+    assert any("Potential: 11/11 radial points" in message and "R=4.000000 bohr" in message for message in messages)

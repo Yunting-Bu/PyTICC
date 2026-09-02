@@ -3,11 +3,10 @@ from pathlib import Path
 import numpy as np
 
 import pyticc as ticc
-from pyticc.scattering import atom_diatom
 
-ELECTRIC_STRENGTH = 1.0e-3
+ELECTRIC_STRENGTH = 0.0
 M = 0
-LMAX = 1
+LMAX = 5
 
 
 def main() -> None:
@@ -19,7 +18,6 @@ def main() -> None:
         [pes_dir / "interaction-PES.f"],
         pes_dir / "pyticc_wrapper.f90",
         workdir=pes_dir,
-        processes=4,
     )
 
     mass_Ar, mass_H, mass_F = ticc.element_masses_au("Ar", "H", "F")
@@ -28,39 +26,41 @@ def main() -> None:
     electric_HF = ticc.prepare_DiatomElectric(
         pes.monomer_Y,
         response_file,
-        r=(1.5, 4.5),
-        n_dvr=100,
+        r=(0.75, 6.55),
+        n_dvr=50,
         electric_strength=ELECTRIC_STRENGTH,
-        n_podvr=5,
-        jmax=8,
+        n_podvr=10,
+        jmax=5,
         M=M,
         lmax=LMAX,
-        n_alpha=3,
+        n_alpha=2,
         mass=mass_HF,
     )
 
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         electric_HF,
+        scattering_type="A+BC_electric",
         M=M,
         lmax=LMAX,
-        channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
+        channel=ticc.ChannelSpec(E_Y_cut=2000000.0 * ticc.CM2AU),
         potential=pes,
         reduced_mass=mass_ArHF,
     )
-    hamiltonian = atom_diatom.build_hamiltonian_electric_sf(
+    potential_grid = ticc.prepare_potential(
         system,
-        n_theta_r=16,
-        n_theta_R=16,
-        n_delta=16,
+        (2.0, 20.0, 50.0, 100.0),
+        (0.01, 0.1, 1.0),
+        n_theta_r=20,
+        n_theta_R=20,
+        n_delta=40,
+        processes=4,
     )
     result = ticc.solve(
-        hamiltonian,
-        np.array([300.0]) * ticc.CM2AU,
-        ticc.Propagation(
-            boundaries=(4.5, 6.5, 8.0, 12.0),
-            half_steps=(0.05, 0.08, 0.10),
-        ),
+        system,
+        np.array([100.0]) * ticc.CM2AU,
+        potential_grid,
+        ticc.Propagation(memory_mb=1024.0),
     )
 
     print("\nElectric-SF channels:")

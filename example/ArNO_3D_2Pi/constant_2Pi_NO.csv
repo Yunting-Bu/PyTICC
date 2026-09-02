@@ -1,0 +1,29 @@
+# NO(X 2Pi) effective fine-structure constants (14N16O)
+# Source: H. S. P. Müller, K. Kobayashi, K. Takahashi, K. Tomaru, F. Matsushima,
+# J. Mol. Spectrosc. 310, 92-98 (2015), doi:10.1016/j.jms.2014.12.002 (Table 4,
+# isotopic-invariant SPFIT fit; values combined from Dunham coefficients).
+# A(v) = A00 + A10(v+1/2), B(v) = U01 + Y11(v+1/2), etc.
+v,constant,value,unit
+0,A,-3691436.6,MHz
+0,B,50856.3,MHz
+0,gamma,-189.66,MHz
+0,P,350.62,MHz
+0,Q,2.8447,MHz
+1,A,-3684101.4,MHz
+1,B,50329.5,MHz
+1,gamma,-182.19,MHz
+1,P,350.02,MHz
+1,Q,2.778,MHz
+# v=2,3 extrapolated from the same Dunham coefficients (X(v)=X00+X10(v+1/2));
+# cross-checked against the NIST JPCRD 21, 831 (1992) NO review (A(v) Dunham
+# expansion valid to v<=22).
+2,A,-3690766.0,MHz
+2,B,49801.7,MHz
+2,gamma,-174.71,MHz
+2,P,349.61,MHz
+2,Q,2.734,MHz
+3,A,-3683435.0,MHz
+3,B,49273.0,MHz
+3,gamma,-167.23,MHz
+3,P,349.21,MHz
+3,Q,2.690,MHz

@@ -1,5 +1,5 @@
 # KRb + KRb capture example following the reference 2+2capture input.
-type = "diatom-diatom"
+type = "AB+CD"
 diatom_X = ["Rb", "K"]
 diatom_Y = ["Rb", "K"]
 Jtot = 2
@@ -15,7 +15,6 @@ path = "pes"
 sources = ["pes_interface.f"]
 wrapper = "pyticc_wrapper.f90"
 workdir = "."
-processes = 4
 lapack = false
 
 [basis_X]
@@ -46,9 +45,12 @@ E_X_cut_cm = 100.0
 E_Y_cut_cm = 100.0
 K_cut = "none"
 
-[propagation]
+[potential_grid]
 radial_boundaries = [20.0, 25.0, 60.0, 100.0]
 radial_half_steps = [0.05, 0.5, 1.0]
+processes = 4
+
+[propagation]
 mode = "capture"
 memory_limit_mb = 512.0
 device = "auto"

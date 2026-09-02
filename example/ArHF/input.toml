@@ -1,4 +1,4 @@
-type = "atom-diatom"
+type = "A+BC"
 atom = "Ar"
 diatom = ["H", "F"]
 Jtot = 0
@@ -13,7 +13,6 @@ path = "pes"
 sources = ["interaction-PES.f"]
 wrapper = "pyticc_wrapper.f90"
 workdir = "."
-processes = 4
 
 [basis]
 r = [1.5, 4.5]
@@ -31,9 +30,12 @@ exchange_parity_Y = 0
 E_Y_cut_cm = 200000.0
 K_cut = "none"
 
-[propagation]
+[potential_grid]
 radial_boundaries = [4.5, 6.5, 7.94, 11.94]
 radial_half_steps = [0.05, 0.08, 0.10]
+processes = 4
+
+[propagation]
 mode = "inelastic"
 memory_limit_mb = 512.0
 device = "auto"

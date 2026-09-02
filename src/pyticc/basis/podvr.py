@@ -10,7 +10,7 @@ from pyticc.basis.rovib import RovibBasis
 
 
 # PODVR contraction
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def podvr_grids(
     dvr_grids: NDArray[np.float64], dvr_wf: NDArray[np.float64], n_podvr: int
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
@@ -42,10 +42,10 @@ def podvr_grids(
     return po_grids, dvr_to_cfbr, po_to_cfbr
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def podvr_vib(po_to_cfbr: NDArray[np.float64], dvr_eigen: NDArray[np.float64], vmax: int) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     r"""
     Get reference vibrational energies and contracted-basis wavefunctions on the PODVR grid.
@@ -80,10 +80,10 @@ def podvr_vib(po_to_cfbr: NDArray[np.float64], dvr_eigen: NDArray[np.float64], v
     return po_Evib, po_WFvib
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def podvr_vibrot(
     po_grids: NDArray[np.float64],
     po_to_cfbr: NDArray[np.float64],
@@ -137,10 +137,10 @@ def podvr_vibrot(
     return po_Evibrot, po_WFvibrot
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class VibPODVR:
     """
@@ -160,10 +160,10 @@ class VibPODVR:
     wavefunctions: NDArray[np.float64]
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def build_VibPODVR(dvr: SineDVR, n_podvr: int, vmax: int) -> VibPODVR:
     """
     Build a contracted one-dimensional vibrational basis from a sine-DVR calculation.
@@ -181,10 +181,10 @@ def build_VibPODVR(dvr: SineDVR, n_podvr: int, vmax: int) -> VibPODVR:
     return VibPODVR(grids=po_grids, energies=energies, wavefunctions=wavefunctions)
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def build_RovibPODVR(dvr: SineDVR, n_podvr: int, vmax: int, jmax: int, mass: float) -> RovibBasis:
     """
     Build a contracted diatomic rovibrational basis from a sine-DVR calculation.
@@ -202,3 +202,6 @@ def build_RovibPODVR(dvr: SineDVR, n_podvr: int, vmax: int, jmax: int, mass: flo
     po_grids, _, po_to_cfbr = podvr_grids(dvr.grids, dvr.eigen_vec, n_podvr)
     E_vj, WF_vj = podvr_vibrot(po_grids, po_to_cfbr, dvr.eigen_val, vmax, jmax, mass)
     return RovibBasis(grids=po_grids, E_vj=E_vj, WF_vj=WF_vj)
+
+
+# ----------------------------------------------------------------------------------------

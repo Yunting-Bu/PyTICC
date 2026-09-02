@@ -149,9 +149,15 @@ def test_diabatic_device_contraction_matches_numpy_for_radial_batch_and_selectio
     selected = (3, 0, 1)
     expected = vmat.contract(V_basis, potential, selected)
     result = vmat.contract_device(V_basis, vmat.device_basis(V_basis, device), potential, device, selected)
+    potential_device = vmat.DiabaticVGridBF(
+        diagonal=tuple(jax.device_put(values, device) for values in potential.diagonal),
+        coupling=jax.device_put(potential.coupling, device),
+    )
+    resident_result = vmat.contract_device(V_basis, vmat.device_basis(V_basis, device), potential_device, device, selected)
 
     assert result.devices() == {device}
     np.testing.assert_allclose(result, expected, rtol=1.0e-13, atol=1.0e-13)
+    np.testing.assert_allclose(resident_result, expected, rtol=1.0e-13, atol=1.0e-13)
 
 
 def test_diabatic_weighted_contraction_chunks_radial_batch(monkeypatch: pytest.MonkeyPatch) -> None:

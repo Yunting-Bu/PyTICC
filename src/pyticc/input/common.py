@@ -110,16 +110,26 @@ def approximation(config: TomlTable) -> tuple[Approx, int]:
 
 # ----------------------------------------------------------------------------------------
 def propagation(config: TomlTable) -> Propagation:
-    """Parse the radial propagation settings."""
+    """Parse the propagation runtime settings."""
     values = section(config, "propagation")
     return Propagation(
-        boundaries=tuple(float(value) for value in required(values, "radial_boundaries")),
-        half_steps=tuple(float(value) for value in required(values, "radial_half_steps")),
         mode=cast(PropagationMode, required(values, "mode")),
         memory_mb=float(values.get("memory_limit_mb", 512.0)),
         device=values.get("device", "auto"),
         print_verbose=values.get("print_verbose", False),
     )
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def potential_grid_settings(config: TomlTable) -> tuple[tuple[float, ...], tuple[float, ...], int]:
+    """Parse radial-grid boundaries, half-steps, and PES worker processes."""
+    values = section(config, "potential_grid")
+    boundaries = tuple(float(value) for value in required(values, "radial_boundaries"))
+    half_steps = tuple(float(value) for value in required(values, "radial_half_steps"))
+    return boundaries, half_steps, int(values.get("processes", 1))
 
 
 # ----------------------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import numpy as np
 
 import pyticc as ticc
+from pyticc.propagation.grid import build_radial_sectors
 from pyticc.scattering import delves
 
 
@@ -23,6 +24,7 @@ def test_reactive_system_hamiltonian_and_solve_follow_common_flow() -> None:
     )
     system = ticc.build_ScattSystem(
         monomer,
+        scattering_type="A+BC_Delves",
         Jtot=0,
         system_parity=1,
         jmax=0,
@@ -32,13 +34,10 @@ def test_reactive_system_hamiltonian_and_solve_follow_common_flow() -> None:
     assert isinstance(system.basis, ticc.DelvesBasis)
     basis = system.basis
     hamiltonian = delves.build_hamiltonian(system)
-    propagation = ticc.Propagation(
-        (hamiltonian.basis.rho_min, 8.0),
-        (1.0,),
-        device="cpu",
-    )
+    radial_sectors = build_radial_sectors((hamiltonian.basis.rho_min, 8.0), (1.0,))
+    propagation = ticc.Propagation(device="cpu")
 
-    result = ticc.solve(hamiltonian, [-0.1], propagation)
+    result = ticc.solve(hamiltonian, [-0.1], radial_sectors, propagation)
 
     assert isinstance(monomer, ticc.DelvesMonomer)
     assert not hasattr(monomer, "jmax")
@@ -56,7 +55,7 @@ def test_reactive_system_hamiltonian_and_solve_follow_common_flow() -> None:
     assert result.Y_asymptotic.shape == (1, 2, 2)
     assert result.Smat[0].shape == (2, 2)
     assert result.radial_points[0] == hamiltonian.basis.rho_min
-    assert result.rho_final == propagation.Rmatch
+    assert result.rho_final == radial_sectors[-1].radial_end
     assert result.timing is not None
     np.testing.assert_allclose(result.Smat[0].conj().T @ result.Smat[0], np.eye(2), atol=2.0e-13)
 
@@ -71,6 +70,7 @@ def test_reactive_preparation_validates_energy_zero_and_symmetry() -> None:
     try:
         ticc.build_ScattSystem(
             monomer,
+            scattering_type="A+BC_Delves",
             Jtot=0,
             system_parity=1,
             jmax=0,
@@ -105,6 +105,7 @@ def test_minimum_energy_zero_is_equivalent_to_converted_native_energies() -> Non
     )
     minimum_system = ticc.build_ScattSystem(
         minimum_monomer,
+        scattering_type="A+BC_Delves",
         Jtot=0,
         system_parity=1,
         jmax=0,
@@ -120,6 +121,7 @@ def test_minimum_energy_zero_is_equivalent_to_converted_native_energies() -> Non
     )
     native_system = ticc.build_ScattSystem(
         native_monomer,
+        scattering_type="A+BC_Delves",
         Jtot=0,
         system_parity=1,
         jmax=0,
@@ -135,9 +137,10 @@ def test_minimum_energy_zero_is_equivalent_to_converted_native_energies() -> Non
     assert minimum_hamiltonian.basis.n_sine == native_hamiltonian.basis.n_sine
 
     selected_energy = -0.1 - minimum_hamiltonian.energy_zero
-    propagation = ticc.Propagation((minimum_hamiltonian.basis.rho_min, 8.0), (1.0,), device="cpu")
-    minimum_result = ticc.solve(minimum_hamiltonian, [selected_energy], propagation)
-    native_result = ticc.solve(native_hamiltonian, [-0.1], propagation)
+    radial_sectors = build_radial_sectors((minimum_hamiltonian.basis.rho_min, 8.0), (1.0,))
+    propagation = ticc.Propagation(device="cpu")
+    minimum_result = ticc.solve(minimum_hamiltonian, [selected_energy], radial_sectors, propagation)
+    native_result = ticc.solve(native_hamiltonian, [-0.1], radial_sectors, propagation)
 
     assert minimum_result.energy_zero == minimum_hamiltonian.energy_zero
     np.testing.assert_allclose(

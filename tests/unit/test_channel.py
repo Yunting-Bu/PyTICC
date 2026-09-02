@@ -22,6 +22,7 @@ def test_build_scatt_system_owns_prepared_channels() -> None:
     system = build_ScattSystem(
         AtomSpec(),
         diatom,
+        scattering_type="A+BC",
         Jtot=0,
         system_parity=1,
         channel=ChannelSpec(E_Y_cut=1.0),

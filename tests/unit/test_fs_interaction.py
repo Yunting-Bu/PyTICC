@@ -1,4 +1,6 @@
+import jax
 import numpy as np
+import pytest
 
 import pyticc as ticc
 from pyticc.basis.podvr import VibPODVR
@@ -6,6 +8,15 @@ from pyticc.fine_structure import FSConstants, build_fs_channels, build_fs_monom
 from pyticc.matrix.interaction import fs_atom_diatom as vmat
 from pyticc.pes import LambdaPES
 from pyticc.scattering import fine_structure_atom_diatom
+
+
+def _contraction_devices():
+    devices = [jax.devices("cpu")[0]]
+    try:
+        devices.extend(jax.devices("gpu")[:1])
+    except RuntimeError:
+        pass
+    return tuple(devices)
 
 
 def _pi_basis():
@@ -30,21 +41,54 @@ def test_constant_vsum_is_identity_and_vdif_is_hermitian() -> None:
     np.testing.assert_allclose(matrix, matrix.T, atol=2.0e-14)
 
 
+@pytest.mark.parametrize("device", _contraction_devices(), ids=lambda device: device.platform)
+def test_fs_device_contraction_matches_numpy_for_batch_and_channel_selection(device) -> None:
+    basis = _pi_basis()
+    x, weights = np.polynomial.legendre.leggauss(16)
+    V_basis = vmat.prepare(basis, np.arccos(x), weights)
+    rng = np.random.default_rng(42)
+    potential = rng.normal(size=(3, 1, x.size, 2))
+    selected = tuple(range(basis.n_channel - 1, -1, -2))
+
+    expected_full = vmat.contract(V_basis, potential)
+    expected = expected_full[:, selected, :][:, :, selected]
+    result = vmat.contract_device(V_basis, vmat.device_basis(V_basis, device), potential, device, selected)
+    resident_result = vmat.contract_device(V_basis, vmat.device_basis(V_basis, device), jax.device_put(potential, device), device, selected)
+
+    assert result.devices() == {device}
+    np.testing.assert_allclose(result, expected, rtol=2.0e-13, atol=2.0e-13)
+    np.testing.assert_allclose(resident_result, expected, rtol=2.0e-13, atol=2.0e-13)
+
+
 def test_half_integer_fs_channels_propagate_and_match() -> None:
     basis = _pi_basis()
     potential = LambdaPES(lambda R, coordinates: np.zeros((coordinates.shape[1], 2)))
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         basis.monomer,
+        scattering_type="A+BC_fine_structure",
         two_J=basis.two_J,
         system_parity=basis.system_parity,
         potential=potential,
         reduced_mass=2.0,
     )
-    hamiltonian = fine_structure_atom_diatom.build_hamiltonian(system, n_theta=16)
+    potential_grid = fine_structure_atom_diatom.prepare_potential(
+        system,
+        (4.0, 4.2),
+        (0.1,),
+        n_theta=16,
+    )
+    hamiltonian = fine_structure_atom_diatom.build_hamiltonian(system, potential_grid=potential_grid)
     energy = float(np.max(basis.E_int) + 0.1)
 
-    result = ticc.solve(hamiltonian, [energy], ticc.Propagation((4.0, 4.2), (0.1,)))
+    assert hamiltonian.device_block_interaction is not None
+    device = jax.devices("cpu")[0]
+    radial_points = np.array([4.0, 4.1])
+    indices = tuple(range(basis.n_channel))
+    device_matrix = hamiltonian.device_block_interaction(radial_points, (indices,), device)[0]
+    np.testing.assert_allclose(device_matrix, hamiltonian.V(radial_points), rtol=2.0e-13, atol=2.0e-13)
+
+    result = ticc.solve(system, [energy], potential_grid, ticc.Propagation())
 
     assert isinstance(result, ticc.ScatteringResult)
     assert result.basis.n_channel == basis.n_channel

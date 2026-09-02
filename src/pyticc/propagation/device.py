@@ -9,6 +9,7 @@ from pyticc._typing import JaxDevice
 _DEVICE_PATTERN = re.compile(r"(?:auto|cpu(?::\d+)?|gpu(?::\d+)?)")
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True, slots=True)
 class ResolvedDevice:
     """One concrete JAX device selected for radial propagation."""
@@ -22,6 +23,7 @@ class ResolvedDevice:
         return f"{self.device.platform}:{self.device.id}"
 
 
+# ----------------------------------------------------------------------------------------
 def normalize_device_spec(value: object) -> str:
     """Normalize and validate an auto, CPU, or GPU propagation-device request."""
     if not isinstance(value, str):
@@ -37,6 +39,7 @@ def normalize_device_spec(value: object) -> str:
     return normalized
 
 
+# ----------------------------------------------------------------------------------------
 def _platform_devices(platform: str) -> tuple[JaxDevice, ...]:
     """Return initialized devices for one optional JAX platform."""
     try:
@@ -45,6 +48,7 @@ def _platform_devices(platform: str) -> tuple[JaxDevice, ...]:
         return ()
 
 
+# ----------------------------------------------------------------------------------------
 def resolve_device(value: str) -> ResolvedDevice:
     """Resolve a propagation-device request without silently changing an explicit platform."""
     requested = normalize_device_spec(value)
@@ -65,3 +69,6 @@ def resolve_device(value: str) -> ResolvedDevice:
         logger.error(message)
         raise RuntimeError(message)
     return ResolvedDevice(requested=requested, device=devices[index])
+
+
+# ----------------------------------------------------------------------------------------

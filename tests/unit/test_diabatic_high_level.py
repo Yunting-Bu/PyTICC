@@ -46,15 +46,21 @@ def _solve(
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
+        scattering_type="A+BC_diabatic",
         Jtot=0,
         system_parity=1,
         channel=channel,
         potential=pes,
         reduced_mass=1000.0,
     )
-    hamiltonian = diabatic_atom_diatom.build_hamiltonian(system, n_theta=n_theta)
-    radial = ticc.Propagation((3.0, 4.0), (0.1,)) if propagation is None else propagation
-    result = ticc.solve(hamiltonian, [0.05], radial)
+    potential_grid = ticc.prepare_potential(
+        system,
+        (3.0, 4.0),
+        (0.1,),
+        n_theta=n_theta,
+    )
+    runtime = ticc.Propagation() if propagation is None else propagation
+    result = ticc.solve(system, [0.05], potential_grid, runtime)
     assert isinstance(result, ticc.ScatteringResult)
     return result
 
@@ -91,7 +97,7 @@ def test_solve_diabatic_atom_diatom_uses_half_angle_rule_when_all_states_have_ex
         _diabatic_basis(),
         ticc.DiabaticPESWrapper(n_state=2, monomer=monomer, interaction=interaction),
         n_theta=3,
-        propagation=ticc.Propagation((3.0, 3.2), (0.1,)),
+        propagation=ticc.Propagation(),
         channel=ticc.ChannelSpec(exchange_parity_Y=(1, 1)),
     )
 
@@ -105,6 +111,7 @@ def test_build_diabatic_atom_diatom_validates_electronic_state_count() -> None:
         system = ticc.build_ScattSystem(
             ticc.AtomSpec(),
             _diabatic_basis(),
+            scattering_type="A+BC_diabatic",
             Jtot=0,
             system_parity=1,
             potential=_pes(0.0, n_state=1),

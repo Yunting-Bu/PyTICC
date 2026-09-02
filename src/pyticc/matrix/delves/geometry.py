@@ -156,6 +156,7 @@ def transform_delves_coordinates(
 ) -> tuple[float, float, float]: ...
 
 
+# ----------------------------------------------------------------------------------------
 @overload
 def transform_delves_coordinates(
     theta_a: NDArray[Any],
@@ -166,6 +167,7 @@ def transform_delves_coordinates(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]: ...
 
 
+# ----------------------------------------------------------------------------------------
 @overload
 def transform_delves_coordinates(
     theta_a: float,
@@ -176,6 +178,7 @@ def transform_delves_coordinates(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]: ...
 
 
+# ----------------------------------------------------------------------------------------
 def transform_delves_coordinates(
     theta_a: ArrayLike,
     cos_gamma_a: ArrayLike,

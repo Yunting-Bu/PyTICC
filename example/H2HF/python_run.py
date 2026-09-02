@@ -3,7 +3,6 @@ from pathlib import Path
 import numpy as np
 
 import pyticc as ticc
-from pyticc.scattering import diatom_diatom
 
 
 def main() -> None:
@@ -12,7 +11,6 @@ def main() -> None:
         [pes_dir / "pesh2hf.f"],
         pes_dir / "pyticc_wrapper.f90",
         workdir=pes_dir,
-        processes=4,
     )
 
     monomer_H2 = pes.monomer_X
@@ -49,6 +47,7 @@ def main() -> None:
     system = ticc.build_ScattSystem(
         diatom_H2,
         diatom_HF,
+        scattering_type="AB+CD",
         Jtot=0,
         system_parity=1,
         channel=ticc.ChannelSpec(
@@ -60,19 +59,20 @@ def main() -> None:
         potential=pes,
         reduced_mass=reduced_mass_H2HF,
     )
-    hamiltonian = diatom_diatom.build_hamiltonian(
+    potential_grid = ticc.prepare_potential(
         system,
+        (4.5, 6.5, 10.5, 20.5),
+        (0.10, 0.20, 0.50),
         n_theta_X=10,
         n_theta_Y=10,
         n_phi=10,
+        processes=4,
     )
     result = ticc.solve(
-        hamiltonian,
+        system,
         total_energies,
-        ticc.Propagation(
-            boundaries=(4.5, 6.5, 10.5, 20.5),
-            half_steps=(0.10, 0.20, 0.50),
-        ),
+        potential_grid,
+        ticc.Propagation(),
     )
     print(ticc.report.open_closed(result.basis, result.Etot))
 

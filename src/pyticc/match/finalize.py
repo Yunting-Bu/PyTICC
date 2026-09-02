@@ -8,7 +8,13 @@ from pyticc.basis.delves import DelvesBasis
 from pyticc.basis.kblock import KBlock
 from pyticc.energy import EnergyInput, get_Etot
 from pyticc.fine_structure.channel import FSChannelBasis
-from pyticc.match.asymptotic import get_Bmat_BF_to_SF, get_Bmat_FS_BF_to_SF, transform_logD_BF_to_SF
+from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
+from pyticc.match.asymptotic import (
+    get_Bmat_BF_to_SF,
+    get_Bmat_FS_BF_to_SF,
+    get_Bmat_FS_DiatomDiatom_BF_to_SF,
+    transform_logD_BF_to_SF,
+)
 from pyticc.match.delves import build_delves_asymptotic_basis, transform_logD_to_delves_channels
 from pyticc.match.delves_bessel import get_delves_Smat
 from pyticc.match.smatrix import get_Smat
@@ -19,7 +25,7 @@ from pyticc.result import KBlockResult, LogDArray, ReactiveScatteringResult, Sca
 
 # ----------------------------------------------------------------------------------------
 def finalize_scattering(
-    basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis,
+    basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis,
     Y_propagated: LogDArray,
     Etot: EnergyInput,
     reduced_mass: float,
@@ -63,6 +69,9 @@ def finalize_scattering(
         Y_asymptotic = Y_array
     elif isinstance(basis, FSChannelBasis):
         asymptotic_transform, L = get_Bmat_FS_BF_to_SF(basis)
+        Y_asymptotic = transform_logD_BF_to_SF(Y_array, asymptotic_transform)
+    elif isinstance(basis, FSDiatomDiatomBasis):
+        asymptotic_transform, L = get_Bmat_FS_DiatomDiatom_BF_to_SF(basis)
         Y_asymptotic = transform_logD_BF_to_SF(Y_array, asymptotic_transform)
     else:
         asymptotic_transform, L = get_Bmat_BF_to_SF(basis)

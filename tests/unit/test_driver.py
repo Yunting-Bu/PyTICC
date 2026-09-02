@@ -12,7 +12,7 @@ def test_run_reads_compact_atom_diatom_input(tmp_path: Path) -> None:
     input_file = tmp_path / "input.toml"
     input_file.write_text(
         """
-type = "atom-diatom"
+type = "A+BC"
 atom = "Ar"
 diatom = ["H", "F"]
 Jtot = 1
@@ -38,9 +38,11 @@ exchange_parity_Y = 0
 E_Y_cut_cm = 1000.0
 K_cut = "none"
 
-[propagation]
+[potential_grid]
 radial_boundaries = [3.0, 3.2]
 radial_half_steps = [0.1]
+
+[propagation]
 mode = "inelastic"
 """,
         encoding="utf-8",
@@ -79,7 +81,7 @@ def test_run_reads_electric_atom_diatom_input(tmp_path: Path) -> None:
     input_file = tmp_path / "input.toml"
     input_file.write_text(
         """
-type = "electric-atom-diatom"
+type = "A+BC_electric"
 atom = "Ar"
 diatom = ["H", "F"]
 M = 0
@@ -106,9 +108,11 @@ delta_symmetry = true
 [channels]
 E_Y_cut_cm = 1000.0
 
-[propagation]
+[potential_grid]
 radial_boundaries = [3.0, 3.2]
 radial_half_steps = [0.1]
+
+[propagation]
 mode = "inelastic"
 """,
         encoding="utf-8",
@@ -132,7 +136,7 @@ def test_electric_atom_diatom_input_rejects_coupled_states(tmp_path: Path) -> No
     input_file = tmp_path / "input.toml"
     input_file.write_text(
         """
-type = "electric-atom-diatom"
+type = "A+BC_electric"
 
 [approximation]
 method = "cs"
@@ -152,7 +156,7 @@ def test_run_reads_diabatic_atom_diatom_input(tmp_path: Path) -> None:
     input_file = tmp_path / "input.toml"
     input_file.write_text(
         """
-type = "diabatic-atom-diatom"
+type = "A+BC_diabatic"
 atom = "H"
 diatom = ["O", "O"]
 Jtot = 0
@@ -178,9 +182,11 @@ exchange_parity_Y = [1, 1]
 E_Y_cut_cm = 1000.0
 K_cut = "none"
 
-[propagation]
+[potential_grid]
 radial_boundaries = [3.0, 3.2]
 radial_half_steps = [0.1]
+
+[propagation]
 mode = "inelastic"
 """,
         encoding="utf-8",
@@ -209,7 +215,7 @@ def test_run_reads_diatom_diatom_input(tmp_path: Path) -> None:
     input_file = tmp_path / "input.toml"
     input_file.write_text(
         """
-type = "diatom-diatom"
+type = "AB+CD"
 diatom_X = ["H", "H"]
 diatom_Y = ["H", "F"]
 Jtot = 0
@@ -248,9 +254,11 @@ E_X_cut_cm = 1000.0
 E_Y_cut_cm = 1000.0
 K_cut = "none"
 
-[propagation]
+[potential_grid]
 radial_boundaries = [3.0, 3.2]
 radial_half_steps = [0.1]
+
+[propagation]
 mode = "inelastic"
 """,
         encoding="utf-8",

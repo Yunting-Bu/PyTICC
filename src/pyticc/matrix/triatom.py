@@ -1,3 +1,5 @@
+"""Triatomic Radau Hamiltonian in the corrected bisector-z embedding."""
+
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -55,6 +57,11 @@ def prepare_triatom_hamiltonian(
 ) -> TriatomHamiltonianData:
     r"""
     Prepare the coordinate-independent data for the Radau triatomic Hamiltonian.
+
+    The angular kinetic-energy formulas use the bisector-z MF frame made
+    explicit in the 2+3 reference: ``z_MF`` is antiparallel to
+    ``r1 * vector_r2 + r2 * vector_r1``. They must not be combined with the
+    obsolete ABC+D Cartesian embedding that aligns ``z_MF`` with OB.
 
     Formula:
         V_res(r1,r2,theta1) = V_ABC(r1,r2,theta1) - V1(r1) - V2(r2)
@@ -267,3 +274,6 @@ def get_hmat_triatom_unsym(
                     H[bra, ket] += value
 
     return np.asarray(0.5 * (H + H.T), dtype=np.float64)
+
+
+# ----------------------------------------------------------------------------------------

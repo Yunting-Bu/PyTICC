@@ -1,2 +1,3 @@
-sources = ["heno_PES_export.f"]
+sources = ["arnopes.f"]
 wrapper = "pyticc_lambda_wrapper.f90"
+workdir = "."

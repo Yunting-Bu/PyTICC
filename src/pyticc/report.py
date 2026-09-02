@@ -9,13 +9,14 @@ from pyticc.basis.monomer import DiabaticDiatomBasis, DiatomBasis
 from pyticc.constants import AU2CM
 from pyticc.energy import EnergyInput, get_Etot
 from pyticc.fine_structure.channel import FSChannelBasis, FSMonomerBasis
+from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.match.delves import DelvesAsymptoticBasis
 from pyticc.result import CoupledStatesResult, KBlockResult, ReactiveScatteringResult, ScatteringResult
 from pyticc.system import MolInnerState
 
 QuantumSelection: TypeAlias = int | range | Sequence[int] | None
 EnergySelection: TypeAlias = int | slice | Sequence[int] | None
-ReportBasis: TypeAlias = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | DelvesAsymptoticBasis
+ReportBasis: TypeAlias = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis | DelvesAsymptoticBasis
 
 
 # ----------------------------------------------------------------------------------------
@@ -186,6 +187,29 @@ def channels(basis: ReportBasis) -> str:
                 ]
             )
         return _table(("n", "v", "j", "tau", "epsilon", "K", "E_int/cm-1"), rows)
+
+    if isinstance(basis, FSDiatomDiatomBasis):
+        rows = []
+        for index, channel in enumerate(basis, start=1):
+            block_X = basis.monomer_X.blocks[channel.block_X]
+            block_Y = basis.monomer_Y.blocks[channel.block_Y]
+            rows.append(
+                [
+                    str(index),
+                    str(block_X.v),
+                    str(block_X.two_j / 2),
+                    str(channel.tau_X),
+                    str(block_X.parity),
+                    str(block_Y.v),
+                    str(block_Y.two_j / 2),
+                    str(channel.tau_Y),
+                    str(block_Y.parity),
+                    str(channel.two_j12 / 2),
+                    str(channel.two_K / 2),
+                    f"{channel.E_int * AU2CM:.6f}",
+                ]
+            )
+        return _table(("n", "v_X", "j_X", "tau_X", "epsilon_X", "v_Y", "j_Y", "tau_Y", "epsilon_Y", "j_12", "K", "E_int/cm-1"), rows)
 
     if basis.n_channel == 0:
         return _table(("n", "K", "E_int/cm-1"), ())
@@ -416,6 +440,81 @@ def _smatrix_fine_structure(result: ScatteringResult, energy_indices: EnergySele
                     ]
                 )
     headers = ("Etot/cm-1", "v", "j", "tau", "epsilon", "L", "v'", "j'", "tau'", "epsilon'", "L'", "Re(S)", "Im(S)")
+    return _table(headers, rows)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def _smatrix_fine_structure_diatom_diatom(result: ScatteringResult, energy_indices: EnergySelection) -> str:
+    """Format a two-fine-structure-diatom S matrix in its asymptotic SF basis."""
+    basis = cast(FSDiatomDiatomBasis, result.basis)
+    rows: list[list[str]] = []
+    for energy_index in _energy_indices(energy_indices, result.Etot.size):
+        indices = result.open_channel_indices[energy_index]
+        matrix = result.Smat[energy_index]
+        for incoming, incoming_global in enumerate(indices):
+            initial = basis[int(incoming_global)]
+            initial_X = basis.monomer_X.blocks[initial.block_X]
+            initial_Y = basis.monomer_Y.blocks[initial.block_Y]
+            for outgoing, outgoing_global in enumerate(indices):
+                final = basis[int(outgoing_global)]
+                final_X = basis.monomer_X.blocks[final.block_X]
+                final_Y = basis.monomer_Y.blocks[final.block_Y]
+                value = matrix[outgoing, incoming]
+                rows.append(
+                    [
+                        f"{result.Etot[energy_index] * AU2CM:.8f}",
+                        str(initial_X.v),
+                        str(initial_X.two_j / 2),
+                        str(initial.tau_X),
+                        str(initial_X.parity),
+                        str(initial_Y.v),
+                        str(initial_Y.two_j / 2),
+                        str(initial.tau_Y),
+                        str(initial_Y.parity),
+                        str(initial.two_j12 / 2),
+                        f"{result.L[int(incoming_global)]:.8f}",
+                        str(final_X.v),
+                        str(final_X.two_j / 2),
+                        str(final.tau_X),
+                        str(final_X.parity),
+                        str(final_Y.v),
+                        str(final_Y.two_j / 2),
+                        str(final.tau_Y),
+                        str(final_Y.parity),
+                        str(final.two_j12 / 2),
+                        f"{result.L[int(outgoing_global)]:.8f}",
+                        f"{value.real:.16E}",
+                        f"{value.imag:.16E}",
+                    ]
+                )
+    headers = (
+        "Etot/cm-1",
+        "v_X",
+        "j_X",
+        "tau_X",
+        "epsilon_X",
+        "v_Y",
+        "j_Y",
+        "tau_Y",
+        "epsilon_Y",
+        "j_12",
+        "L",
+        "v_X'",
+        "j_X'",
+        "tau_X'",
+        "epsilon_X'",
+        "v_Y'",
+        "j_Y'",
+        "tau_Y'",
+        "epsilon_Y'",
+        "j_12'",
+        "L'",
+        "Re(S)",
+        "Im(S)",
+    )
     return _table(headers, rows)
 
 
@@ -911,6 +1010,24 @@ def smatrix(
             ),
         )
         return _smatrix_fine_structure(result, energy_indices)
+
+    if isinstance(result, ScatteringResult) and isinstance(result.basis, FSDiatomDiatomBasis):
+        _reject_filters(
+            "two-diatom fine-structure",
+            (
+                ("state", state),
+                ("v", v),
+                ("j", j),
+                ("state_prime", state_prime),
+                ("v_prime", v_prime),
+                ("j_prime", j_prime),
+                *diatom_filters,
+                *electric_filters,
+                *delves_filters,
+                ("block_index", block_index),
+            ),
+        )
+        return _smatrix_fine_structure_diatom_diatom(result, energy_indices)
 
     if isinstance(result, ScatteringResult) and isinstance(result.basis, ChannelBasisElectricSF):
         _reject_filters(

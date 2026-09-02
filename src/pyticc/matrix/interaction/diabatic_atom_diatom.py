@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from math import prod
-from typing import cast
+from typing import TypeAlias, cast
 
 import jax
 import jax.numpy as jnp
@@ -20,10 +20,12 @@ from pyticc.pes.diabatic import DiabaticPESWrapper, RadialInput, get_diabatic_po
 from pyticc.system import MolInnerState
 
 ElectronicK = tuple[int, int]
+PotentialArray: TypeAlias = NDArray[np.float64] | jax.Array
 _MAX_CONTRACTION_WORKERS = 3
 _MAX_CONTRACTION_WORKSPACE_BYTES = 64 * 1024**2
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiabaticVBasisBF:
     """State-aware atom-diatom bases for diagonal and off-diagonal diabatic-potential contractions."""
@@ -38,14 +40,16 @@ class DiabaticVBasisBF:
     B_coupling: dict[ElectronicK, NDArray[np.float64]]
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiabaticVGridBF:
     """Diabatic-potential values sampled on state-specific diagonal and shared coupling grids."""
 
-    diagonal: tuple[NDArray[np.float64], ...]
-    coupling: NDArray[np.float64]
+    diagonal: tuple[PotentialArray, ...]
+    coupling: PotentialArray
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class DiabaticVBasisDevice:
     """Device-resident contraction bases for a diabatic atom-diatom interaction.
@@ -59,6 +63,7 @@ class DiabaticVBasisDevice:
     B_coupling: dict[ElectronicK, jax.Array]
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class _ContractionTask:
     """One independent electronic-K block contraction."""
@@ -71,6 +76,7 @@ class _ContractionTask:
     symmetric: bool
 
 
+# ----------------------------------------------------------------------------------------
 def _diatomic_inner_state(channel: Channel) -> MolInnerState:
     """Return the unique diatomic inner state from an atom-diatom channel."""
     candidates = tuple(state for state in (channel.mis_X, channel.mis_Y) if state.v is not None)
@@ -81,6 +87,7 @@ def _diatomic_inner_state(channel: Channel) -> MolInnerState:
     return candidates[0]
 
 
+# ----------------------------------------------------------------------------------------
 def prepare(
     basis: ChannelBasis,
     diabatic_basis: DiabaticDiatomBasis,
@@ -159,6 +166,7 @@ def prepare(
     )
 
 
+# ----------------------------------------------------------------------------------------
 def sample(
     pes: DiabaticPESWrapper,
     R: RadialInput,
@@ -182,8 +190,9 @@ def sample(
     return DiabaticVGridBF(diagonal=diagonal, coupling=coupling)
 
 
+# ----------------------------------------------------------------------------------------
 def _as_grid_batch(
-    values: NDArray[np.float64],
+    values: PotentialArray,
     grid_shape: tuple[int, ...],
     trailing_shape: tuple[int, ...],
     name: str,
@@ -213,6 +222,30 @@ def _as_grid_batch(
     return batch, batched
 
 
+# ----------------------------------------------------------------------------------------
+def _as_grid_batch_device(
+    values: PotentialArray,
+    grid_shape: tuple[int, ...],
+    trailing_shape: tuple[int, ...],
+    name: str,
+    device: JaxDevice,
+) -> tuple[jax.Array, bool]:
+    """Expose a scalar or radial-batched potential grid on one JAX device."""
+    if not isinstance(values, jax.Array):
+        batch, batched = _as_grid_batch(values, grid_shape, trailing_shape, name)
+        return jax.device_put(batch, device), batched
+
+    expected = (*grid_shape, *trailing_shape)
+    if values.shape == expected:
+        return values.reshape((1, *expected)), False
+    if values.ndim == len(expected) + 1 and values.shape[1:] == expected:
+        return values, True
+    message = f"{name} has shape {values.shape}, but expected {expected} with an optional leading R axis"
+    logger.error(message)
+    raise ValueError(message)
+
+
+# ----------------------------------------------------------------------------------------
 def _selected_group(
     group_indices: tuple[int, ...],
     selected_indices: dict[int, int],
@@ -225,6 +258,7 @@ def _selected_group(
     )
 
 
+# ----------------------------------------------------------------------------------------
 def _contract_weighted_basis(
     left: NDArray[np.float64],
     weights: NDArray[np.float64],
@@ -245,12 +279,14 @@ def _contract_weighted_basis(
     return result
 
 
+# ----------------------------------------------------------------------------------------
 @jax.jit
 def _contract_weighted_basis_device(left: jax.Array, weights: jax.Array, right: jax.Array) -> jax.Array:
     """Contract radial batches on one JAX device."""
     return jnp.einsum("ig,bg,jg->bij", left, weights, right, optimize=True)
 
 
+# ----------------------------------------------------------------------------------------
 def device_basis(V_basis: DiabaticVBasisBF, device: JaxDevice) -> DiabaticVBasisDevice:
     """Copy reusable diabatic contraction bases to one JAX device.
 
@@ -267,12 +303,14 @@ def device_basis(V_basis: DiabaticVBasisBF, device: JaxDevice) -> DiabaticVBasis
     )
 
 
+# ----------------------------------------------------------------------------------------
 def _evaluate_contraction_task(task: _ContractionTask) -> NDArray[np.float64]:
     """Evaluate one electronic-K contraction and enforce diagonal-block symmetry."""
     block = _contract_weighted_basis(task.left, task.weights, task.right)
     return 0.5 * (block + np.swapaxes(block, -2, -1)) if task.symmetric else block
 
 
+# ----------------------------------------------------------------------------------------
 def _evaluate_contraction_tasks(tasks: Sequence[_ContractionTask], batched: bool) -> tuple[NDArray[np.float64], ...]:
     """Evaluate independent electronic-K blocks concurrently for radial batches."""
     if not batched or len(tasks) < 2:
@@ -283,6 +321,7 @@ def _evaluate_contraction_tasks(tasks: Sequence[_ContractionTask], batched: bool
         return tuple(executor.map(_evaluate_contraction_task, tasks))
 
 
+# ----------------------------------------------------------------------------------------
 def contract(
     V_basis: DiabaticVBasisBF,
     potential: DiabaticVGridBF,
@@ -398,6 +437,7 @@ def contract(
     return Vmat if batched_flags[0] else Vmat[0]
 
 
+# ----------------------------------------------------------------------------------------
 def contract_device(
     V_basis: DiabaticVBasisBF,
     basis_device: DiabaticVBasisDevice,
@@ -425,18 +465,25 @@ def contract_device(
         logger.error(message)
         raise ValueError(message)
 
-    diagonal_batches: list[NDArray[np.float64]] = []
+    diagonal_batches: list[jax.Array] = []
     batched_flags: list[bool] = []
     for electronic_state, (values, radial_grid) in enumerate(zip(potential.diagonal, V_basis.diagonal_grids, strict=True)):
-        batch, batched = _as_grid_batch(values, (radial_grid.size, V_basis.theta.size), (), f"State {electronic_state} diagonal potential")
+        batch, batched = _as_grid_batch_device(
+            values,
+            (radial_grid.size, V_basis.theta.size),
+            (),
+            f"State {electronic_state} diagonal potential",
+            device,
+        )
         diagonal_batches.append(batch.reshape(batch.shape[0], -1))
         batched_flags.append(batched)
 
-    coupling_batch, coupling_batched = _as_grid_batch(
+    coupling_batch, coupling_batched = _as_grid_batch_device(
         potential.coupling,
         (V_basis.coupling_grid.size, V_basis.theta.size),
         (V_basis.n_state, V_basis.n_state),
         "Diabatic coupling potential",
+        device,
     )
     batched_flags.append(coupling_batched)
     batch_sizes = {batch.shape[0] for batch in (*diagonal_batches, coupling_batch)}
@@ -444,7 +491,12 @@ def contract_device(
         message = "Diagonal and coupling potential grids must use the same scalar or radial-batch shape"
         logger.error(message)
         raise ValueError(message)
-    if not np.allclose(coupling_batch, np.swapaxes(coupling_batch, -2, -1), rtol=1.0e-12, atol=1.0e-12):
+    if not isinstance(potential.coupling, jax.Array) and not np.allclose(
+        potential.coupling,
+        np.swapaxes(potential.coupling, -2, -1),
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    ):
         message = "Diabatic coupling potential must be symmetric"
         logger.error(message)
         raise ValueError(message)
@@ -457,8 +509,8 @@ def contract_device(
     selected_indices = {global_index: local_index for local_index, global_index in enumerate(indices)}
     n_batch = next(iter(batch_sizes))
     Vmat = jnp.zeros((n_batch, len(indices), len(indices)), dtype=jnp.float64, device=device)
-    diagonal_device = tuple(jax.device_put(batch, device) for batch in diagonal_batches)
-    coupling_device = jax.device_put(coupling_batch.reshape(n_batch, prod(coupling_batch.shape[1:-2]), V_basis.n_state, V_basis.n_state), device)
+    diagonal_device = tuple(diagonal_batches)
+    coupling_device = coupling_batch.reshape(n_batch, prod(coupling_batch.shape[1:-2]), V_basis.n_state, V_basis.n_state)
 
     for key, group_indices in V_basis.channel_indices.items():
         electronic_state, _ = key
@@ -493,3 +545,6 @@ def contract_device(
                 Vmat = Vmat.at[:, positions_b[:, None], positions_a[None, :]].set(jnp.swapaxes(block, -2, -1))
 
     return Vmat if batched_flags[0] else Vmat[0]
+
+
+# ----------------------------------------------------------------------------------------

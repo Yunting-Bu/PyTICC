@@ -6,7 +6,7 @@ from loguru import logger
 from numpy.typing import NDArray
 from scipy.linalg import eigh
 
-from pyticc.basis.dvr import SineDVR, phase_fix
+from pyticc.basis.dvr import SineDVR, build_SineDVR, phase_fix
 from pyticc.basis.podvr import VibPODVR, build_VibPODVR
 from pyticc.matrix.triatom import TriatomPES, get_hmat_triatom_unsym, prepare_triatom_hamiltonian
 from pyticc.system import MolInnerState, MonomerType
@@ -151,9 +151,8 @@ def get_triatom_expansion(
     """
     Expand one contracted triatomic state in the unsymmetrized primitive basis.
 
-    The returned primitive quantum numbers are ``(j1, omega, v1, v2)``. This is
-    the representation needed to evaluate a contracted eigenfunction on the
-    five-dimensional atom-triatom interaction grid.
+    The returned primitive quantum numbers are ``(j1, omega, v1, v2)``. Both
+    signs of omega and both radial permutations are expanded explicitly.
 
     Inputs:
         basis: TriatomBasis - contracted triatomic monomer basis
@@ -184,7 +183,8 @@ def get_triatom_expansion(
     j1max = int(np.max(block.qn[:, 0]))
     vmax_1 = int(np.max(block.qn[:, 2]))
     vmax_2 = int(np.max(block.qn[:, 3]))
-    qn = _unsym_qn(j, j1max, vmax_1, vmax_2)
+    vmax = max(vmax_1, vmax_2)
+    qn = _unsym_qn(j, j1max, vmax, vmax)
     transform = _symmetry_transform(qn, block.qn, K, basis.parity_block_sign, basis.exchange_parity)
     coefficients = transform @ block.coefficients[:, int(columns[0])]
     return qn, np.asarray(coefficients, dtype=np.float64)
@@ -203,6 +203,7 @@ def _unsym_qn(j2: int, j1max: int, vmax_1: int, vmax_2: int) -> NDArray[np.int64
     return np.asarray(states, dtype=np.int64)
 
 
+# ----------------------------------------------------------------------------------------
 def _adapted_qn(
     j2: int,
     K: int,
@@ -229,6 +230,7 @@ def _adapted_qn(
     return np.asarray(states, dtype=np.int64).reshape(-1, 4)
 
 
+# ----------------------------------------------------------------------------------------
 def _symmetry_transform(
     unsym_qn: NDArray[np.int64],
     adapted_qn: NDArray[np.int64],
@@ -270,6 +272,7 @@ def _symmetry_transform(
     return transform
 
 
+# ----------------------------------------------------------------------------------------
 def _diagonalize(H: NDArray[np.float64], n_state: int) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """
     Diagonalize a symmetric Hamiltonian and retain its lowest states.
@@ -288,6 +291,7 @@ def _diagonalize(H: NDArray[np.float64], n_state: int) -> tuple[NDArray[np.float
     return np.asarray(energies), phase_fix(coefficients)
 
 
+# ----------------------------------------------------------------------------------------
 def _match_K0_states(
     K0_energies: NDArray[np.float64],
     positive_energies: NDArray[np.float64],
@@ -340,6 +344,7 @@ def build_TriatomBasis(
     exchange_parity: int = 0,
     energy_zero: float | None = None,
     matching_tolerance: float = 1.0e-8,
+    Kmax: int | None = None,
 ) -> TriatomBasis:
     r"""
     Solve the contracted rovibrational eigenstates of a triatomic monomer.
@@ -347,8 +352,10 @@ def build_TriatomBasis(
     Formula:
         |j2 t K> = sum_chi T_chi,t^(j2 K) |chi j2 K>
 
-    The K=0 Hamiltonian is diagonalized in the requested parity block. For j2>0,
-    K=1 defines the global t labels and all positive K blocks reuse its eigenvectors.
+    The K=0 Hamiltonian is diagonalized in the requested parity block. For j2>0
+    and ``Kmax != 0``, K=1 defines the global t labels and all positive K blocks
+    reuse its eigenvectors. With ``Kmax=0``, each K=0 block instead retains and
+    labels its own lowest ``tmax+1`` states, matching a J=0 ABC+D calculation.
 
     Inputs:
         potential: TriatomPES - vectorized monomer potential mapping coordinates
@@ -367,6 +374,8 @@ def build_TriatomBasis(
         exchange_parity: int - A2B exchange parity, or 0 for ABC
         energy_zero: float | None - energy subtracted from every level; lowest level when None
         matching_tolerance: float - maximum K=0/K=1 matching error in atomic units
+        Kmax: int | None - retained helicity maximum; 0 constructs a K=0-only
+            basis, while None or a positive value preserves positive-K blocks
 
     Returns:
         basis: TriatomBasis - contracted basis with Eint and K-availability arrays
@@ -378,6 +387,10 @@ def build_TriatomBasis(
         raise ValueError(message)
     if exchange_parity not in (-1, 0, 1):
         message = f"exchange_parity must be -1, 0, or 1, but got {exchange_parity}"
+        logger.error(message)
+        raise ValueError(message)
+    if Kmax is not None and Kmax < 0:
+        message = f"Kmax must be non-negative or None, but got {Kmax}"
         logger.error(message)
         raise ValueError(message)
     if exchange_parity != 0 and (n_podvr[0] != n_podvr[1] or vmax[0] != vmax[1]):
@@ -407,7 +420,7 @@ def build_TriatomBasis(
             ground_energy = float(ground_values[0])
 
         positive_energies: NDArray[np.float64] | None = None
-        if j2 > 0:
+        if j2 > 0 and Kmax != 0:
             positive_qn = _adapted_qn(j2, 1, j1max, vmax[0], vmax[1], parity_block_sign, exchange_parity)
             positive_transform = _symmetry_transform(unsym_qn, positive_qn, 1, parity_block_sign, exchange_parity)
             positive_energies, positive_coefficients = _diagonalize(positive_transform.T @ H_unsym @ positive_transform, n_state)
@@ -462,3 +475,113 @@ def build_TriatomBasis(
         theta_weights=data.theta_weights,
         energy_shift=shift,
     )
+
+
+# ----------------------------------------------------------------------------------------
+def prepare_Triatom(
+    potential: TriatomPES | None,
+    *,
+    r: tuple[tuple[float, float], tuple[float, float]],
+    n_dvr: tuple[int, int],
+    n_podvr: tuple[int, int],
+    vmax: tuple[int, int],
+    masses: tuple[float, float, float],
+    equilibrium: tuple[float, float, float],
+    n_theta: int,
+    j1max: int,
+    j2max: int,
+    tmax: int,
+    parity_block_sign: int,
+    exchange_parity: int = 0,
+    energy_zero: float | None = None,
+    matching_tolerance: float = 1.0e-8,
+    Kmax: int | None = None,
+) -> TriatomBasis:
+    r"""
+    Prepare a contracted triatomic monomer basis from one physical monomer PES.
+
+    The two one-dimensional sine-DVR reference potentials are slices of the
+    supplied three-dimensional monomer potential. Users therefore specify the
+    physical PES and equilibrium geometry once instead of constructing two
+    coordinate-fixing callbacks.
+
+    Formula:
+        V_1(r_1) = V_ABC(r_1, r_2,eq, theta_1,eq)
+        V_2(r_2) = V_ABC(r_1,eq, r_2, theta_1,eq)
+
+    Here ``V_ABC`` and ``V_1``, ``V_2`` are in atomic units; ``r_1`` and
+    ``r_2`` are Radau lengths in bohr, and ``theta_1`` is in radians. The
+    resulting one-dimensional Hamiltonians are
+    ``h_i = -(2 m_i)^-1 d^2/dr_i^2 + V_i`` with ``m_1=m_A`` and ``m_2=m_C``.
+
+    Inputs:
+        potential: TriatomPES | None - vectorized monomer PES mapping coordinates
+            with shape (3, n_point) to energies with shape (n_point,); None raises
+            an error
+        r: tuple[tuple[float,float],tuple[float,float]] - sine-DVR boundaries for
+            r1 and r2 in bohr
+        n_dvr: tuple[int,int] - primitive sine-DVR sizes for r1 and r2
+        n_podvr: tuple[int,int] - retained PODVR sizes for r1 and r2
+        vmax: tuple[int,int] - maximum reference vibrational quantum numbers
+        masses: tuple[float,float,float] - masses of atoms A, B, and C in atomic units
+        equilibrium: tuple[float,float,float] - equilibrium (r1, r2, theta1) in
+            bohr, bohr, and radians
+        n_theta: int - number of bending Gauss-Legendre grids
+        j1max: int - maximum bending angular momentum
+        j2max: int - maximum triatomic rotational angular momentum
+        tmax: int - maximum retained contracted-state index
+        parity_block_sign: int - epsilon*(-1)^J for the K=0 basis
+        exchange_parity: int - A2B exchange parity, or 0 for ABC
+        energy_zero: float | None - energy subtracted from every level; lowest
+            level when None
+        matching_tolerance: float - maximum K=0/K=1 matching error in atomic units
+        Kmax: int | None - retained helicity maximum; use 0 for a J=0 or
+            explicitly K=0-only contracted basis
+
+    Returns:
+        basis: TriatomBasis - contracted basis with Eint and K-availability arrays
+            of shape (j2max + 1, tmax + 1)
+    """
+    if potential is None:
+        message = "Triatomic monomer preparation requires a monomer potential"
+        logger.error(message)
+        raise ValueError(message)
+
+    equilibrium_array = np.asarray(equilibrium, dtype=np.float64)
+    if equilibrium_array.shape != (3,) or not np.all(np.isfinite(equilibrium_array)):
+        message = f"equilibrium must contain three finite values, but got {equilibrium!r}"
+        logger.error(message)
+        raise ValueError(message)
+
+    def reference_potential(radial_index: int) -> TriatomPES:
+        def evaluate(radial: NDArray[np.float64]) -> NDArray[np.float64]:
+            radial_array = np.asarray(radial, dtype=np.float64)
+            coordinates = np.broadcast_to(equilibrium_array[:, None], (3, radial_array.size)).copy()
+            coordinates[radial_index] = radial_array
+            return np.asarray(potential(coordinates), dtype=np.float64)
+
+        return evaluate
+
+    dvr_1 = build_SineDVR(r[0][0], r[0][1], n_dvr[0], masses[0], reference_potential(0))
+    dvr_2 = build_SineDVR(r[1][0], r[1][1], n_dvr[1], masses[2], reference_potential(1))
+    return build_TriatomBasis(
+        potential=potential,
+        dvr_1=dvr_1,
+        dvr_2=dvr_2,
+        n_podvr=n_podvr,
+        vmax=vmax,
+        masses=masses,
+        equilibrium=equilibrium,
+        n_theta=n_theta,
+        j1max=j1max,
+        j2max=j2max,
+        tmax=tmax,
+        parity_block_sign=parity_block_sign,
+        exchange_parity=exchange_parity,
+        energy_zero=energy_zero,
+        matching_tolerance=matching_tolerance,
+        Kmax=Kmax,
+    )
+
+
+# ----------------------------------------------------------------------------------------

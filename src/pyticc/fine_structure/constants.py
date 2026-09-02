@@ -51,14 +51,16 @@ def load_fs_constants_csv(path: str | Path) -> FSConstantsTable:
     The required header is ``v,constant,value,unit``. Supported constants are
     A, B, gamma, lambda_ss, O, P, Q, M, and N. Units may be au, cm-1, Hz, kHz,
     MHz, or GHz. Each value is converted to Hartree; omitted constants within a
-    supplied vibrational manifold are zero.
+    supplied vibrational manifold are zero. Lines beginning with ``#`` are
+    ignored, which allows provenance notes to be kept in the file.
     """
     csv_path = Path(path).expanduser()
     values_by_v: dict[int, dict[str, float]] = {}
     seen: set[tuple[int, str]] = set()
 
     with csv_path.open(newline="", encoding="utf-8-sig") as stream:
-        reader = csv.DictReader(stream)
+        data_rows = (line for line in stream if not line.lstrip().startswith("#"))
+        reader = csv.DictReader(data_rows)
         columns = tuple(name.strip() for name in reader.fieldnames or ())
         if columns != FS_CONSTANT_COLUMNS:
             expected = ",".join(FS_CONSTANT_COLUMNS)
@@ -121,3 +123,5 @@ def load_fs_constants_csv(path: str | Path) -> FSConstantsTable:
         )
     return FSConstantsTable(tuple(entries))
 
+
+# ----------------------------------------------------------------------------------------

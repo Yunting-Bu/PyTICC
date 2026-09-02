@@ -30,6 +30,7 @@ ENERGY_TO_AU: Final[dict[EnergyUnit, float]] = {
 }
 
 
+# ----------------------------------------------------------------------------------------
 def energy_to_au(value: float, unit: EnergyUnit) -> float:
     """
     Convert one energy or frequency value to Hartree.
@@ -44,6 +45,7 @@ def energy_to_au(value: float, unit: EnergyUnit) -> float:
     return float(value) * ENERGY_TO_AU[unit]
 
 
+# ----------------------------------------------------------------------------------------
 # Length
 AU2ANG = 0.529177210903
 ANG2AU = 1.0 / AU2ANG

@@ -15,7 +15,7 @@ from pyticc.basis.monomer import (
     prepare_DiatomElectric,
 )
 from pyticc.basis.rovib import RovibBasis
-from pyticc.basis.triatom import TriatomBasis, build_TriatomBasis
+from pyticc.basis.triatom import TriatomBasis, build_TriatomBasis, prepare_Triatom
 from pyticc.constants import (
     ANG2AU,
     AU2ANG,
@@ -33,23 +33,38 @@ from pyticc.constants import (
     energy_to_au,
 )
 from pyticc.electric import ElectricResponseTable, load_electric_response_csv
-from pyticc.fine_structure import FSConstants, FSConstantsTable, FSMonomerBasis, build_fs_channels, load_fs_constants_csv, prepare_fs_monomer
+from pyticc.fine_structure import (
+    FSConstants,
+    FSConstantsTable,
+    FSDiatomDiatomBasis,
+    FSDiatomDiatomChannel,
+    FSMonomerBasis,
+    build_fs_channels,
+    build_fs_diatom_diatom_channels,
+    load_fs_constants_csv,
+    prepare_fs_monomer,
+)
 from pyticc.input import run
 from pyticc.pes import (
     DiabaticPESWrapper,
     LambdaPES,
+    OrbitalState,
     PESWrapper,
+    SpinResolvedDiatomDiatomPES,
     TotalPES,
     as_lambda_pes,
+    as_spin_resolved_diatom_diatom_pes,
+    atom_triatom_cartesian,
     load_fortran_diabatic_pes,
     load_fortran_lambda_pes,
     load_fortran_pes,
     load_fortran_total_pes,
+    radau_triatom_cartesian,
 )
 from pyticc.propagation import Propagation
 from pyticc.result import CoupledStatesResult, ReactiveScatteringResult, ScatteringResult
-from pyticc.scattering import DelvesHamiltonian, ScattHamiltonian, build_fs_hamiltonian, solve
-from pyticc.system import Approx, ChannelSpec, ScattSystem, build_ScattSystem, element_mass_au, element_masses_au, reduced_mass
+from pyticc.scattering import DelvesHamiltonian, PotentialGrid, ScattHamiltonian, build_fs_hamiltonian, prepare_potential, solve
+from pyticc.system import Approx, ChannelSpec, ScatteringType, ScattSystem, build_ScattSystem, element_mass_au, element_masses_au, reduced_mass
 
 from . import report
 
@@ -76,18 +91,24 @@ __all__ = [
     "EnergyUnit",
     "FSConstants",
     "FSConstantsTable",
+    "FSDiatomDiatomBasis",
+    "FSDiatomDiatomChannel",
     "FSMonomerBasis",
     "GHZ2AU",
     "HZ2AU",
     "KHZ2AU",
     "PESWrapper",
     "LambdaPES",
+    "OrbitalState",
+    "SpinResolvedDiatomDiatomPES",
     "MHZ2AU",
     "Propagation",
+    "PotentialGrid",
     "ReactiveScatteringResult",
     "RovibBasis",
     "ScattHamiltonian",
     "ScattSystem",
+    "ScatteringType",
     "ScatteringResult",
     "ChannelSpec",
     "TriatomBasis",
@@ -96,10 +117,13 @@ __all__ = [
     "build_DiatomBasis",
     "build_DiatomElectricBasis",
     "build_fs_channels",
+    "build_fs_diatom_diatom_channels",
     "build_fs_hamiltonian",
     "prepare_Diatom",
     "prepare_DiabaticDiatom",
     "prepare_DiatomElectric",
+    "prepare_Triatom",
+    "prepare_potential",
     "prepare_fs_monomer",
     "prepare_Delves",
     "build_TriatomBasis",
@@ -113,9 +137,12 @@ __all__ = [
     "load_fortran_pes",
     "load_fortran_total_pes",
     "as_lambda_pes",
+    "as_spin_resolved_diatom_diatom_pes",
+    "atom_triatom_cartesian",
     "load_electric_response_csv",
     "load_fs_constants_csv",
     "reduced_mass",
+    "radau_triatom_cartesian",
     "report",
     "run",
     "solve",

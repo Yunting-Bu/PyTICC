@@ -74,6 +74,7 @@ class AtomDiatomVBasisElectricSF:
     B_sin: NDArray[np.float64]
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class AtomDiatomVBasisElectricSFDevice:
     """Device-resident electric-field SF contraction basis.
@@ -87,6 +88,7 @@ class AtomDiatomVBasisElectricSFDevice:
     B_sin: jax.Array
 
 
+# ----------------------------------------------------------------------------------------
 def build_AtomDiatomVBasisElectricSF(
     basis: ChannelBasisElectricSF,
     monomer_basis: DiatomElectricBasis,
@@ -265,6 +267,7 @@ def contract_electric_sf(
     return Vmat if batched else Vmat[0]
 
 
+# ----------------------------------------------------------------------------------------
 @jax.jit
 def _contract_electric_sf_device(B_cos: jax.Array, B_sin: jax.Array, potential: jax.Array) -> jax.Array:
     """Contract one electric-field SF interaction batch on a JAX device."""
@@ -273,6 +276,7 @@ def _contract_electric_sf_device(B_cos: jax.Array, B_sin: jax.Array, potential: 
     return 0.5 * (Vmat + jnp.swapaxes(Vmat, -2, -1))
 
 
+# ----------------------------------------------------------------------------------------
 def device_basis_electric_sf(V_basis: AtomDiatomVBasisElectricSF, device: JaxDevice) -> AtomDiatomVBasisElectricSFDevice:
     """Copy a reusable electric-field SF basis to one JAX device.
 
@@ -289,10 +293,11 @@ def device_basis_electric_sf(V_basis: AtomDiatomVBasisElectricSF, device: JaxDev
     )
 
 
+# ----------------------------------------------------------------------------------------
 def contract_electric_sf_device(
     V_basis: AtomDiatomVBasisElectricSF,
     basis_device: AtomDiatomVBasisElectricSFDevice,
-    potential: NDArray[np.float64],
+    potential: NDArray[np.float64] | jax.Array,
     device: JaxDevice,
     channel_indices: Sequence[int] | None = None,
 ) -> jax.Array:
@@ -305,14 +310,15 @@ def contract_electric_sf_device(
     Inputs:
         V_basis: AtomDiatomVBasisElectricSF - host basis metadata
         basis_device: AtomDiatomVBasisElectricSFDevice - device basis arrays
-        potential: NDArray[np.float64] - scalar or radial-batched PES grid
+        potential: NDArray[np.float64] | jax.Array - scalar or radial-batched
+            PES grid on the host or contraction device
         device: JaxDevice - contraction device
         channel_indices: Sequence[int] | None - optional complete-basis positions
 
     Returns:
         Vmat: jax.Array - symmetric device matrices, optionally preceded by R
     """
-    values = np.asarray(potential, dtype=np.float64)
+    values = potential if isinstance(potential, jax.Array) else np.asarray(potential, dtype=np.float64)
     n_grid = prod(V_basis.grid_shape)
     if values.shape == V_basis.grid_shape:
         batches = values.reshape(1, n_grid)

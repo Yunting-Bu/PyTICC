@@ -3,7 +3,6 @@ from typing import cast
 
 from loguru import logger
 
-import pyticc.scattering.energy_transfer.atom_diatom as geometry
 from pyticc.basis.monomer import AtomSpec, prepare_DiatomElectric
 from pyticc.constants import CM2AU
 from pyticc.input.common import (
@@ -13,6 +12,7 @@ from pyticc.input.common import (
     diatom_symbols,
     energies,
     k_cut,
+    potential_grid_settings,
     propagation,
     required,
     resolve_path,
@@ -20,8 +20,9 @@ from pyticc.input.common import (
 )
 from pyticc.pes.adiabatic import PESWrapper
 from pyticc.result import CoupledStatesResult, ScatteringResult
+from pyticc.scattering.potential import prepare_potential
 from pyticc.scattering.solver import solve
-from pyticc.system import Approx, ChannelSpec, build_ScattSystem, element_masses_au, reduced_mass
+from pyticc.system import Approx, ChannelSpec, ScatteringType, build_ScattSystem, element_masses_au, reduced_mass
 
 # ----------------------------------------------------------------------------------------
 
@@ -99,20 +100,25 @@ def run_electric(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringRe
     system = build_ScattSystem(
         AtomSpec(),
         electric_diatom,
+        scattering_type=ScatteringType.ATOM_DIATOM_ELECTRIC,
         M=M,
         lmax=lmax,
         channel=ChannelSpec(E_Y_cut=float(required(channels, "E_Y_cut_cm")) * CM2AU),
         potential=pes,
         reduced_mass=reduced_mass(atom_mass, diatom_mass),
     )
-    hamiltonian = geometry.build_hamiltonian_electric_sf(
+    boundaries, half_steps, processes = potential_grid_settings(config)
+    potential_grid = prepare_potential(
         system,
+        boundaries,
+        half_steps,
         n_theta_r=int(required(quadrature, "n_theta_r")),
         n_theta_R=int(required(quadrature, "n_theta_R")),
         n_delta=int(required(quadrature, "n_delta")),
         delta_symmetry=cast(bool, quadrature.get("delta_symmetry", True)),
+        processes=processes,
     )
-    result = solve(hamiltonian, energies(required(config, "energies_cm"), base), propagation(config))
+    result = solve(system, energies(required(config, "energies_cm"), base), potential_grid, propagation(config))
     if not isinstance(result, ScatteringResult):
         message = "Electric atom-diatom solver returned a coupled-states result"
         logger.error(message)
@@ -138,6 +144,7 @@ def run(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | Co
     system = build_ScattSystem(
         AtomSpec(),
         diatom,
+        scattering_type=ScatteringType.ATOM_DIATOM,
         Jtot=int(required(config, "Jtot")),
         system_parity=int(required(config, "system_parity")),
         approx=approx,
@@ -151,11 +158,15 @@ def run(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | Co
         potential=pes,
         reduced_mass=reduced_mass(atom_mass, diatom_mass),
     )
-    hamiltonian = geometry.build_hamiltonian(
+    boundaries, half_steps, processes = potential_grid_settings(config)
+    potential_grid = prepare_potential(
         system,
+        boundaries,
+        half_steps,
         n_theta=int(required(quadrature, "n_theta")),
+        processes=processes,
     )
-    return solve(hamiltonian, energies(required(config, "energies_cm"), base), propagation(config))
+    return solve(system, energies(required(config, "energies_cm"), base), potential_grid, propagation(config))
 
 
 # ----------------------------------------------------------------------------------------

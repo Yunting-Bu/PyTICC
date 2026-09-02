@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 DiabaticMonomerPES = Callable[[NDArray[np.float64]], NDArray[np.float64]]
 DiabaticInteractionPES = Callable[[float, NDArray[np.float64]], NDArray[np.float64]]
 DiabaticInteractionManyPES = Callable[[NDArray[np.float64], NDArray[np.float64]], NDArray[np.float64]]
+DiabaticInteractionManyProcessesPES = Callable[[NDArray[np.float64], NDArray[np.float64], int], NDArray[np.float64]]
 MonomerStatePES = Callable[[NDArray[np.float64]], NDArray[np.float64]]
 RadialInput: TypeAlias = float | Sequence[float] | NDArray[np.float64]
 
@@ -31,6 +32,7 @@ class DiabaticPESWrapper:
     monomer: DiabaticMonomerPES
     interaction: DiabaticInteractionPES
     interaction_many: DiabaticInteractionManyPES | None = None
+    _interaction_many_processes: DiabaticInteractionManyProcessesPES | None = field(default=None, repr=False, compare=False)
     _close: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -74,6 +76,7 @@ class DiabaticPESWrapper:
 # ----------------------------------------------------------------------------------------
 
 
+# ----------------------------------------------------------------------------------------
 def _as_real_array(values: object, name: str) -> NDArray[np.float64]:
     array = np.asarray(values)
     if np.iscomplexobj(array):
@@ -83,6 +86,7 @@ def _as_real_array(values: object, name: str) -> NDArray[np.float64]:
     return np.asarray(array, dtype=np.float64)
 
 
+# ----------------------------------------------------------------------------------------
 def _validate_values(values: NDArray[np.float64], expected_shape: tuple[int, ...], name: str) -> None:
     if values.shape != expected_shape:
         message = f"{name} returned shape {values.shape}, but expected {expected_shape}"
@@ -94,6 +98,7 @@ def _validate_values(values: NDArray[np.float64], expected_shape: tuple[int, ...
         raise ValueError(message)
 
 
+# ----------------------------------------------------------------------------------------
 def _validate_diabatic_matrix(values: NDArray[np.float64], expected_shape: tuple[int, ...]) -> None:
     _validate_values(values, expected_shape, "Diabatic interaction PES")
     if not np.allclose(values, np.swapaxes(values, -2, -1), rtol=1.0e-12, atol=1.0e-12):
@@ -108,8 +113,14 @@ def _evaluate_diabatic_matrix(
     R: RadialInput,
     coordinates: NDArray[np.float64],
     grid_shape: tuple[int, ...],
+    *,
+    processes: int,
 ) -> NDArray[np.float64]:
     """Dispatch scalar or batched radial diabatic-matrix evaluation and restore tensor-grid axes."""
+    if not isinstance(processes, int) or isinstance(processes, bool) or processes < 1:
+        message = f"processes must be a positive integer, but got {processes!r}"
+        logger.error(message)
+        raise ValueError(message)
     radial_points = np.asarray(R, dtype=np.float64)
     matrix_shape = (pes.n_state, pes.n_state)
     if radial_points.ndim == 0:
@@ -119,6 +130,11 @@ def _evaluate_diabatic_matrix(
     elif radial_points.ndim == 1:
         if radial_points.size == 0:
             values = np.empty((0, coordinates.shape[1], *matrix_shape), dtype=np.float64)
+        elif pes._interaction_many_processes is not None:
+            values = _as_real_array(
+                pes._interaction_many_processes(radial_points, coordinates, processes),
+                "Diabatic interaction PES",
+            )
         elif pes.interaction_many is None:
             values = np.stack([pes.interaction(float(RR), coordinates) for RR in radial_points])
             values = _as_real_array(values, "Diabatic interaction PES")
@@ -141,6 +157,8 @@ def get_diabatic_potential_grid_atom_diatom(
     R: RadialInput,
     r: NDArray[np.float64],
     theta: NDArray[np.float64],
+    *,
+    processes: int = 1,
 ) -> NDArray[np.float64]:
     """
     Evaluate an atom-diatom diabatic interaction matrix on a tensor-product Jacobi grid.
@@ -150,6 +168,7 @@ def get_diabatic_potential_grid_atom_diatom(
         R: RadialInput - scalar separation or one-dimensional radial batch in bohr
         r: NDArray[np.float64] - diatomic bond-length grid in bohr, shape ``(n_r,)``
         theta: NDArray[np.float64] - Jacobi-angle grid in radians, shape ``(n_theta,)``
+        processes: int - temporary Fortran worker processes for a radial batch
 
     Returns:
         potential: NDArray[np.float64] - shape ``(n_r, n_theta, n_state, n_state)``
@@ -164,7 +183,7 @@ def get_diabatic_potential_grid_atom_diatom(
 
     grids = np.meshgrid(r_values, theta_values, indexing="ij")
     coordinates = np.asfortranarray(np.stack(tuple(grid.reshape(-1) for grid in grids)))
-    return _evaluate_diabatic_matrix(pes, R, coordinates, grids[0].shape)
+    return _evaluate_diabatic_matrix(pes, R, coordinates, grids[0].shape, processes=processes)
 
 
 # ----------------------------------------------------------------------------------------

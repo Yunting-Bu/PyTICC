@@ -13,6 +13,7 @@ from pyticc.electric import ElectricResponseTable, electric_coefficients, load_e
 from pyticc.electric.hamiltonian import solve_diatom_electric_block
 
 
+# ----------------------------------------------------------------------------------------
 def _readonly_array(values: ArrayLike, dtype: np.dtype | type = np.float64) -> NDArray:
     array = np.array(values, dtype=dtype, copy=True)
     array.setflags(write=False)

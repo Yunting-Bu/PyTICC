@@ -6,7 +6,8 @@ from numpy.typing import ArrayLike, NDArray
 
 from pyticc.basis.channel import ChannelBasis
 from pyticc.fine_structure.channel import FSChannelBasis
-from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_FS_BF
+from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
+from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_FS_BF, get_Umat_FS_DiatomDiatom_BF
 
 
 # ----------------------------------------------------------------------------------------
@@ -107,6 +108,7 @@ def transform_logD_BF_to_SF(Ymat: ArrayLike, Bmat: ArrayLike) -> NDArray[np.floa
     return np.einsum("ia,...ij,jb->...ab", Bmat_array, Ymat_array, Bmat_array, optimize=True)
 
 
+# ----------------------------------------------------------------------------------------
 def get_Bmat_FS_BF_to_SF(
     basis: FSChannelBasis,
     channel_indices: Sequence[int] | None = None,
@@ -146,6 +148,74 @@ def get_Bmat_FS_BF_to_SF(
         eigenvectors *= signs
         Bmat[np.ix_(positions, positions)] = eigenvectors
         L[positions] = np.sqrt(np.maximum(eigenvalues, 0.0) + 0.25) - 0.5
+    return Bmat, L
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def get_Bmat_FS_DiatomDiatom_BF_to_SF(
+    basis: FSDiatomDiatomBasis,
+    channel_indices: Sequence[int] | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    r"""
+    Transform two-fine-structure-diatom BF channels to asymptotic orbital L.
+
+    Formula:
+        For every fixed internal ladder
+
+        q = (block_X,tau_X,block_Y,tau_Y,j_12),
+
+        independently diagonalize the dimensionless end-over-end operator,
+
+        B_q.T U_q B_q = diag[L(L+1)],
+        L = sqrt(lambda+1/4)-1/2.
+
+        Here ``U_q`` contains the parity-adapted integer- or half-integer K
+        ladder returned by ``get_Umat_FS_DiatomDiatom_BF``. The monomer
+        eigenstates are orthonormal, and B is real orthogonal. Each eigenvector
+        phase is fixed by making its last K component nonnegative. Row order is
+        BF channel order; column order is increasing centrifugal eigenvalue
+        within each internal ladder.
+
+    Inputs:
+        basis: FSDiatomDiatomBasis - complete fine-structure BF channels
+        channel_indices: Sequence[int] | None - selected complete-basis positions
+
+    Returns:
+        Bmat: NDArray[np.float64] - BF-to-SF orthogonal transformation,
+            shape ``(n_selected,n_selected)``
+        L: NDArray[np.float64] - asymptotic end-over-end angular momenta,
+            shape ``(n_selected,)``
+    """
+    indices = tuple(range(basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    if not indices:
+        message = "At least one two-diatom fine-structure channel is required"
+        logger.error(message)
+        raise ValueError(message)
+
+    channels = tuple(basis[index] for index in indices)
+    Umat = get_Umat_FS_DiatomDiatom_BF(basis, indices)
+    Bmat = np.zeros((len(indices), len(indices)), dtype=np.float64)
+    L = np.empty(len(indices), dtype=np.float64)
+    groups: dict[tuple[int, int, int, int, int], list[int]] = {}
+    for local_index, channel in enumerate(channels):
+        key = (channel.block_X, channel.tau_X, channel.block_Y, channel.tau_Y, channel.two_j12)
+        groups.setdefault(key, []).append(local_index)
+
+    for positions_list in groups.values():
+        positions = np.asarray(positions_list, dtype=np.int64)
+        eigenvalues, eigenvectors = np.linalg.eigh(Umat[np.ix_(positions, positions)])
+        if np.min(eigenvalues) < -1.0e-10:
+            message = f"Two-diatom centrifugal matrix has a negative eigenvalue {np.min(eigenvalues)}"
+            logger.error(message)
+            raise ValueError(message)
+        signs = np.where(eigenvectors[-1] < 0.0, -1.0, 1.0)
+        eigenvectors *= signs
+        Bmat[np.ix_(positions, positions)] = eigenvectors
+        L[positions] = np.sqrt(np.maximum(eigenvalues, 0.0) + 0.25) - 0.5
+
     return Bmat, L
 
 

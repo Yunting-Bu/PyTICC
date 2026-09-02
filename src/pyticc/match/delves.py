@@ -193,3 +193,6 @@ def transform_logD_to_delves_channels(
     transform = surface.T @ primitive_overlap @ channels.theta_coefficients
     result = np.einsum("pi,...pq,qj->...ij", transform, Y, transform, optimize=True)
     return np.asarray(result)
+
+
+# ----------------------------------------------------------------------------------------

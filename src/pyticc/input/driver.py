@@ -12,10 +12,11 @@ from pyticc.pes.adiabatic import PESWrapper
 from pyticc.pes.diabatic import DiabaticPESWrapper
 from pyticc.pes.fortran import load_fortran_diabatic_pes, load_fortran_pes
 from pyticc.result import CoupledStatesResult, ScatteringResult, Timing
+from pyticc.system import ScatteringType
 
 
 # ----------------------------------------------------------------------------------------
-def _load_pes(config: TomlTable, base: Path, calculation_type: str) -> PESWrapper | DiabaticPESWrapper:
+def _load_pes(config: TomlTable, base: Path, scattering_type: ScatteringType) -> PESWrapper | DiabaticPESWrapper:
     """Build a Fortran PES wrapper from the input file's PES table."""
     values = section(config, "pes")
     pes_dir = resolve_path(base, values.get("path", "."))
@@ -25,18 +26,16 @@ def _load_pes(config: TomlTable, base: Path, calculation_type: str) -> PESWrappe
     source_paths = [resolve_path(pes_dir, source) for source in sources]
     wrapper = resolve_path(pes_dir, values.get("wrapper", "pyticc_wrapper.f90"))
     workdir = resolve_path(pes_dir, values.get("workdir", "."))
-    processes = int(values.get("processes", 1))
     lapack = values.get("lapack", False)
-    if calculation_type == "diabatic-atom-diatom":
+    if scattering_type is ScatteringType.ATOM_DIATOM_DIABATIC:
         return load_fortran_diabatic_pes(
             source_paths,
             wrapper,
             n_state=int(values.get("n_state", 2)),
             workdir=workdir,
-            processes=processes,
             lapack=lapack,
         )
-    return load_fortran_pes(source_paths, wrapper, workdir=workdir, processes=processes, lapack=lapack)
+    return load_fortran_pes(source_paths, wrapper, workdir=workdir, lapack=lapack)
 
 
 # ----------------------------------------------------------------------------------------
@@ -56,29 +55,37 @@ def run(source: str | Path, *, pes: PESWrapper | DiabaticPESWrapper | None = Non
         logger.error(message)
         raise ValueError(message) from error
 
-    calculation_type = str(required(config, "type"))
-    potential = _load_pes(config, input_path.parent, calculation_type) if pes is None else pes
-    if calculation_type == "atom-diatom" and isinstance(potential, PESWrapper):
+    type_value = str(required(config, "type"))
+    try:
+        scattering_type = ScatteringType(type_value)
+    except ValueError as error:
+        supported = ", ".join(
+            value.value
+            for value in (
+                ScatteringType.ATOM_DIATOM,
+                ScatteringType.ATOM_DIATOM_ELECTRIC,
+                ScatteringType.ATOM_DIATOM_DIABATIC,
+                ScatteringType.DIATOM_DIATOM,
+            )
+        )
+        message = f"Unsupported TOML type {type_value!r}; supported: {supported}"
+        logger.error(message)
+        raise ValueError(message) from error
+
+    potential = _load_pes(config, input_path.parent, scattering_type) if pes is None else pes
+    if scattering_type is ScatteringType.ATOM_DIATOM and isinstance(potential, PESWrapper):
         result = atom_diatom.run(config, input_path.parent, potential)
-    elif calculation_type == "electric-atom-diatom" and isinstance(potential, PESWrapper):
+    elif scattering_type is ScatteringType.ATOM_DIATOM_ELECTRIC and isinstance(potential, PESWrapper):
         result = atom_diatom.run_electric(config, input_path.parent, potential)
-    elif calculation_type == "diatom-diatom" and isinstance(potential, PESWrapper):
+    elif scattering_type is ScatteringType.DIATOM_DIATOM and isinstance(potential, PESWrapper):
         result = diatom_diatom.run(config, input_path.parent, potential)
-    elif calculation_type == "diabatic-atom-diatom" and isinstance(potential, DiabaticPESWrapper):
+    elif scattering_type is ScatteringType.ATOM_DIATOM_DIABATIC and isinstance(potential, DiabaticPESWrapper):
         result = diabatic.run(config, input_path.parent, potential)
     else:
-        expected = DiabaticPESWrapper if calculation_type == "diabatic-atom-diatom" else PESWrapper
-        if calculation_type in {"atom-diatom", "electric-atom-diatom", "diatom-diatom", "diabatic-atom-diatom"}:
-            message = f"Calculation type {calculation_type!r} requires {expected.__name__}"
-            logger.error(message)
-            raise TypeError(message)
-
-        message = (
-            f"Unsupported calculation type {calculation_type!r}; supported: "
-            "'atom-diatom', 'electric-atom-diatom', 'diabatic-atom-diatom', 'diatom-diatom'"
-        )
+        expected = DiabaticPESWrapper if scattering_type is ScatteringType.ATOM_DIATOM_DIABATIC else PESWrapper
+        message = f"Calculation type {scattering_type.value!r} requires {expected.__name__}"
         logger.error(message)
-        raise ValueError(message)
+        raise TypeError(message)
 
     total_timing = Timing(wall_seconds=perf_counter() - wall_start, cpu_seconds=process_time() - cpu_start)
     logger.info(f"Calculation complete: total {total_timing}")

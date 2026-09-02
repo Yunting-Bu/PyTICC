@@ -6,18 +6,21 @@ from numpy.typing import NDArray
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF, OpenClosedChannels
 from pyticc.basis.kblock import KBlock
 from pyticc.fine_structure.channel import FSChannelBasis
+from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.match.delves import DelvesAsymptoticBasis
 from pyticc.system import Approx
 
 LogDArray = NDArray[np.float64] | NDArray[np.complex128]
-ScatteringBasis = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis
+ScatteringBasis = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis
 
 
+# ----------------------------------------------------------------------------------------
 def _transform_logD(Ymat: LogDArray, transform: NDArray[np.float64]) -> LogDArray:
     """Transform a log-derivative batch without retaining a second matrix copy."""
     return np.einsum("ia,...ij,jb->...ab", transform, Ymat, transform, optimize=True)
 
 
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True, slots=True)
 class Timing:
     """Elapsed solver wall-clock and process CPU times in seconds."""

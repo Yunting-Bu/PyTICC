@@ -10,7 +10,7 @@ from pyticc.basis.rovib import RovibBasis
 
 
 # Primitive sine DVR
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def sine_dvr_grids(a: float, b: float, n: int) -> tuple[NDArray[np.float64], float]:
     r"""
     Get sine dvr grids in the interval [a, b] with n points.
@@ -39,10 +39,10 @@ def sine_dvr_grids(a: float, b: float, n: int) -> tuple[NDArray[np.float64], flo
     return x, w
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def sine_dvr_to_fbr(n: int) -> NDArray[np.float64]:
     r"""
     Get dvr to fbr transformation matrix.
@@ -62,10 +62,10 @@ def sine_dvr_to_fbr(n: int) -> NDArray[np.float64]:
     return B
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def sine_dvr_kinetic(a: float, b: float, n: int, mass: float) -> NDArray[np.float64]:
     r"""
     Get sine dvr kinetic energy matrix.
@@ -114,10 +114,10 @@ def sine_dvr_kinetic(a: float, b: float, n: int, mass: float) -> NDArray[np.floa
     return T
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def phase_fix(A: NDArray[np.float64]) -> NDArray[np.float64]:
     """
     Flip the overall sign so the first significant element is positive.
@@ -155,10 +155,10 @@ def phase_fix(A: NDArray[np.float64]) -> NDArray[np.float64]:
     return res
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def sine_dvr_vib(T: NDArray[np.float64], V: NDArray[np.float64], n: int) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     r"""
     Get the eigenvalues and eigenvectors of the vibrational Hamiltonian in sine DVR.
@@ -186,10 +186,10 @@ def sine_dvr_vib(T: NDArray[np.float64], V: NDArray[np.float64], n: int) -> tupl
     return eigen_val, eigen_vec
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SineDVR:
     """
@@ -216,10 +216,10 @@ class SineDVR:
     eigen_vec: NDArray[np.float64]
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def build_RovibDVR(dvr: SineDVR, vmax: int, jmax: int, mass: float) -> RovibBasis:
     """
     Build full primitive-DVR rovibrational states from a vibrational SineDVR.
@@ -264,10 +264,10 @@ def build_RovibDVR(dvr: SineDVR, vmax: int, jmax: int, mass: float) -> RovibBasi
     return RovibBasis(grids=dvr.grids, E_vj=energies, WF_vj=wavefunctions)
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 
 
-# --------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
 def build_SineDVR(a: float, b: float, n_dvr: int, mass: float, pot_func: Callable[[NDArray[np.float64]], NDArray[np.float64]]) -> SineDVR:
     """
     Build a SineDVR object with the given parameters.
@@ -301,3 +301,6 @@ def build_SineDVR(a: float, b: float, n_dvr: int, mass: float, pot_func: Callabl
     eigen_val, eigen_vec = sine_dvr_vib(T_mat, pot, n_dvr)
 
     return SineDVR(n_dvr=n_dvr, interval=(a, b), grids=grids, weights=weights, dvr_to_fbr=dvr_to_fbr, eigen_val=eigen_val, eigen_vec=eigen_vec)
+
+
+# ----------------------------------------------------------------------------------------

@@ -3,7 +3,6 @@ from pathlib import Path
 import numpy as np
 
 import pyticc as ticc
-from pyticc.scattering import diabatic_atom_diatom
 
 
 def main() -> None:
@@ -12,7 +11,6 @@ def main() -> None:
         [pes_dir / "ho2-dpme.f", pes_dir / "long_range_H_O2.f"],
         pes_dir / "pyticc_wrapper.f90",
         workdir=pes_dir,
-        processes=4,
         lapack=True,
     )
 
@@ -37,6 +35,7 @@ def main() -> None:
         system = ticc.build_ScattSystem(
             ticc.AtomSpec(),
             diatom_O2,
+            scattering_type="A+BC_diabatic",
             Jtot=0,
             system_parity=1,
             channel=ticc.ChannelSpec(
@@ -46,16 +45,18 @@ def main() -> None:
             potential=pes,
             reduced_mass=reduced_mass_HO2,
         )
-        hamiltonian = diabatic_atom_diatom.build_hamiltonian(
+        potential_grid = ticc.prepare_potential(
             system,
+            (0.8, 2.5, 6.0, 30.0),
+            (0.002, 0.005, 0.3),
             n_theta=30,
+            processes=4,
         )
         result = ticc.solve(
-            hamiltonian,
+            system,
             total_energies,
+            potential_grid,
             ticc.Propagation(
-                boundaries=(0.8, 2.5, 6.0, 30.0),
-                half_steps=(0.002, 0.005, 0.3),
                 memory_mb=4096.0,
                 device="auto",
             ),

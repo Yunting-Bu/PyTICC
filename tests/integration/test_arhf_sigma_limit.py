@@ -7,6 +7,7 @@ import pyticc as ticc
 import pyticc.pes.fortran.compiler as compiler_module
 from pyticc.basis.podvr import VibPODVR
 from pyticc.fine_structure import FSConstants, build_fs_monomer_basis
+from pyticc.propagation.grid import build_radial_sectors
 from pyticc.scattering import atom_diatom
 
 
@@ -34,6 +35,7 @@ def test_ArHF_singlet_sigma_path_matches_scalar_ticc(tmp_path: Path, monkeypatch
     scalar_system = ticc.build_ScattSystem(
         monomer_X=monomer_X,
         monomer_Y=scalar_diatom,
+        scattering_type="A+BC",
         Jtot=0,
         system_parity=1,
         reduced_mass=collision_mass,
@@ -48,6 +50,7 @@ def test_ArHF_singlet_sigma_path_matches_scalar_ticc(tmp_path: Path, monkeypatch
     fs_system = ticc.build_ScattSystem(
         monomer_X,
         fs_monomer,
+        scattering_type="A+BC_fine_structure",
         two_J=0,
         system_parity=1,
         reduced_mass=collision_mass,
@@ -61,9 +64,10 @@ def test_ArHF_singlet_sigma_path_matches_scalar_ticc(tmp_path: Path, monkeypatch
     np.testing.assert_allclose(fs_hamiltonian.H(6.0), scalar_hamiltonian.H(6.0), atol=2.0e-15, rtol=2.0e-13)
 
     energy = float(max(scalar_hamiltonian.E_int) + 0.02)
-    propagation = ticc.Propagation((5.0, 5.2), (0.1,))
-    scalar_result = ticc.solve(scalar_hamiltonian, [energy], propagation)
-    fs_result = ticc.solve(fs_hamiltonian, [energy], propagation)
+    radial_sectors = build_radial_sectors((5.0, 5.2), (0.1,))
+    propagation = ticc.Propagation()
+    scalar_result = ticc.solve(scalar_hamiltonian, [energy], radial_sectors, propagation)
+    fs_result = ticc.solve(fs_hamiltonian, [energy], radial_sectors, propagation)
     assert isinstance(scalar_result, ticc.ScatteringResult)
     assert isinstance(fs_result, ticc.ScatteringResult)
     np.testing.assert_allclose(fs_result.Y_propagated, scalar_result.Y_propagated, atol=2.0e-13, rtol=2.0e-12)

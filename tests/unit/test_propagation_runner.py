@@ -8,7 +8,7 @@ import pyticc as ticc
 from pyticc.basis.channel import ChannelBasis, build_ChannelBasis
 from pyticc.basis.monomer import DiatomSpec
 from pyticc.propagation.device import resolve_device
-from pyticc.propagation.grid import RadialSector
+from pyticc.propagation.grid import RadialSector, build_radial_sectors
 from pyticc.propagation.runner import _evaluate_interaction_windows, propagate, propagate_blocks
 
 
@@ -23,6 +23,10 @@ def _hamiltonian(Vmat) -> ticc.ScattHamiltonian:
     return ticc.ScattHamiltonian(basis=_basis(), reduced_mass=2.0, interaction=Vmat)
 
 
+def _sectors(radial_end: float = 3.4) -> tuple[RadialSector, ...]:
+    return build_radial_sectors((3.0, radial_end), (0.1,))
+
+
 def test_propagate_builds_radial_matrices_on_the_requested_device() -> None:
     basis = _basis()
     evaluated_R: list[np.ndarray] = []
@@ -35,7 +39,8 @@ def test_propagate_builds_radial_matrices_on_the_requested_device() -> None:
     result = propagate(
         _hamiltonian(Vmat),
         [0.1, 0.3],
-        ticc.Propagation((3.0, 3.4), (0.1,), device="cpu"),
+        _sectors(),
+        ticc.Propagation(device="cpu"),
     )
 
     assert result.shape == (2, basis.n_channel, basis.n_channel)
@@ -51,7 +56,8 @@ def test_propagate_reads_energies_from_file_and_supports_capture(tmp_path: Path)
     result = propagate(
         _hamiltonian(lambda RR: np.zeros((np.atleast_1d(RR).size, basis.n_channel, basis.n_channel))),
         energy_file,
-        ticc.Propagation((3.0, 3.2), (0.1,), mode="capture"),
+        _sectors(3.2),
+        ticc.Propagation(mode="capture"),
     )
 
     assert result.shape == (2, basis.n_channel, basis.n_channel)
@@ -68,7 +74,7 @@ def test_propagate_batches_distinct_radial_points() -> None:
         evaluated_R.append(radial_points)
         return np.zeros((radial_points.size, basis.n_channel, basis.n_channel))
 
-    result = propagate(_hamiltonian(Vmat), [0.3], ticc.Propagation((3.0, 3.4), (0.1,)))
+    result = propagate(_hamiltonian(Vmat), [0.3], _sectors(), ticc.Propagation())
 
     assert result.shape == (1, basis.n_channel, basis.n_channel)
     assert len(evaluated_R) == 1
@@ -87,12 +93,14 @@ def test_propagate_streams_small_windows_without_repeating_endpoints() -> None:
     streamed = propagate(
         _hamiltonian(Vmat),
         [0.3],
-        ticc.Propagation((3.0, 3.4), (0.1,), memory_mb=1.0e-6),
+        _sectors(),
+        ticc.Propagation(memory_mb=1.0e-6),
     )
     full = propagate(
         _hamiltonian(lambda RR: np.zeros((np.atleast_1d(RR).size, basis.n_channel, basis.n_channel))),
         [0.3],
-        ticc.Propagation((3.0, 3.4), (0.1,)),
+        _sectors(),
+        ticc.Propagation(),
     )
 
     assert len(evaluated_R) == 2
@@ -144,7 +152,7 @@ def test_propagate_blocks_selects_one_nncc_block() -> None:
     indices = (1,)
 
     hamiltonian = _hamiltonian(lambda RR: np.zeros((np.atleast_1d(RR).size, basis.n_channel, basis.n_channel)))
-    result = propagate_blocks(hamiltonian, (indices,), [0.3], ticc.Propagation((3.0, 3.2), (0.1,)))[0]
+    result = propagate_blocks(hamiltonian, (indices,), [0.3], _sectors(3.2), ticc.Propagation())[0]
 
     assert result.shape == (1, 1, 1)
 
@@ -157,7 +165,8 @@ def test_propagate_logs_completed_sector_count_radius_and_wall_time() -> None:
         propagate(
             _hamiltonian(lambda RR: np.zeros((np.atleast_1d(RR).size, basis.n_channel, basis.n_channel))),
             [0.3],
-            ticc.Propagation((3.0, 3.4), (0.1,), print_verbose=True),
+            _sectors(),
+            ticc.Propagation(print_verbose=True),
         )
     finally:
         logger.remove(sink)

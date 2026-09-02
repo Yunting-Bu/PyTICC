@@ -18,6 +18,7 @@ from pyticc.matrix.delves.overlap import get_sector_transform_delves
 from pyticc.matrix.delves.surface import get_surface_matrices_delves, solve_surface_delves
 from pyticc.pes import load_fortran_total_pes
 from pyticc.propagation import Propagation, propagate_delves
+from pyticc.propagation.grid import build_radial_sectors
 from pyticc.result import ReactiveScatteringResult
 from pyticc.scattering.reactive.delves import DelvesHamiltonian, build_hamiltonian
 from pyticc.scattering.solver import solve
@@ -406,6 +407,7 @@ def test_h3_bkmp2_pyticc_reference_chain_reproduces_abc_logD_and_Smat(tmp_path: 
     )
     system = build_ScattSystem(
         monomer,
+        scattering_type="A+BC_Delves",
         Jtot=basis.Jtot,
         system_parity=basis.system_parity,
         jmax=basis.jmax,
@@ -416,10 +418,12 @@ def test_h3_bkmp2_pyticc_reference_chain_reproduces_abc_logD_and_Smat(tmp_path: 
     prepared_basis = system.basis
     hamiltonian = build_hamiltonian(system)
     sector_width = (12.0 - prepared_basis.rho_min) / 120
+    radial_sectors = build_radial_sectors((prepared_basis.rho_min, 12.0), (0.5 * sector_width,))
     result = solve(
         hamiltonian,
         [total_energy],
-        Propagation((prepared_basis.rho_min, 12.0), (0.5 * sector_width,), device="cpu"),
+        radial_sectors,
+        Propagation(device="cpu"),
     )
 
     np.testing.assert_allclose(pyticc_logD, abc_logD, rtol=2.0e-9, atol=2.0e-9)
@@ -438,11 +442,8 @@ def test_h3_bkmp2_prepared_channel_propagation_produces_unitary_Smat(tmp_path: P
     basis, total_energy = _h3_abc_basis(pes)
     abc_sector_width = (12.0 - basis.rho_min) / 120
 
-    result = propagate_delves(
-        DelvesHamiltonian(basis, pes),
-        [total_energy],
-        Propagation((basis.rho_min, 12.0), (0.5 * abc_sector_width,), device="cpu"),
-    )
+    radial_sectors = build_radial_sectors((basis.rho_min, 12.0), (0.5 * abc_sector_width,))
+    result = propagate_delves(DelvesHamiltonian(basis, pes), [total_energy], radial_sectors, Propagation(device="cpu"))
     channels, (Smat,) = match_delves(result, [total_energy], basis, pes)
 
     assert channels.qns == ((1, 0, 0, 0), (2, 0, 0, 0))
@@ -462,11 +463,12 @@ def test_h3_bkmp2_common_solve_flow_reproduces_direct_delves_result(tmp_path: Pa
     basis, total_energy = _h3_abc_basis(pes)
     abc_sector_width = (12.0 - basis.rho_min) / 120
     hamiltonian = DelvesHamiltonian(basis, pes)
-    propagation = Propagation((basis.rho_min, 12.0), (0.5 * abc_sector_width,), device="cpu")
+    radial_sectors = build_radial_sectors((basis.rho_min, 12.0), (0.5 * abc_sector_width,))
+    propagation = Propagation(device="cpu")
 
-    direct = propagate_delves(hamiltonian, [total_energy], propagation)
+    direct = propagate_delves(hamiltonian, [total_energy], radial_sectors, propagation)
     _, direct_Smat = match_delves(direct, [total_energy], basis, pes)
-    result = ticc.solve(hamiltonian, [total_energy], propagation)
+    result = ticc.solve(hamiltonian, [total_energy], radial_sectors, propagation)
 
     assert isinstance(result, ReactiveScatteringResult)
     np.testing.assert_allclose(result.Y_propagated, direct.Y_final, rtol=0.0, atol=0.0)

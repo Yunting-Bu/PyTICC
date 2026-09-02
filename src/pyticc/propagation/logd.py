@@ -12,6 +12,7 @@ jax.config.update("jax_enable_x64", True)
 LogDInput = jax.Array | NDArray[np.float64] | NDArray[np.complex128]
 
 
+# ----------------------------------------------------------------------------------------
 def _device_array(value: LogDInput | float, device: JaxDevice | None, dtype: DTypeLike | None = None) -> jax.Array:
     """Place one input directly on the requested device and optionally cast it there."""
     array = jax.device_put(value, device)
@@ -60,7 +61,7 @@ def initialize_logD_inelastic(Wmat: LogDInput) -> jax.Array:
             (..., n_channel, n_channel) as Wmat
     """
     _validate_square("Wmat", Wmat)
-    diagonal = jnp.diagonal(jnp.asarray(Wmat, dtype=jnp.float64), axis1=-2, axis2=-1)
+    diagonal = jnp.real(jnp.diagonal(jnp.asarray(Wmat), axis1=-2, axis2=-1))
     return _diagonal_matrix(jnp.sqrt(jnp.abs(diagonal)))
 
 
@@ -85,7 +86,7 @@ def initialize_logD_capture(Wmat: LogDInput) -> jax.Array:
             (..., n_channel, n_channel) as Wmat
     """
     _validate_square("Wmat", Wmat)
-    diagonal = jnp.diagonal(jnp.asarray(Wmat, dtype=jnp.float64), axis1=-2, axis2=-1)
+    diagonal = jnp.real(jnp.diagonal(jnp.asarray(Wmat), axis1=-2, axis2=-1))
     values = jnp.where(diagonal >= 0.0, jnp.sqrt(jnp.maximum(diagonal, 0.0)), -1.0j * jnp.sqrt(jnp.maximum(-diagonal, 0.0)))
     return _diagonal_matrix(values.astype(jnp.complex128))
 
@@ -131,12 +132,14 @@ def _reference_values(radial_half_step: jax.Array, reference_values: jax.Array) 
     return y1_values, y2_values
 
 
+# ----------------------------------------------------------------------------------------
 def _add_diagonal(matrix: jax.Array, diagonal: jax.Array) -> jax.Array:
     """Add one vector to the trailing matrix diagonal without materializing a diagonal matrix."""
     indices = jnp.diag_indices(matrix.shape[-1])
     return matrix.at[..., indices[0], indices[1]].add(diagonal)
 
 
+# ----------------------------------------------------------------------------------------
 def _correction_matrices(
     radial_half_step: jax.Array,
     W_start: jax.Array,
@@ -161,6 +164,7 @@ def _correction_matrices(
     return reference_values, Q_start, Q_mid, Q_end
 
 
+# ----------------------------------------------------------------------------------------
 def _propagate_with_corrections(
     Ymat: jax.Array,
     radial_half_step: jax.Array,
@@ -382,14 +386,15 @@ def propagate_logD(
         logger.error(message)
         raise ValueError(message)
 
+    matrix_dtype = jnp.result_type(Y_initial, W_base_start, W_base_mid, W_base_end)
     return _propagate_logD_compiled(
-        _device_array(Y_initial, device),
+        _device_array(Y_initial, device, matrix_dtype),
         _device_array(total_energies, device, jnp.float64),
         _device_array(reduced_mass, device, jnp.float64),
         _device_array(radial_half_steps, device, jnp.float64),
-        _device_array(W_base_start, device, jnp.float64),
-        _device_array(W_base_mid, device, jnp.float64),
-        _device_array(W_base_end, device, jnp.float64),
+        _device_array(W_base_start, device),
+        _device_array(W_base_mid, device),
+        _device_array(W_base_end, device),
     )
 
 

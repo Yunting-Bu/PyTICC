@@ -208,10 +208,12 @@ def sine_basis(
 def theta_max(rho: float, scaled_r_max: float) -> float: ...
 
 
+# ----------------------------------------------------------------------------------------
 @overload
 def theta_max(rho: NDArray[Any], scaled_r_max: float) -> NDArray[np.float64]: ...
 
 
+# ----------------------------------------------------------------------------------------
 def theta_max(rho: float | ArrayLike, scaled_r_max: float) -> float | NDArray[np.float64]:
     r"""
     Return the arrangement-local Delves hyperangle boundary.
@@ -588,3 +590,6 @@ def _validate_delves_inputs(
         logger.error(message)
         raise ValueError(message)
     return masses
+
+
+# ----------------------------------------------------------------------------------------

@@ -45,6 +45,7 @@ def _run(
     system = ticc.build_ScattSystem(
         diatom_X,
         diatom_Y,
+        scattering_type="AB+CD",
         Jtot=Jtot,
         system_parity=1,
         approx=approx,
@@ -53,13 +54,15 @@ def _run(
         potential=pes,
         reduced_mass=2.0,
     )
-    hamiltonian = diatom_diatom.build_hamiltonian(
+    potential_grid = diatom_diatom.prepare_potential(
         system,
+        (3.0, 4.0, 5.0),
+        (0.25, 0.25),
         n_theta_X=4,
         n_theta_Y=4,
         n_phi=5,
     )
-    return ticc.solve(hamiltonian, [0.08], ticc.Propagation((3.0, 4.0, 5.0), (0.25, 0.25)))
+    return ticc.solve(system, [0.08], potential_grid, ticc.Propagation())
 
 
 def _assert_exact_matches_single_block(exact: ticc.ScatteringResult, approximate: ticc.CoupledStatesResult) -> None:

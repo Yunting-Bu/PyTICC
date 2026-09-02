@@ -1,4 +1,4 @@
-"""Atom-triatom interaction-matrix basis."""
+"""Atom-triatom interaction basis in the corrected Radau bisector-z frame."""
 
 from math import prod
 from typing import cast
@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 
 from pyticc.basis.angle import norm_reduced_wigner_d, norm_YjK
 from pyticc.basis.channel import ChannelBasis
-from pyticc.basis.triatom import TriatomBasis, get_triatom_expansion
+from pyticc.basis.triatom import TriatomBasis
 from pyticc.matrix.interaction import VBasisBF
 
 
@@ -37,7 +37,20 @@ def _triatom_grid_wavefunction(
         logger.error(message)
         raise ValueError(message)
 
-    qn, coefficients = get_triatom_expansion(triatom, j, K, t)
+    blocks = triatom.K0_blocks if K == 0 else triatom.positive_K_blocks
+    try:
+        block = blocks[j]
+    except KeyError as error:
+        message = f"Triatomic basis has no block for j={j}, K={K}"
+        logger.error(message)
+        raise ValueError(message) from error
+    columns = np.flatnonzero(block.t_indices == t)
+    if columns.size != 1:
+        message = f"Triatomic state (j={j}, t={t}, K={K}) is not present in its contraction block"
+        logger.error(message)
+        raise ValueError(message)
+    qn = block.qn
+    coefficients = block.coefficients[:, int(columns[0])]
     sqrt_weight_1 = np.sqrt(theta_weights_1)
     sqrt_weight_2 = np.sqrt(theta_weights_2)
     sqrt_weight_phi = np.sqrt(phi_weights)
@@ -50,7 +63,13 @@ def _triatom_grid_wavefunction(
 
     coefficient_tensor = np.zeros((len(omega_values), j1max + 1, n_v1, n_v2), dtype=np.float64)
     for (j1, omega, v1, v2), coefficient in zip(qn, coefficients, strict=True):
-        coefficient_tensor[omega_positions[int(omega)], int(j1), int(v1), int(v2)] = coefficient
+        omega_position = omega_positions[int(omega)]
+        radial_parity = triatom.exchange_parity * (1 if int(omega) % 2 == 0 else -1)
+        if triatom.exchange_parity == 0 or int(v1) == int(v2):
+            coefficient_tensor[omega_position, int(j1), int(v1), int(v2)] += coefficient
+        else:
+            coefficient_tensor[omega_position, int(j1), int(v1), int(v2)] += coefficient / np.sqrt(2.0)
+            coefficient_tensor[omega_position, int(j1), int(v2), int(v1)] += radial_parity * coefficient / np.sqrt(2.0)
 
     angular_1 = np.zeros((len(omega_values), cos_theta_1.size, j1max + 1), dtype=np.float64)
     angular_2 = np.empty((len(omega_values), cos_theta_2.size), dtype=np.float64)
@@ -80,9 +99,6 @@ def _triatom_grid_wavefunction(
 
 
 # ----------------------------------------------------------------------------------------
-
-
-# ----------------------------------------------------------------------------------------
 def prepare(
     basis: ChannelBasis,
     triatom: TriatomBasis,
@@ -98,8 +114,8 @@ def prepare(
 
     Grid flattening follows C order with axes
     ``(r1, r2, theta1, theta2, phi)``. ``theta1`` is the triatomic bend,
-    ``theta2`` orients its body axis relative to R, and ``phi`` is the dihedral
-    angle on [0, pi].
+    ``theta2`` orients the corrected bisector-z MF axis relative to R, and
+    ``phi`` rotates the molecular plane about that axis on [0, pi].
 
     Formula:
         B^{R/I}_{t j K}(g) = sum_{j1,omega,v1,v2}
