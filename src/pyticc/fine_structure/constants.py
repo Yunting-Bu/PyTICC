@@ -10,7 +10,7 @@ from pyticc.constants import ENERGY_TO_AU, EnergyUnit, energy_to_au
 from pyticc.fine_structure.operators import FSConstants
 
 FS_CONSTANT_COLUMNS = ("v", "constant", "value", "unit")
-FS_CONSTANT_NAMES = ("A", "B", "gamma", "lambda_ss", "O", "P", "Q", "M", "N")
+FS_CONSTANT_NAMES = ("A", "B", "D", "H", "gamma", "lambda_ss", "O", "P", "Q", "M", "N")
 
 
 # ----------------------------------------------------------------------------------------
@@ -49,7 +49,7 @@ def load_fs_constants_csv(path: str | Path) -> FSConstantsTable:
     Load vibrationally resolved molecular constants from a long-format CSV.
 
     The required header is ``v,constant,value,unit``. Supported constants are
-    A, B, gamma, lambda_ss, O, P, Q, M, and N. Units may be au, cm-1, Hz, kHz,
+    A, B, D, H, gamma, lambda_ss, O, P, Q, M, and N. Units may be au, cm-1, Hz, kHz,
     MHz, or GHz. Each value is converted to Hartree; omitted constants within a
     supplied vibrational manifold are zero. Lines beginning with ``#`` are
     ignored, which allows provenance notes to be kept in the file.
@@ -111,6 +111,8 @@ def load_fs_constants_csv(path: str | Path) -> FSConstantsTable:
                 FSConstants(
                     A=values.get("A", 0.0),
                     B=values.get("B", 0.0),
+                    D=values.get("D", 0.0),
+                    H=values.get("H", 0.0),
                     gamma=values.get("gamma", 0.0),
                     lambda_ss=values.get("lambda_ss", 0.0),
                     O=values.get("O", 0.0),

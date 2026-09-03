@@ -25,6 +25,8 @@ from pyticc.system import ChannelSpec, ScatteringType, build_ScattSystem, reduce
 # ----------------------------------------------------------------------------------------
 def run(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | CoupledStatesResult:
     """Run a diatom-diatom calculation from parsed TOML data."""
+    if config.get("molecule_exchange", 0) != 0:
+        raise NotImplementedError("molecule_exchange currently requires the Python API with a shared monomer basis object")
     if pes.monomer_X is None or pes.monomer_Y is None:
         message = "Diatom-diatom calculation requires both pes.monomer_X and pes.monomer_Y"
         logger.error(message)

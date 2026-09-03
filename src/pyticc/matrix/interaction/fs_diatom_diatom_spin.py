@@ -326,6 +326,12 @@ def prepare(
     ``alpha=(Lambda_X,Lambda_Y)``. Contracting it with dense Hermitian orbital
     matrices ``W^(S)_(alpha',alpha)`` gives the channel interaction. Retaining
     the complex kernel is essential when ``W`` itself has imaginary couplings.
+
+    For K>0 the parity-adapted channel is (|K>+s_eta|-K>)/sqrt(2),
+    s_eta=P epsilon_X epsilon_Y (-1)^(j12-J). Overall Euler integration
+    eliminates opposite-helicity cross terms, leaving
+    (G_K+s_eta' s_eta G_-K)/2. At K=0 only G_0 is used. This averaging
+    is performed on kernels, not by discarding imaginary PES couplings.
     """
     theta_X = np.asarray(theta_X, dtype=np.float64)
     theta_Y = np.asarray(theta_Y, dtype=np.float64)
@@ -345,6 +351,16 @@ def prepare(
         theta_weights_Y,
         phi,
         phi_weights,
+    )
+    _, negative_amplitudes = _primitive_amplitudes(basis, theta_X, theta_weights_X, theta_Y, theta_weights_Y, phi, phi_weights, helicity_sign=-1)
+    parity_phases = np.asarray(
+        [
+            basis.system_parity
+            * basis.monomer_X.blocks[c.block_X].parity
+            * basis.monomer_Y.blocks[c.block_Y].parity
+            * (-1) ** ((c.two_j12 - basis.two_J) // 2)
+            for c in basis
+        ]
     )
     n_grid = prod(grid_shape)
     n_electronic = len(spins) * len(orbitals) ** 2
@@ -382,7 +398,16 @@ def prepare(
                         grid_shape,
                     ).reshape(n_grid)
                     electronic_index = spin_index * len(orbitals) ** 2 + bra_orbital * len(orbitals) + ket_orbital
-                    kernel[:, electronic_index, pair_index] += np.conjugate(bra_amplitude) * projector * ket_amplitude
+                    product = np.conjugate(bra_amplitude) * ket_amplitude
+                    if basis[row_index].two_K:
+                        product = 0.5 * (
+                            product
+                            + parity_phases[row_index]
+                            * parity_phases[column_index]
+                            * np.conjugate(negative_amplitudes[row_index][bra_key])
+                            * negative_amplitudes[column_index][ket_key]
+                        )
+                    kernel[:, electronic_index, pair_index] += projector * product
     kernel *= 1.0 / np.pi
     return SpinResolvedFSDiatomDiatomVBasis(
         n_channel=basis.n_channel,
@@ -434,6 +459,9 @@ def contract(
     indices = tuple(range(V_basis.n_channel)) if channel_indices is None else tuple(channel_indices)
     pair_rows, pair_columns, packed = _packed_positions(V_basis.n_channel, indices)
     contracted = np.einsum("bge,gep->bp", host_batches, V_basis.kernel[:, :, packed], optimize=True)
+    selected = np.asarray(indices, dtype=np.int64)
+    reversed_pairs = selected[pair_rows] < selected[pair_columns]
+    contracted[:, reversed_pairs] = np.conjugate(contracted[:, reversed_pairs])
     matrix = np.zeros((host_batches.shape[0], len(indices), len(indices)), dtype=np.result_type(host_batches, V_basis.kernel))
     matrix[:, pair_rows, pair_columns] = contracted
     off_diagonal = pair_rows != pair_columns
@@ -481,6 +509,9 @@ def contract_device(
     pair_rows, pair_columns, packed = _packed_positions(V_basis.n_channel, indices)
     potential_device = jax.device_put(batches, device)
     contracted = _contract_device(potential_device, basis_device.kernel[:, :, packed])
+    selected = np.asarray(indices, dtype=np.int64)
+    reversed_pairs = selected[pair_rows] < selected[pair_columns]
+    contracted = jnp.where(reversed_pairs[None, :], jnp.conjugate(contracted), contracted)
     matrix = jnp.zeros(
         (potential_device.shape[0], len(indices), len(indices)),
         dtype=jnp.result_type(potential_device, basis_device.kernel),

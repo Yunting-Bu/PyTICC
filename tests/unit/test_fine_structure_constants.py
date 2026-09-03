@@ -9,7 +9,7 @@ from pyticc.fine_structure import load_fs_constants_csv
 def test_load_fs_constants_csv_supports_mixed_units_and_sparse_constants(tmp_path: Path) -> None:
     path = tmp_path / "NO_constants.csv"
     path.write_text(
-        "v,constant,value,unit\n1,Q,-38.9,MHz\n0,A,123.146,cm-1\n0,B,508083.0,MHz\n1,A,122.831,cm-1\n",
+        "v,constant,value,unit\n1,Q,-38.9,MHz\n0,A,123.146,cm-1\n0,B,508083.0,MHz\n0,D,0.164,MHz\n0,H,3.8e-8,MHz\n1,A,122.831,cm-1\n",
         encoding="utf-8",
     )
 
@@ -18,6 +18,8 @@ def test_load_fs_constants_csv_supports_mixed_units_and_sparse_constants(tmp_pat
     assert table.vibrational_levels == (0, 1)
     assert table.for_v(0).A == pytest.approx(123.146 * CM2AU)
     assert table.for_v(0).B == pytest.approx(508083.0 * MHZ2AU)
+    assert table.for_v(0).D == pytest.approx(0.164 * MHZ2AU)
+    assert table.for_v(0).H == pytest.approx(3.8e-8 * MHZ2AU)
     assert table.for_v(0).Q == 0.0
     assert table.for_v(1).Q == pytest.approx(-38.9 * MHZ2AU)
 

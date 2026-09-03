@@ -57,20 +57,43 @@ def prepare(
     phi: NDArray[np.float64],
     phi_weights: NDArray[np.float64],
 ) -> VBasisBF:
-    """Prepare the body-fixed interaction basis for a diatom-diatom system."""
+    r"""Prepare weighted BF rows, including optional molecule exchange.
+
+    Formula:
+        B_eta = T_eta.T B, separately for real and imaginary weighted rows.
+        V_eta = (B_eta.real diag(V) B_eta.real.T
+                 + B_eta.imag diag(V) B_eta.imag.T)/pi = T_eta.T V_BF T_eta.
+        T_eta is the dimensionless, at-most-two-term channel expansion stored
+        in basis.exchange. Exchange leaves K unchanged. Quadrature weights
+        and radial wavefunctions are already included in B.
+
+    Inputs:
+        basis: ChannelBasis - parity-adapted channels, optionally exchange-adapted
+        rovib_X, rovib_Y: RovibBasis - radial grids in bohr and wavefunctions
+        cos_theta_X, cos_theta_Y: NDArray[np.float64] - polar cosine nodes
+        theta_weights_X, theta_weights_Y: NDArray[np.float64] - polar weights
+        phi, phi_weights: NDArray[np.float64] - torsional nodes on [0,pi] in
+            radians and their quadrature weights
+
+    Returns:
+        V_basis: VBasisBF - weighted rows indexed by adapted channel and grid,
+            grouped by K; contraction returns Hartree when V is in Hartree
+    """
     grid_shape = (rovib_X.grids.size, rovib_Y.grids.size, cos_theta_X.size, cos_theta_Y.size, phi.size)
     n_grid = prod(grid_shape)
     angular: dict[tuple[int, int, int, int], tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
     channel_indices: dict[int, tuple[int, ...]] = {}
     B_real: dict[int, NDArray[np.float64]] = {}
     B_imag: dict[int, NDArray[np.float64]] = {}
+    source = tuple(basis) if basis.exchange is None else basis.exchange.source_channels
 
     for K in sorted({channel.K for channel in basis}):
         indices = tuple(index for index, channel in enumerate(basis) if channel.K == K)
-        real_rows = np.empty((len(indices), n_grid), dtype=np.float64)
+        source_indices = tuple(index for index, channel in enumerate(source) if channel.K == K)
+        real_rows = np.empty((len(source_indices), n_grid), dtype=np.float64)
         imag_rows = np.empty_like(real_rows)
-        for local_index, channel_index in enumerate(indices):
-            channel = basis[channel_index]
+        for local_index, channel_index in enumerate(source_indices):
+            channel = source[channel_index]
             v_X = cast(int, channel.mis_X.v)
             v_Y = cast(int, channel.mis_Y.v)
             key = (channel.mis_X.j, channel.mis_Y.j, channel.j_couple, K)
@@ -91,6 +114,14 @@ def prepare(
             radial = np.multiply.outer(rovib_X.WF_vj[:, v_X, channel.mis_X.j], rovib_Y.WF_vj[:, v_Y, channel.mis_Y.j])
             real_rows[local_index] = (radial[:, :, None, None, None] * angular_real[None, None]).reshape(-1)
             imag_rows[local_index] = (radial[:, :, None, None, None] * angular_imag[None, None]).reshape(-1)
+
+        if basis.exchange is not None:
+            source_to_local = {index: local for local, index in enumerate(source_indices)}
+            expansion = basis.exchange.source_indices[np.asarray(indices)]
+            local = np.asarray([[source_to_local[int(i)] for i in pair] for pair in expansion], dtype=np.int64)
+            coefficients = basis.exchange.coefficients[np.asarray(indices)]
+            real_rows = np.sum(coefficients[:, :, None] * real_rows[local], axis=1)
+            imag_rows = np.sum(coefficients[:, :, None] * imag_rows[local], axis=1)
 
         channel_indices[K] = indices
         B_real[K] = np.ascontiguousarray(real_rows)

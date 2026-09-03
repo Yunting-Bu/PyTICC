@@ -209,10 +209,12 @@ def channels(basis: ReportBasis) -> str:
                     f"{channel.E_int * AU2CM:.6f}",
                 ]
             )
-        return _table(("n", "v_X", "j_X", "tau_X", "epsilon_X", "v_Y", "j_Y", "tau_Y", "epsilon_Y", "j_12", "K", "E_int/cm-1"), rows)
+        label = f"molecule_exchange={basis.molecule_exchange:+d}; X/Y label canonical state pairs\n" if basis.molecule_exchange else ""
+        return label + _table(("n", "v_X", "j_X", "tau_X", "epsilon_X", "v_Y", "j_Y", "tau_Y", "epsilon_Y", "j_12", "K", "E_int/cm-1"), rows)
 
+    exchange_label = f"molecule_exchange={basis.molecule_exchange:+d}; X/Y label canonical state pairs\n" if basis.molecule_exchange else ""
     if basis.n_channel == 0:
-        return _table(("n", "K", "E_int/cm-1"), ())
+        return exchange_label + _table(("n", "K", "E_int/cm-1"), ())
 
     states_X = [channel.mis_X for channel in basis]
     states_Y = [channel.mis_Y for channel in basis]
@@ -245,7 +247,7 @@ def channels(basis: ReportBasis) -> str:
             row.append(str(channel.j_couple))
         row.extend((str(channel.K), f"{channel.E_int * AU2CM:.6f}"))
         rows.append(row)
-    return _table(headers, rows)
+    return exchange_label + _table(headers, rows)
 
 
 # ----------------------------------------------------------------------------------------
@@ -450,6 +452,9 @@ def _smatrix_fine_structure(result: ScatteringResult, energy_indices: EnergySele
 def _smatrix_fine_structure_diatom_diatom(result: ScatteringResult, energy_indices: EnergySelection) -> str:
     """Format a two-fine-structure-diatom S matrix in its asymptotic SF basis."""
     basis = cast(FSDiatomDiatomBasis, result.basis)
+    label = f"molecule_exchange={basis.molecule_exchange:+d}; X/Y label canonical state pairs\n" if basis.molecule_exchange else ""
+    if basis.molecule_exchange and basis.n_channel == 0:
+        return label + "No allowed channels in this molecule-exchange block."
     rows: list[list[str]] = []
     for energy_index in _energy_indices(energy_indices, result.Etot.size):
         indices = result.open_channel_indices[energy_index]
@@ -515,7 +520,7 @@ def _smatrix_fine_structure_diatom_diatom(result: ScatteringResult, energy_indic
         "Re(S)",
         "Im(S)",
     )
-    return _table(headers, rows)
+    return label + _table(headers, rows)
 
 
 # ----------------------------------------------------------------------------------------
@@ -798,6 +803,8 @@ def _smatrix_diatom_diatom(
     basis = cast(ChannelBasis, result.basis)
     if any(channel.mis_X.v is None or channel.mis_Y.v is None for channel in basis):
         raise ValueError("The diatom-diatom S-matrix report requires two diatomic internal states per channel")
+    if basis.molecule_exchange and basis.n_channel == 0:
+        return "No allowed channels in this molecule-exchange block."
 
     initial_X = (_selection(state_X, "state_X"), _selection(v_X, "v_X"), _selection(j_X, "j_X"))
     initial_Y = (_selection(state_Y, "state_Y"), _selection(v_Y, "v_Y"), _selection(j_Y, "j_Y"))
@@ -1061,12 +1068,12 @@ def smatrix(
     basis = cast(ChannelBasis, result.basis)
     active_X = any(not _is_atom_state(channel.mis_X) for channel in basis)
     active_Y = any(not _is_atom_state(channel.mis_Y) for channel in basis)
-    if active_X and active_Y:
+    if active_X and active_Y or basis.molecule_exchange:
         _reject_filters(
             "diatom-diatom",
             (("state", state), ("v", v), ("j", j), ("state_prime", state_prime), ("v_prime", v_prime), ("j_prime", j_prime)),
         )
-        return _smatrix_diatom_diatom(
+        output = _smatrix_diatom_diatom(
             result,
             energy_indices,
             state_X=state_X,
@@ -1085,6 +1092,9 @@ def smatrix(
             j_couple_prime=j_couple_prime,
             block_index=block_index,
         )
+        if basis.molecule_exchange:
+            return f"molecule_exchange={basis.molecule_exchange:+d}; X/Y label canonical state pairs\n" + output
+        return output
 
     _reject_filters("atom-diatom", diatom_filters)
     return _smatrix_atom_diatom(

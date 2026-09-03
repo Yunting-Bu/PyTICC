@@ -35,6 +35,11 @@ def get_Umat_BF(
     the nearest-neighbor K-to-K+1 Coriolis couplings. Its row and column order follows
     channel_indices, or the complete channel basis when channel_indices is None.
 
+    For molecule-exchange-adapted AB+CD channels this same expression is
+    T_eta.T U T_eta: exchange preserves each canonical state-pair/j12 ladder,
+    and the expansion coefficients are independent of K. No additional
+    exchange normalization is applied to the retained ladder matrix elements.
+
     Inputs:
         basis: ChannelBasis - complete field-free channel basis
         channel_indices: Sequence[int] | None - selected complete-basis positions,
@@ -196,6 +201,10 @@ def get_Umat_FS_DiatomDiatom_BF(
 ) -> NDArray[np.float64]:
     r"""
     Return the BF centrifugal matrix for two fine-structure diatoms.
+
+    Exchange adaptation preserves each canonical internal-state/j12 ladder;
+    its coefficients are independent of K. The same expressions therefore
+    give T_eta.T U T_eta on an exchange-adapted basis without extra factors.
 
     Formula:
         With ``j_12=j_X+j_Y`` and nonnegative parity-adapted helicity K,

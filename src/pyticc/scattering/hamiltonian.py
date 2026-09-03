@@ -62,6 +62,8 @@ class ScattHamiltonian:
     potential_grid_size: int = 0
 
     def __post_init__(self) -> None:
+        if isinstance(self.basis, ChannelBasis | FSDiatomDiatomBasis) and self.basis.molecule_exchange and self.approx is not Approx.EXACT:
+            raise ValueError("Molecule-exchange channels currently support only exact CC, not CS/NNCC")
         if self.K_delta < 1:
             message = f"K_delta must be positive, but got {self.K_delta}"
             logger.error(message)

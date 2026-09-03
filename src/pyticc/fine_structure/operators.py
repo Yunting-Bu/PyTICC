@@ -20,6 +20,8 @@ class FSConstants:
     Members:
         A: float - spin-orbit constant in Hartree
         B: float - molecular rotational constant in Hartree
+        D: float - quartic centrifugal-distortion constant in Hartree
+        H: float - sextic centrifugal-distortion constant in Hartree
         gamma: float - spin-rotation constant in Hartree
         lambda_ss: float - spin-spin constant in Hartree
         O: float - O Lambda-doubling constant in Hartree
@@ -31,6 +33,8 @@ class FSConstants:
 
     A: float = 0.0
     B: float = 0.0
+    D: float = 0.0
+    H: float = 0.0
     gamma: float = 0.0
     lambda_ss: float = 0.0
     O: float = 0.0  # noqa: E741 - O is the conventional spectroscopic constant.
@@ -46,6 +50,8 @@ class FSConstants:
         *,
         A: float = 0.0,
         B: float = 0.0,
+        D: float = 0.0,
+        H: float = 0.0,
         gamma: float = 0.0,
         lambda_ss: float = 0.0,
         O: float = 0.0,  # noqa: E741 - O is the conventional spectroscopic constant.
@@ -65,6 +71,8 @@ class FSConstants:
             unit: EnergyUnit - au, cm-1, Hz, kHz, MHz, or GHz
             A: float - spin-orbit constant in the selected unit
             B: float - molecular rotational constant in the selected unit
+            D: float - quartic centrifugal-distortion constant in the selected unit
+            H: float - sextic centrifugal-distortion constant in the selected unit
             gamma: float - spin-rotation constant in the selected unit
             lambda_ss: float - spin-spin constant in the selected unit
             O: float - O Lambda-doubling constant in the selected unit
@@ -80,6 +88,8 @@ class FSConstants:
         return cls(
             A=A * factor,
             B=B * factor,
+            D=D * factor,
+            H=H * factor,
             gamma=gamma * factor,
             lambda_ss=lambda_ss * factor,
             O=O * factor,
@@ -365,7 +375,9 @@ def effective_hamiltonian(states: tuple[FSState, ...], constants: FSConstants, v
     Construct the signed-projection effective molecular Hamiltonian.
 
     Formula:
-        H_eff = T_v + H_SO + H_MR + H_SMR + H_SS + H_LD.
+        H_eff = T_v + H_SO + H_MR + H_CD + H_SMR + H_SS + H_LD,
+
+        H_CD = -D (N^2)^2 + H (N^2)^3.
 
     Inputs:
         states: tuple[FSState,...] - one fixed-(v,j,S) signed basis
@@ -377,17 +389,25 @@ def effective_hamiltonian(states: tuple[FSState, ...], constants: FSConstants, v
     """
     size = len(states)
     matrix = np.empty((size, size), dtype=np.float64)
+    n_squared = np.empty((size, size), dtype=np.float64)
     for row, bra in enumerate(states):
         for column, ket in enumerate(states):
+            n_squared[row, column] = molecular_rotation_element(bra, ket, 1.0)
             matrix[row, column] = (
                 spin_orbit_element(bra, ket, constants.A)
-                + molecular_rotation_element(bra, ket, constants.B)
                 + spin_rotation_element(bra, ket, constants.gamma)
                 + spin_spin_element(bra, ket, constants.lambda_ss)
                 + lambda_doubling_element(bra, ket, constants)
             )
             if row == column:
                 matrix[row, column] += vibrational_energy
+    n_squared = 0.5 * (n_squared + n_squared.T)
+    matrix += constants.B * n_squared
+    if constants.D != 0.0 or constants.H != 0.0:
+        n_fourth = n_squared @ n_squared
+        matrix -= constants.D * n_fourth
+        if constants.H != 0.0:
+            matrix += constants.H * (n_fourth @ n_squared)
     return 0.5 * (matrix + matrix.T)
 
 

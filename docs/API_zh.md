@@ -608,6 +608,8 @@ prepare_Delves(
 FSConstants(
     A=0.0,
     B=0.0,
+    D=0.0,
+    H=0.0,
     gamma=0.0,
     lambda_ss=0.0,
     O=0.0,
@@ -624,6 +626,8 @@ FSConstants(
 | --- | --- |
 | `A` | 自旋–轨道常数 |
 | `B` | 分子转动常数 |
+| `D` | 四次离心畸变常数，贡献为 $-D(\hat N^2)^2$ |
+| `H` | 六次离心畸变常数，贡献为 $+H(\hat N^2)^3$ |
 | `gamma` | 自旋–转动常数 |
 | `lambda_ss` | 自旋–自旋常数 |
 | `O, P, Q` | Π/Δ 态 Λ-doubling 常数 |
@@ -657,6 +661,8 @@ CSV 使用长表格式，表头必须严格为：
 v,constant,value,unit
 0,A,-139.2,cm-1
 0,B,18.5487,cm-1
+0,D,1.9e-3,cm-1
+0,H,1.0e-7,cm-1
 0,gamma,-0.1342,cm-1
 0,P,0.2354,cm-1
 0,Q,-0.0057,cm-1
@@ -665,7 +671,7 @@ v,constant,value,unit
 详细规则：
 
 - `v` 必须是非负十进制整数。
-- `constant` 只能是 `A`、`B`、`gamma`、`lambda_ss`、`O`、`P`、`Q`、`M` 或 `N`。
+- `constant` 只能是 `A`、`B`、`D`、`H`、`gamma`、`lambda_ss`、`O`、`P`、`Q`、`M` 或 `N`。
 - `unit` 只能是 `au`、`cm-1`、`Hz`、`kHz`、`MHz` 或 `GHz`。
 - 同一 `(v, constant)` 不能重复；同一振动态中未出现的常数自动取零。
 - 以 `#` 开头的整行会被忽略，可用于记录数据来源。
@@ -818,10 +824,12 @@ build_fs_diatom_diatom_channels(
     E_X_cut=float("inf"),
     E_Y_cut=float("inf"),
     two_K_cut=None,
+    molecule_exchange=0,
 ) -> FSDiatomDiatomBasis
 ```
 
 每个 `FSDiatomDiatomChannel` 保存 `(block_X,tau_X,block_Y,tau_Y,two_j12,two_K,E_int)`。
+两个全同单体可指定 `molecule_exchange=±1`，详见 §6.3。
 目前只支持 exact CC；外电场或外磁场下总 $J$ 不再守恒，不能使用这一场自由接口。
 
 完整 Python 流程为：
@@ -921,6 +929,7 @@ build_ScattSystem(
     total_potential=None,
     reduced_mass=None,
     magnetic_dipole_coefficient=0.0,
+    molecule_exchange=0,
 ) -> ScattSystem
 ```
 
@@ -950,6 +959,98 @@ build_ScattSystem(
 - `magnetic_dipole_coefficient` 必须为有限数，单位 Hartree·bohr³；当前仅在 `AB+CD_fine_structure` Hamiltonian 中使用。
 - `channel=None` 等价于 `ChannelSpec()`。对 Delves 计算，`E_Y_cut` 必须为有限值，`exchange_parity_Y` 必须为标量。
 - 返回对象的 `basis` 已经构造完成，`system.n_channel` 等于 `system.basis.n_channel`。
+
+### 6.3 两个完整全同分子的交换适配
+
+`AB+CD` 和 `AB+CD_fine_structure` 均可通过 Python 接口指定 `molecule_exchange`：
+`0` 为默认带标签通道，`+1/-1` 分别求解完整分子交换对称／反对称块。
+它与 `ChannelSpec.exchange_parity_X/Y`（只筛选各单体奇／偶 `j`）不同。
+
+```python
+system = ticc.build_ScattSystem(
+    monomer, monomer,  # 首版要求复用同一个 DiatomBasis 对象
+    scattering_type="AB+CD",
+    Jtot=J, system_parity=P,
+    molecule_exchange=+1,
+    potential=pes, reduced_mass=collision_mass,
+)
+```
+
+在当前总宇称适配 BF 基中，令 $c=(v_X,j_X,v_Y,j_Y,j_{12},K)$，
+$\bar c$ 交换 X、Y 标签而保持 $j_{12},K$。交换相位为 $P(-1)^{j_{12}}$，所以
+
+$$
+|c;\eta\rangle=
+\frac{|c\rangle+\eta P(-1)^{j_{12}}|\bar c\rangle}
+{\sqrt{2(1+\delta_{v_Xv_Y}\delta_{j_Xj_Y})}}.
+$$
+
+只保留规范排列 $(v_X,j_X)\leq(v_Y,j_Y)$；当单体态相同时，仅保留
+$\eta P(-1)^{j_{12}}=1$ 的通道。程序预先组合积分基，直接收缩得到
+$V_\eta=T_\eta^\dagger V T_\eta$，并在该通道基中施加普通散射或 capture 内边界。
+当前基于势矩阵对角元的边界近似不是任意基变换不变的；对照完整基传播时必须使用对应的同一物理边界。
+
+精细结构版本使用相同接口，且可同时指定总自旋分辨轨道势和 $V_{\rm dd}$：
+
+```python
+system = ticc.build_ScattSystem(
+    fs_monomer, fs_monomer,  # 复用同一个 FSMonomerBasis 对象
+    scattering_type="AB+CD_fine_structure",
+    two_J=2 * J, system_parity=P,
+    molecule_exchange=+1,
+    potential=spin_resolved_pes,
+    reduced_mass=collision_mass,
+    magnetic_dipole_coefficient=C_dd,
+)
+```
+
+令 $a=(\mathrm{block}_X,\tau_X)$、$b=(\mathrm{block}_Y,\tau_Y)$ 标记两个单体的
+完整精细结构本征态，单体总角动量和宇称分别为 $j_a,j_b$ 与 $\epsilon_a,\epsilon_b$。
+精细结构 BF 通道的交换相位为
+
+$$
+s_c=P\epsilon_a\epsilon_b(-1)^{j_a+j_b-j_{12}},\qquad
+|c;\eta\rangle=\frac{|c\rangle+\eta s_c|\bar c\rangle}{\sqrt{2(1+\delta_{ab})}}.
+$$
+
+该相位来自 SF 基的 $(-1)^{j_a+j_b-j_{12}+L}$ 与
+$P=\epsilon_a\epsilon_b(-1)^L$，适用于整数或半整数单体角动量。
+程序用双倍角动量计算整数指数。按 `(block,tau)` 的字典序只保留 $a\le b$，
+$a=b$ 时仅保留 $\eta s_c=1$。交换系数不依赖 $K$，所以离心矩阵与渐近 BF–SF
+变换仍按规范态对的完整 $K$ 梯子构造。
+
+精细结构积分核显式包含宇称适配的 $\pm K$ 分量；在 $K>0$ 时，
+核为 $(G_K+p_{c'}p_cG_{-K})/2$，其中
+$p_c=P\epsilon_a\epsilon_b(-1)^{j_{12}-J}$；$K=0$ 只使用一份核。
+此处组合的是积分核，而非强制取复轨道势的实部。
+
+当前限制与检查：
+
+- 仅支持场自由 exact CC、Python 接口；CS/NNCC 及 TOML 启用交换适配会明确报错。
+  普通 `AB+CD` 使用标量 PES；精细结构版本支持标量势、总自旋分辨复 Hermitian 轨道势及 $V_{\rm dd}$。
+- X、Y 必须复用同一个单体基对象，且筛选后的单体态集合必须相同，不自动补齐不封闭的截断。
+- `n_theta_X` 与 `n_theta_Y` 必须相同；缓存的径向格点必须匹配共享单体基。
+- 对于标量 PES，在无符号扭转角 $\phi\in[0,\pi]$ 约定下，必须满足
+  $V(r_X,r_Y,\theta_X,\theta_Y,\phi;R)=V(r_Y,r_X,\pi-\theta_Y,\pi-\theta_X,\phi;R)$。
+  程序检查求积格点上的这一关系，容差为 `atol=1e-12` Hartree、`rtol=1e-10`，不自动平均或修改 PES。
+- 精细结构版本先在交换封闭的带标签通道基中构造矩阵，检查
+  $E^\dagger V E=V$ 后计算 $T_\eta^\dagger V T_\eta$；$E$ 为完整分子交换矩阵。
+  轨道势与无量纲自旋磁偶极矩阵分别检查，容差为各自单位下 `atol=1e-12`、`rtol=1e-10`。
+  这会包含单体本征矢、电子基相位与自旋旋转，不能替换为逐个轨道矩阵元的标量相等检查。
+  这是**有限通道基中的算符检查**，不保证未保留通道或连续构型空间的 PES 交换对称性；
+  检查失败时也应排查角度求积是否收敛。
+- 精细结构版本当前保留完整带标签基的积分核和势矩阵收缩计算量，缩减的是传播矩阵维度。
+  设备收缩后，交换校验会同步读取主机数据，随后在原设备上完成投影。
+  缓存总自旋分辨 PES 时会记录并核对 `two_total_spins`、`orbital_two_lambda_X/Y` 的轴顺序。
+- 同一 `PotentialGrid` 可供两个交换块复用。交换禁戒的空块返回空 S 矩阵并跳过传播。
+- `system.basis.molecule_exchange` 和 `result.molecule_exchange` 保留块标记；通道及 S 矩阵文本报告也显示该标记。
+  报告中的 X/Y 是规范单体态对的位置，不再是可辨认的粒子身份；筛选参数也按该规范顺序解释。
+- 不自动施加核自旋统计权重，也不将两个交换块等权平均。捕获通道概率仍为
+  $1-\sum_f|S_{fi}|^2$；构造物理截面或速率时需另行处理入射制备、统计权重和全同末态计数。
+
+可运行演示：`example/identical_diatoms/python_run.py`（无精细结构），
+`example/identical_diatoms/fine_structure.py`（总自旋分辨势和 $V_{\rm dd}$）。
+两者均使用合成势，不对应具体实验体系。
 
 ## 7. 势能格点与 Hamiltonian
 

@@ -14,7 +14,7 @@ molecule--molecule systems.
 | `A+BC_fine_structure` | General $^{2S+1}\Sigma/\Pi/\Delta$ diatoms with spin--orbit, spin--rotation, spin--spin, $\Lambda$-doubling, and signed-$\Lambda$ surfaces; exact CC |
 | `A+BC_electric` | Stark levels and Electric-SF scattering in a static electric field |
 | `A+BC_Delves` | Three-arrangement reactive scattering in Delves hyperspherical coordinates |
-| `AB+CD` | Full-dimensional rovibrational scattering of two diatoms; exact CC, CS, and NNCC |
+| `AB+CD` | Full-dimensional rovibrational scattering of two diatoms; exact CC, CS, and NNCC; identical-molecule exchange blocks with exact CC |
 | `AB+CD_fine_structure` | Field-free scattering of two general open-shell diatoms with scalar or total-spin-resolved complex Hermitian orbital surfaces and direct electron spin dipole $V_{\rm dd}$; exact CC |
 | `A+BCD` | Full-dimensional atom--triatom scattering in Radau coordinates with contracted triatom rovibrational states |
 
@@ -44,6 +44,24 @@ not yet include external electric or magnetic fields. Each total-spin-resolved
 orbital matrix must be finite and Hermitian; real symmetric matrices remain a
 supported special case. See the [Chinese API reference](docs/API_zh.md) for
 array shapes, units, and current limitations.
+
+For identical diatoms, with or without fine structure, the Python API accepts `molecule_exchange=+1`
+or `-1` in `build_ScattSystem`. Reuse the **same monomer basis object** for X
+and Y, retain the same monomer states, and use equal X/Y polar quadratures.
+The default `0` preserves labeled-molecule calculations. This is distinct from
+`ChannelSpec.exchange_parity_X/Y`, which filter individual monomer rotational
+states. Exchange adaptation currently supports exact CC with both inelastic
+and capture boundaries, but not CS/NNCC or TOML inputs. The fine-structure
+path includes scalar PESs, total-spin-resolved complex Hermitian orbital
+PESs, and direct spin dipole coupling. Scalar PES symmetry is checked on the
+grid; FS interactions are also checked in the full retained labeled basis
+before projection. This finite-basis check does not prove continuum PES symmetry.
+FS potential contraction currently retains the labeled-basis cost, while
+propagation uses the smaller exchange block. No PES is averaged or modified. Results are
+single exchange blocks; nuclear-spin weights and identical-particle cross-section
+counting factors are not applied automatically. See the runnable
+[spin-free example](example/identical_diatoms/python_run.py) and
+[fine-structure example with spin-resolved PES and Vdd](example/identical_diatoms/fine_structure.py).
 
 ## Quick start
 

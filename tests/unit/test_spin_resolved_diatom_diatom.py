@@ -256,7 +256,9 @@ def test_orbital_off_diagonal_surface_couples_signed_lambda_components() -> None
     complex_grid[..., 0, 1, 0] = -1.0j
     complex_matrix = spin_vmat.contract(spin_basis, complex_grid)
     np.testing.assert_allclose(complex_matrix, complex_matrix.conj().T, atol=0.0)
-    assert np.max(np.abs(complex_matrix)) > 0.5
+    # The constant i(|-Lambda><+Lambda|-|+Lambda><-Lambda|) term is odd
+    # under parity in this Pi+Sigma model; its fixed-P matrix must vanish.
+    np.testing.assert_allclose(complex_matrix, 0.0, atol=2.0e-16)
 
     device = jax.devices("cpu")[0]
     device_matrix = spin_vmat.contract_device(

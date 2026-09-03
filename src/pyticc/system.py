@@ -323,6 +323,8 @@ class ScattSystem:
             ``basis``; None is allowed only for low-level direct construction
         basis: ChannelBasisSpec | None - channel basis prepared together with
             the system; direct construction may leave it unset for low-level use
+        molecule_exchange: int - complete-molecule exchange eigenvalue +/-1,
+            or 0 for labeled channels; exact AB+CD with or without fine structure
     """
 
     monomer_X: MonomerSpec | FineStructureMonomerSpec | DelvesMonomer
@@ -340,8 +342,23 @@ class ScattSystem:
     magnetic_dipole_coefficient: float = 0.0
     channel_spec: ChannelSpec | None = None
     basis: ChannelBasisSpec | None = None
+    molecule_exchange: int = 0
 
     def __post_init__(self) -> None:
+        if isinstance(self.molecule_exchange, bool) or not isinstance(self.molecule_exchange, int) or self.molecule_exchange not in (-1, 0, 1):
+            raise ValueError("molecule_exchange must be -1, 0, or 1")
+        if self.molecule_exchange:
+            if self.scattering_type not in (None, ScatteringType.DIATOM_DIATOM, ScatteringType.DIATOM_DIATOM_FINE_STRUCTURE):
+                raise ValueError("molecule_exchange currently supports only AB+CD with or without fine structure")
+            if self.approx is not Approx.EXACT:
+                raise ValueError("molecule_exchange currently supports only exact CC, not CS/NNCC")
+            if self.monomer_X is not self.monomer_Y:
+                raise ValueError("molecule_exchange requires the same diatomic monomer basis object for X and Y")
+            fine_structure = self.scattering_type is ScatteringType.DIATOM_DIATOM_FINE_STRUCTURE
+            if not fine_structure and getattr(self.monomer_X, "type", None) is not MonomerType.DIATOM:
+                raise ValueError("molecule_exchange requires the same diatomic monomer basis object for X and Y")
+            if not fine_structure and self.potential is not None and not isinstance(self.potential, PESWrapper):
+                raise ValueError("molecule_exchange requires a scalar PESWrapper")
         if self.Jtot is not None and self.Jtot < 0:
             message = f"Invalid Jtot {self.Jtot}. Must be non-negative."
             logger.error(message)
@@ -403,6 +420,7 @@ def build_ScattSystem(
     total_potential: TotalPES | None = None,
     reduced_mass: float | None = None,
     magnetic_dipole_coefficient: float = 0.0,
+    molecule_exchange: int = 0,
 ) -> ScattSystem:
     """
     Build a scattering system and its channel basis in one step.
@@ -434,6 +452,11 @@ def build_ScattSystem(
         magnetic_dipole_coefficient: float - electron-spin magnetic dipole
             coefficient C_dd in Hartree bohr^3; used only by
             ``AB+CD_fine_structure``
+        molecule_exchange: int - 0 keeps labeled channels; +/-1 selects a
+            complete-molecule exchange block of exact AB+CD, with or without
+            fine structure.
+            Reuse the same monomer object for X and Y. No nuclear-spin
+            statistical weights are inferred.
 
     Returns:
         system: ScattSystem - physical system containing its prepared channels
@@ -466,6 +489,7 @@ def build_ScattSystem(
         total_potential=total_potential,
         reduced_mass=reduced_mass,
         magnetic_dipole_coefficient=magnetic_dipole_coefficient,
+        molecule_exchange=molecule_exchange,
         channel_spec=channel_spec,
     )
 
@@ -581,6 +605,7 @@ def build_ScattSystem(
             E_X_cut=channel_spec.E_X_cut,
             E_Y_cut=channel_spec.E_Y_cut,
             two_K_cut=two_K_cut,
+            molecule_exchange=molecule_exchange,
         )
     elif selected_type is ScatteringType.ATOM_DIATOM_FINE_STRUCTURE:
         if not isinstance(monomer_X, AtomSpec) or not isinstance(monomer_Y, FSMonomerBasis):

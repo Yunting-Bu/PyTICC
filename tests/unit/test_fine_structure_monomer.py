@@ -1,6 +1,7 @@
 import numpy as np
 
 from pyticc.fine_structure import FSConstants, build_primitive_states, diagonalize_block, effective_hamiltonian, parity_transform
+from pyticc.fine_structure.operators import molecular_rotation_element
 
 
 def test_singlet_sigma_effective_hamiltonian_reduces_to_rigid_rotor() -> None:
@@ -11,6 +12,27 @@ def test_singlet_sigma_effective_hamiltonian_reduces_to_rigid_rotor() -> None:
     plus = parity_transform(states, parity=1, reflection_parity=1)
     minus = parity_transform(states, parity=-1, reflection_parity=1)
     assert sorted((plus.shape[1], minus.shape[1])) == [0, 1]
+
+
+def test_singlet_sigma_centrifugal_distortion_reduces_to_scalar_polynomial() -> None:
+    states = build_primitive_states((0,), (4,), two_lambda_abs=0, two_S=0)
+    constants = FSConstants(B=0.25, D=0.01, H=0.001)
+
+    matrix = effective_hamiltonian(states, constants)
+
+    n_squared = 2.0 * 3.0
+    expected = constants.B * n_squared - constants.D * n_squared**2 + constants.H * n_squared**3
+    np.testing.assert_allclose(matrix, [[expected]])
+
+
+def test_centrifugal_distortion_uses_full_n_squared_matrix() -> None:
+    states = build_primitive_states((0,), (5,), two_lambda_abs=2, two_S=3)
+    rigid = effective_hamiltonian(states, FSConstants(B=0.002))
+    distorted = effective_hamiltonian(states, FSConstants(B=0.002, D=2.0e-6, H=3.0e-9))
+    n_squared = np.asarray([[molecular_rotation_element(bra, ket, 1.0) for ket in states] for bra in states])
+    expected = rigid - 2.0e-6 * np.linalg.matrix_power(n_squared, 2) + 3.0e-9 * np.linalg.matrix_power(n_squared, 3)
+
+    np.testing.assert_allclose(distorted, expected, atol=1.0e-15)
 
 
 def test_fs_effective_hamiltonian_is_inversion_symmetric_and_hermitian() -> None:

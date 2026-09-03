@@ -10,6 +10,7 @@ from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.kblock import KBlock, build_cs_blocks, build_nncc_blocks
 from pyticc.energy import EnergyInput, get_Etot
 from pyticc.fine_structure.channel import FSChannelBasis
+from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.match.finalize import finalize_K_block, finalize_reactive_scattering, finalize_scattering
 from pyticc.propagation.config import Propagation
 from pyticc.propagation.delves import propagate_delves
@@ -116,9 +117,24 @@ def solve(
     electric_sf = isinstance(basis, ChannelBasisElectricSF)
     approximation = Approx.EXACT if electric_sf else hamiltonian.approx
     block_label = f"M={basis.M}" if electric_sf else f"Jtot={basis.Jtot}, system_parity={basis.system_parity:+d}"
+    if isinstance(basis, ChannelBasis | FSDiatomDiatomBasis) and basis.molecule_exchange:
+        block_label += f", molecule_exchange={basis.molecule_exchange:+d}"
     wall_start = perf_counter()
     cpu_start = process_time()
     logger.info(f"Solving {block_label}, approx={approximation.value}, channels={basis.n_channel}, energies={energies.size}")
+
+    if isinstance(basis, ChannelBasis | FSDiatomDiatomBasis) and basis.molecule_exchange and basis.n_channel == 0:
+        logger.info("No allowed channels in this molecule-exchange block; skipping propagation")
+        dtype = np.complex128 if propagation.mode == "capture" else np.float64
+        return ScatteringResult(
+            basis=basis,
+            Etot=energies,
+            Y_propagated=np.empty((energies.size, 0, 0), dtype=dtype),
+            asymptotic_transform=np.empty((0, 0)),
+            L=np.empty(0),
+            Smat=tuple(np.empty((0, 0), dtype=np.complex128) for _ in energies),
+            timing=Timing(wall_seconds=perf_counter() - wall_start, cpu_seconds=process_time() - cpu_start),
+        )
 
     if approximation is Approx.EXACT:
         Y_propagated = propagate(hamiltonian, energies, radial_sectors, propagation)

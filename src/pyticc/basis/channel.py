@@ -1,6 +1,7 @@
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
+from math import sqrt
 from typing import cast, overload
 
 import numpy as np
@@ -62,6 +63,40 @@ class Channel:
 
 # ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
+class ExchangeAdaptation:
+    r"""Sparse expansion of normalized exchange-adapted BF channels.
+
+    Formula:
+        With physical spatial parity P, eta = +/-1, and c=(a,b,j12,K),
+
+        |c;eta> = [|c> + eta P (-1)^j12 |bar(c)>]/sqrt[2(1+delta_ab)].
+
+        a=(v_X,j_X), b=(v_Y,j_Y), and bar(c) exchanges a and b at fixed K.
+        For a=b only eta P (-1)^j12=1 is retained, with coefficient one.
+        Each column of T is encoded by at most two source indices and real
+        coefficients; T[source_indices[i,k],i] += coefficients[i,k], k=0,1.
+        Thus T.T T=I and V_eta=T.T V T. All coefficients are dimensionless.
+
+    Members:
+        eta: int - complete-molecule exchange eigenvalue, -1 or 1
+        source_channels: tuple[Channel,...] - exchange-closed labeled BF basis
+        source_indices: NDArray[np.int64] - two source positions per retained
+            channel, shape (n_adapted,2)
+        coefficients: NDArray[np.float64] - corresponding expansion weights,
+            shape (n_adapted,2); the second weight is zero for a=b
+    """
+
+    eta: int
+    source_channels: tuple[Channel, ...]
+    source_indices: NDArray[np.int64]
+    coefficients: NDArray[np.float64]
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+@dataclass(frozen=True)
 class OpenClosedChannels:
     """
     Open and closed channel information over a total-energy grid.
@@ -98,12 +133,20 @@ class ChannelBasis(Sequence[Channel]):
         system_parity: int - conserved total parity, -1 or 1
         channel_spec: ChannelSpec - selections used to construct the basis
         n_channel: int - total number of channels
+        exchange: ExchangeAdaptation | None - complete-molecule exchange
+            expansion; channels label canonical state pairs when present
     """
 
     channels: tuple[Channel, ...]
     Jtot: int
     system_parity: int
     channel_spec: ChannelSpec = field(default_factory=ChannelSpec)
+    exchange: ExchangeAdaptation | None = None
+
+    @property
+    def molecule_exchange(self) -> int:
+        """Return the complete-molecule exchange eigenvalue, or zero if unused."""
+        return 0 if self.exchange is None else self.exchange.eta
 
     @property
     def n_channel(self) -> int:
@@ -142,6 +185,58 @@ class ChannelBasis(Sequence[Channel]):
         energies = get_Etot(total_energies)
         open_mask = self.E_int[np.newaxis, :] < energies[:, np.newaxis]
         return OpenClosedChannels(open_mask=open_mask)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def adapt_molecule_exchange(basis: ChannelBasis, eta: int) -> ChannelBasis:
+    r"""Retain canonical, nonzero exchange eigenchannels in a labeled BF basis.
+
+    Formula:
+        Canonical pairs obey (v_X,j_X) <= (v_Y,j_Y). For equal pairs retain
+        eta P (-1)^j12=1. Unequal pairs have coefficients
+        (1, eta P (-1)^j12)/sqrt(2); neither J nor K changes.
+
+    Inputs:
+        basis: ChannelBasis - spin-free, spatial-parity-adapted labeled basis
+        eta: int - requested complete-molecule exchange eigenvalue, +/-1
+
+    Returns:
+        adapted: ChannelBasis - canonical channels and sparse expansion data;
+            may be empty when the requested exchange block is forbidden
+    """
+    if eta not in (-1, 1) or isinstance(eta, bool):
+        raise ValueError("Molecule exchange eigenvalue must be -1 or 1")
+    if basis.exchange is not None:
+        raise ValueError("Channel basis is already molecule-exchange adapted")
+    source = tuple(basis)
+    lookup = {(c.mis_X, c.mis_Y, c.j_couple, c.K): i for i, c in enumerate(source)}
+    retained: list[Channel] = []
+    positions: list[tuple[int, int]] = []
+    weights: list[tuple[float, float]] = []
+    for i, c in enumerate(source):
+        partner = lookup.get((c.mis_Y, c.mis_X, c.j_couple, c.K))
+        if partner is None:
+            raise ValueError("Molecule exchange requires a channel basis closed under X/Y exchange")
+        if c.mis_X.v is None or c.mis_Y.v is None:
+            raise ValueError("Molecule exchange requires diatomic vibrational quantum numbers")
+        a, b = (c.mis_X.v, c.mis_X.j), (c.mis_Y.v, c.mis_Y.j)
+        if a > b:
+            continue
+        phase = eta * basis.system_parity * (-1) ** c.j_couple
+        if a == b and phase != 1:
+            continue
+        retained.append(c)
+        positions.append((i, partner))
+        weights.append((1.0, 0.0) if a == b else (1.0 / sqrt(2.0), phase / sqrt(2.0)))
+    source_indices = np.asarray(positions, dtype=np.int64).reshape(-1, 2)
+    coefficients = np.asarray(weights, dtype=np.float64).reshape(-1, 2)
+    source_indices.setflags(write=False)
+    coefficients.setflags(write=False)
+    exchange = ExchangeAdaptation(eta, source, source_indices, coefficients)
+    return replace(basis, channels=tuple(retained), exchange=exchange)
 
 
 # ----------------------------------------------------------------------------------------
@@ -442,6 +537,8 @@ def build_ChannelBasis(system: ScattSystem, channel: ChannelSpec | None = None) 
         channel_spec.vmin_Y,
         channel_spec.exchange_parity_Y,
     )
+    if system.molecule_exchange and set(states_X) != set(states_Y):
+        raise ValueError("Molecule exchange requires identical retained X/Y monomer state sets (exchange-closed truncation)")
     for mis_X in states_X:
         for mis_Y in states_Y:
             for j_couple in range(abs(mis_X.j - mis_Y.j), mis_X.j + mis_Y.j + 1):
@@ -465,12 +562,13 @@ def build_ChannelBasis(system: ScattSystem, channel: ChannelSpec | None = None) 
                     )
 
     channels.sort(key=lambda channel: channel.E_int)
-    return ChannelBasis(
+    basis = ChannelBasis(
         channels=tuple(channels),
         Jtot=system.Jtot,
         system_parity=system.system_parity,
         channel_spec=channel_spec,
     )
+    return adapt_molecule_exchange(basis, system.molecule_exchange) if system.molecule_exchange else basis
 
 
 # ----------------------------------------------------------------------------------------

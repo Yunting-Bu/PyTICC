@@ -16,6 +16,7 @@ from pyticc.basis.channel import ChannelBasis
 from pyticc.basis.monomer import DiatomBasis
 from pyticc.matrix.interaction import VBasisDevice, contract, contract_device, device_basis
 from pyticc.pes.adiabatic import PESWrapper, get_Vgrid_diatom_diatom
+from pyticc.pes.molecule_exchange import validate_exchange_potential, validate_exchange_quadrature
 from pyticc.scattering.hamiltonian import ScattHamiltonian
 from pyticc.scattering.potential import PotentialGrid, _potential_radial_grid, _require_type
 from pyticc.system import ScatteringType, ScattSystem
@@ -63,6 +64,8 @@ def prepare_potential(
     boundaries_value, half_steps_value, sectors, radial_points = _potential_radial_grid(boundaries, half_steps)
     radial_X = system.monomer_X.rovib.grids
     radial_Y = system.monomer_Y.rovib.grids
+    if system.molecule_exchange:
+        validate_exchange_quadrature(radial_X, radial_Y, cos_theta_X, cos_theta_Y, theta_weights_X, theta_weights_Y)
     values = get_Vgrid_diatom_diatom(
         system.potential,
         radial_points,
@@ -73,6 +76,8 @@ def prepare_potential(
         phi,
         processes=processes,
     )
+    if system.molecule_exchange:
+        validate_exchange_potential(values)
     return PotentialGrid(
         boundaries=boundaries_value,
         half_steps=half_steps_value,
@@ -144,6 +149,16 @@ def build_hamiltonian(
         phi_weights = potential_grid.weight("phi")
     theta_X = np.arccos(cos_theta_X)
     theta_Y = np.arccos(cos_theta_Y)
+    if basis.molecule_exchange != system.molecule_exchange:
+        raise ValueError("System and channel basis have different molecule_exchange settings")
+    if system.molecule_exchange:
+        validate_exchange_quadrature(rovib_X.grids, rovib_Y.grids, cos_theta_X, cos_theta_Y, theta_weights_X, theta_weights_Y)
+        if potential_grid is not None:
+            for name in ("r_X", "r_Y"):
+                radial = potential_grid.coordinate(name)
+                if radial.shape != rovib_X.grids.shape or not np.allclose(radial, rovib_X.grids, rtol=0.0, atol=1.0e-14):
+                    raise ValueError("Molecule-exchange cached radial grids must match the shared monomer basis")
+            validate_exchange_potential(cast(NDArray[np.float64], potential_grid.values))
     V_basis = vmat.prepare(
         basis,
         rovib_X,
@@ -161,7 +176,10 @@ def build_hamiltonian(
         """Evaluate the diatom-diatom PES grid."""
         if potential_grid is not None:
             return cast(NDArray[np.float64], potential_grid.take(radial_points))
-        return get_Vgrid_diatom_diatom(pes, radial_points, rovib_X.grids, rovib_Y.grids, theta_X, theta_Y, phi)
+        values = get_Vgrid_diatom_diatom(pes, radial_points, rovib_X.grids, rovib_Y.grids, theta_X, theta_Y, phi)
+        if system.molecule_exchange:
+            validate_exchange_potential(values)
+        return values
 
     def Vmat(radial_points: float | Sequence[float] | NDArray[np.float64]) -> NDArray[np.float64]:
         """Contract the PES grid into the channel basis."""

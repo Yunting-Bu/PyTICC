@@ -63,6 +63,11 @@ class ScatteringResult:
     timing: Timing | None = None
 
     @property
+    def molecule_exchange(self) -> int:
+        """Return the complete-molecule exchange block, or zero if unused."""
+        return self.basis.molecule_exchange if isinstance(self.basis, ChannelBasis | FSDiatomDiatomBasis) else 0
+
+    @property
     def open_closed(self) -> OpenClosedChannels:
         """Classify channels at the stored total energies."""
         return self.basis.open_closed(self.Etot)

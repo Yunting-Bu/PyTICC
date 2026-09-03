@@ -147,6 +147,8 @@ def _primitive_amplitudes(
     theta_weights_Y: NDArray[np.float64],
     phi: NDArray[np.float64],
     phi_weights: NDArray[np.float64],
+    *,
+    helicity_sign: int = 1,
 ) -> tuple[tuple[int, int, int, int, int], list[dict[ElectronicKey, NDArray[np.complex128]]]]:
     """Build weighted channel amplitudes resolved by signed primitive state."""
     theta_X = np.asarray(theta_X, dtype=np.float64)
@@ -162,7 +164,8 @@ def _primitive_amplitudes(
     angular_cache: dict[tuple[int, int, int, int, int, int], NDArray[np.complex128]] = {}
     amplitudes: list[dict[ElectronicKey, NDArray[np.complex128]]] = []
 
-    for channel in basis:
+    source = tuple(basis) if basis.exchange is None else basis.exchange.source_channels
+    for channel in source:
         block_X = basis.monomer_X.blocks[channel.block_X]
         block_Y = basis.monomer_Y.blocks[channel.block_Y]
         coefficients_X = block_X.transform @ block_X.coefficients[:, channel.tau_X]
@@ -182,7 +185,7 @@ def _primitive_amplitudes(
                     state_Y.two_j,
                     state_Y.two_omega,
                     channel.two_j12,
-                    channel.two_K,
+                    helicity_sign * channel.two_K,
                 )
                 if angular_key not in angular_cache:
                     angular_cache[angular_key] = _angular_amplitude(
@@ -202,6 +205,20 @@ def _primitive_amplitudes(
                 else:
                     channel_amplitudes[electronic_key] = amplitude
         amplitudes.append(channel_amplitudes)
+    if basis.exchange is not None:
+        adapted: list[dict[ElectronicKey, NDArray[np.complex128]]] = []
+        for indices, weights in zip(basis.exchange.source_indices, basis.exchange.coefficients, strict=True):
+            combined: dict[ElectronicKey, NDArray[np.complex128]] = {}
+            for index, weight in zip(indices, weights, strict=True):
+                if weight == 0.0:
+                    continue
+                for key, amplitude in amplitudes[index].items():
+                    if key in combined:
+                        combined[key] += weight * amplitude
+                    else:
+                        combined[key] = weight * amplitude
+            adapted.append(combined)
+        amplitudes = adapted
     return grid_shape, amplitudes
 
 
@@ -243,6 +260,9 @@ def prepare(
         ``(r_X,r_Y,theta_X,theta_Y,phi)``. Polar and torsional Gaussian weights
         are absorbed into A; PODVR radial contraction is discrete. Monomer
         signed coefficients are ``X=U C`` and are therefore already normalized.
+        For exchange-adapted channels replace A by A T_eta, using the real
+        expansion in basis.exchange; this gives T_eta.T V T_eta without
+        applying any additional normalization to the resulting matrix.
 
     Inputs:
         basis: FSDiatomDiatomBasis - parity-adapted two-diatom channels
