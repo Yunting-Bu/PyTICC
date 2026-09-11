@@ -1,0 +1,28 @@
+type = "A+B"
+two_J = 2
+system_parity = -1
+reduced_mass_amu = 3.638205
+energies_cm = [113.04080295]
+
+[channels]
+
+[fine_structure.atom_X]
+two_L = 2
+two_S = 2
+atom_parity = -1
+two_j_levels = [0, 2, 4]
+level_energies = [0.0, 7.076, 27.44]
+
+[fine_structure.atom_Y]
+two_L = 0
+two_S = 0
+atom_parity = 1
+two_j_levels = [0]
+level_energies = [0.0]
+
+[potential_grid]
+radial_boundaries = [4.0, 25.0]
+radial_half_steps = [0.025]
+
+[propagation]
+mode = "inelastic"

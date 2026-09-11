@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 import jax
 import numpy as np
@@ -10,16 +11,25 @@ from numpy.typing import NDArray
 
 from pyticc._typing import JaxDevice
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
+from pyticc.fine_structure.atom_atom import FSAtomAtomBasis
+from pyticc.fine_structure.atom_diatom import FSAtomDiatomBasis
 from pyticc.fine_structure.channel import FSChannelBasis
 from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
-from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_ElectricSF, get_Umat_FS_BF, get_Umat_FS_DiatomDiatom_BF
+from pyticc.matrix.centrifugal import (
+    get_Umat_BF,
+    get_Umat_ElectricSF,
+    get_Umat_FS_AtomAtom_BF,
+    get_Umat_FS_AtomDiatom_BF,
+    get_Umat_FS_BF,
+    get_Umat_FS_DiatomDiatom_BF,
+)
 from pyticc.system import Approx
 
 HamiltonianArray = NDArray[np.float64] | NDArray[np.complex128]
 Interaction = Callable[[float | NDArray[np.float64]], HamiltonianArray]
 BlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...]], tuple[HamiltonianArray, ...]]
 DeviceBlockInteraction = Callable[[NDArray[np.float64], tuple[tuple[int, ...], ...], JaxDevice], tuple[jax.Array, ...]]
-ScatteringBasis = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis
+ScatteringBasis = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis | FSAtomDiatomBasis | FSAtomAtomBasis
 
 
 # ----------------------------------------------------------------------------------------
@@ -89,9 +99,13 @@ class ScattHamiltonian:
         if isinstance(self.basis, ChannelBasisElectricSF):
             return get_Umat_ElectricSF(self.basis, channel_indices)
         if isinstance(self.basis, FSChannelBasis):
-            return get_Umat_FS_BF(self.basis, channel_indices)
+            return get_Umat_FS_BF(self.basis, channel_indices, coriolis=self.approx is not Approx.CS)
         if isinstance(self.basis, FSDiatomDiatomBasis):
-            return get_Umat_FS_DiatomDiatom_BF(self.basis, channel_indices)
+            return get_Umat_FS_DiatomDiatom_BF(self.basis, channel_indices, coriolis=self.approx is not Approx.CS)
+        if isinstance(self.basis, FSAtomAtomBasis):
+            return get_Umat_FS_AtomAtom_BF(self.basis, channel_indices, coriolis=self.approx is not Approx.CS)
+        if isinstance(self.basis, FSAtomDiatomBasis):
+            return get_Umat_FS_AtomDiatom_BF(self.basis, channel_indices, coriolis=self.approx is not Approx.CS)
         return get_Umat_BF(self.basis, channel_indices)
 
     @property
@@ -101,14 +115,14 @@ class ScattHamiltonian:
 
     def V(self, R: float | NDArray[np.float64]) -> HamiltonianArray:
         """Evaluate the channel interaction matrix at one or more radial points."""
-        return np.asarray(self.interaction(R))
+        return cast(HamiltonianArray, np.asarray(self.interaction(R)))
 
     def V_blocks(
         self,
         radial_points: NDArray[np.float64],
         channel_blocks: tuple[tuple[int, ...], ...],
         device: JaxDevice | None = None,
-    ) -> tuple[NDArray[np.float64] | jax.Array, ...]:
+    ) -> tuple[HamiltonianArray | jax.Array, ...]:
         """Evaluate interaction matrices for one or more channel blocks."""
         if device is not None and device.platform == "gpu" and self.device_block_interaction is not None:
             return self.device_block_interaction(radial_points, channel_blocks, device)

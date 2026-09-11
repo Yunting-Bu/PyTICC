@@ -9,14 +9,13 @@ from loguru import logger
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.kblock import KBlock, build_cs_blocks, build_nncc_blocks
 from pyticc.energy import EnergyInput, get_Etot
-from pyticc.fine_structure.channel import FSChannelBasis
 from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.match.finalize import finalize_K_block, finalize_reactive_scattering, finalize_scattering
 from pyticc.propagation.config import Propagation
 from pyticc.propagation.delves import propagate_delves
 from pyticc.propagation.grid import RadialSector
 from pyticc.propagation.runner import propagate, propagate_blocks
-from pyticc.result import CoupledStatesResult, ReactiveScatteringResult, ScatteringResult, Timing
+from pyticc.result import CoupledStatesResult, FieldFreeBasis, ReactiveScatteringResult, ScatteringResult, Timing
 from pyticc.scattering.hamiltonian import ScattHamiltonian
 from pyticc.scattering.model import get_scattering_model
 from pyticc.scattering.potential import PotentialGrid
@@ -125,11 +124,15 @@ def solve(
 
     if isinstance(basis, ChannelBasis | FSDiatomDiatomBasis) and basis.molecule_exchange and basis.n_channel == 0:
         logger.info("No allowed channels in this molecule-exchange block; skipping propagation")
-        dtype = np.complex128 if propagation.mode == "capture" else np.float64
+        empty_logD = (
+            np.empty((energies.size, 0, 0), dtype=np.complex128)
+            if propagation.mode == "capture"
+            else np.empty((energies.size, 0, 0), dtype=np.float64)
+        )
         return ScatteringResult(
             basis=basis,
             Etot=energies,
-            Y_propagated=np.empty((energies.size, 0, 0), dtype=dtype),
+            Y_propagated=empty_logD,
             asymptotic_transform=np.empty((0, 0)),
             L=np.empty(0),
             Smat=tuple(np.empty((0, 0), dtype=np.complex128) for _ in energies),
@@ -147,11 +150,7 @@ def solve(
         )
 
     else:
-        if isinstance(basis, FSChannelBasis):
-            message = "Fine-structure channels currently support exact coupled channels; CS/NNCC will be added after exact validation"
-            logger.error(message)
-            raise NotImplementedError(message)
-        basis_bf = cast(ChannelBasis, basis)
+        basis_bf = cast(FieldFreeBasis, basis)
         blocks = build_k_blocks(hamiltonian)
         channel_blocks = tuple(block.channel_indices for block in blocks)
         Y_blocks = propagate_blocks(hamiltonian, channel_blocks, energies, radial_sectors, propagation)
@@ -163,6 +162,7 @@ def solve(
                 energies,
                 hamiltonian.reduced_mass,
                 radial_sectors[-1].radial_end,
+                approx=approximation,
             )
             for block, Y_BF in zip(blocks, Y_blocks, strict=True)
         )
@@ -185,7 +185,7 @@ def solve(
 def _build_hamiltonian(system: ScattSystem, potential_grid: PotentialGrid) -> ScattHamiltonian:
     """Build the geometry-specific Hamiltonian around cached raw PES values."""
     if system.scattering_type is None:
-        message = "A ScattSystem solve requires an explicit scattering_type"
+        message = "A ScattSystem solve requires a system built by build_ScattSystem"
         logger.error(message)
         raise TypeError(message)
     if potential_grid.scattering_type is not system.scattering_type:
@@ -203,7 +203,7 @@ def _build_hamiltonian(system: ScattSystem, potential_grid: PotentialGrid) -> Sc
 def build_k_blocks(hamiltonian: ScattHamiltonian) -> tuple[KBlock, ...]:
     """Build CS or NNCC propagation blocks for one Hamiltonian."""
     approximation = hamiltonian.approx
-    basis = cast(ChannelBasis, hamiltonian.basis)
+    basis = cast(FieldFreeBasis, hamiltonian.basis)
     if approximation is Approx.CS:
         return build_cs_blocks(basis)
     if approximation is Approx.NNCC:

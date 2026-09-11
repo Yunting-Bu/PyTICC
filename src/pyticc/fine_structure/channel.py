@@ -178,6 +178,11 @@ class FSChannel:
     two_K: int
     E_int: float
 
+    @property
+    def K(self) -> float:
+        """Return the physical BF projection for shared CS/NNCC blocking."""
+        return self.two_K / 2.0
+
 
 # ----------------------------------------------------------------------------------------
 
@@ -204,6 +209,11 @@ class FSChannelBasis(Sequence[FSChannel]):
     def n_channel(self) -> int:
         """Return the number of scattering channels."""
         return len(self.channels)
+
+    @property
+    def molecule_exchange(self) -> int:
+        """Return zero because atom--diatom channels have no molecule exchange."""
+        return 0
 
     @property
     def Jtot(self) -> float:

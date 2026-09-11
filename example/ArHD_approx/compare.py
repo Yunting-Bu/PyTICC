@@ -95,7 +95,6 @@ def main() -> None:
             label: ticc.build_ScattSystem(
                 ticc.AtomSpec(),
                 diatom,
-                scattering_type="A+BC",
                 Jtot=JTOT,
                 system_parity=SYSTEM_PARITY,
                 channel=channel,

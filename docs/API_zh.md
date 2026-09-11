@@ -88,13 +88,13 @@ result = ticc.run("input.toml")
 run(
     source: str | Path,
     *,
-    pes: PESWrapper | DiabaticPESWrapper | None = None,
+    pes: PESWrapper | DiabaticPESWrapper | SpinResolvedAtomDiatomPES | SpinResolvedDiatomDiatomPES | None = None,
 ) -> ScatteringResult | CoupledStatesResult
 ```
 
 - `source`：TOML 输入文件路径。文件内的相对路径均相对于该文件所在目录解析。
 - `pes`：可选的已构造 PES 对象。省略时，根据 TOML 的 `[pes]` 段编译或加载 Fortran PES。
-- 当前 TOML 入口支持 `A+BC`、`A+BC_electric`、`A+BC_diabatic` 和 `AB+CD`。
+- 当前 TOML 入口支持 `A+BC`、`A+BC_electric`、`A+BC_both_fs`、`A+BC_diabatic`、`AB+CD` 和 `AB+CD_fine_structure`。精细结构输入的电子势需要通过 `pes=` 传入。
 - 原子–三原子和 Delves 反应散射目前使用 Python 接口。
 
 ### 2.2 Python 组合式入口
@@ -139,7 +139,6 @@ try:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         hf,
-        scattering_type="A+BC",
         Jtot=0,
         system_parity=1,
         channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
@@ -252,9 +251,11 @@ lambda_pes = ticc.as_lambda_pes(scalar_pes)
 ```python
 SpinResolvedDiatomDiatomPES(
     interaction,
-    two_total_spins,
-    orbital_states,
+    two_total_spins=(),
+    orbital_states=(),
     interaction_many=None,
+    monomer_X=None,
+    monomer_Y=None,
 )
 ```
 
@@ -306,6 +307,8 @@ pes = ticc.as_spin_resolved_diatom_diatom_pes(
 ```
 
 适配器在所有允许的 $\mathcal S$ 上复制标量势，并在 orbital space 中乘单位矩阵。
+
+直接使用 Python 组合接口时必须提供 `two_total_spins` 和 `orbital_states`。通过 `ticc.run()` 使用 TOML 时可以将二者留空，由 `[fine_structure.pes]` 绑定；未绑定的对象不能直接求值或传给 `build_ScattSystem()`。
 
 ### 3.5 `TotalPES`
 
@@ -783,7 +786,6 @@ try:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         oh,
-        scattering_type="A+BC_fine_structure",
         two_J=1,
         system_parity=1,
         channel=ticc.ChannelSpec(E_Y_cut=100.0 * ticc.CM2AU, K_cut=None),
@@ -838,7 +840,6 @@ build_fs_diatom_diatom_channels(
 system = ticc.build_ScattSystem(
     monomer_X,
     monomer_Y,
-    scattering_type="AB+CD_fine_structure",
     two_J=2,
     system_parity=1,
     channel=ticc.ChannelSpec(
@@ -915,7 +916,6 @@ build_ScattSystem(
     monomer_X,
     monomer_Y=None,
     *,
-    scattering_type,
     Jtot=None,
     two_J=None,
     system_parity=None,
@@ -935,7 +935,7 @@ build_ScattSystem(
 
 主要组合方式如下：
 
-| `scattering_type` | `monomer_X` | `monomer_Y` | 守恒量/附加参数 | PES 参数 |
+| 自动识别的内部类型 | `monomer_X` | `monomer_Y` | 守恒量/附加参数 | PES 参数 |
 | --- | --- | --- | --- | --- |
 | `A+BC` | `AtomSpec` | `DiatomBasis` | `Jtot`、`system_parity` | `potential`、`reduced_mass` |
 | `A+BC_diabatic` | `AtomSpec` | `DiabaticDiatomBasis` | `Jtot`、`system_parity` | `potential`、`reduced_mass` |
@@ -943,15 +943,23 @@ build_ScattSystem(
 | `A+BCD` | `AtomSpec` | `TriatomBasis` | `Jtot`、`system_parity` | `potential`、`reduced_mass` |
 | `A+BC_electric` | `AtomSpec` | `DiatomElectricBasis` | `M`、`lmax` | `potential`、`reduced_mass` |
 | `A+BC_fine_structure` | `AtomSpec` | `FSMonomerBasis` | `two_J`、`system_parity` | `LambdaPES`、`reduced_mass` |
+| `A+BC_both_fs` | `FSAtomBasis` | `FSMonomerBasis` | `two_J`、`system_parity` | `SpinResolvedAtomDiatomPES`、`reduced_mass` |
 | `AB+CD_fine_structure` | `FSMonomerBasis` | `FSMonomerBasis` | `two_J`、`system_parity` | `PESWrapper` 或 `SpinResolvedDiatomDiatomPES`、`reduced_mass`、可选 `magnetic_dipole_coefficient` |
 | `A+BC_Delves` | `DelvesMonomer` | 省略 | `Jtot`、`system_parity`、`jmax` | `total_potential` |
 
-近似方法为 `Approx.EXACT`、`Approx.CS` 或 `Approx.NNCC`。`K_delta` 仅控制 NNCC 中相邻 `K` 的耦合窗口。非绝热、电场、精细结构和 Delves 反应散射目前只支持 exact CC。
+近似方法为 `Approx.EXACT`、`Approx.CS` 或 `Approx.NNCC`。`K_delta` 仅控制 NNCC 中相邻 `K` 的耦合窗口。场自由精细结构体系 `A+BC_fine_structure` 和 `AB+CD_fine_structure` 也支持这三种方法；非绝热、电场和 Delves 反应散射目前只支持 exact CC。完整分子交换适配仍仅支持 exact CC。
+
+精细结构的调用保持原接口，在 `build_ScattSystem(...)` 中设置 `approx=Approx.CS`，或 `approx=Approx.NNCC, K_delta=1` 即可。单体能级、精细结构混合系数和 PES 不变；这些近似只改变不同 BF 投影之间的 Coriolis 耦合：
+
+- CS 独立传播每个 `K`，删除所有有符号投影之间的 Coriolis 耦合。半整数体系的 `K=+1/2 ↔ -1/2` 耦合虽在宇称适配后成为对角项，也一并删除。
+- NNCC 保留每个窗口 `|K-K_center| <= K_delta` 内的 exact 离心矩阵，包括半整数边界项。`K_delta=1` 表示相邻一个物理 K（步长 1），不是 `two_K` 的步长 1。
+- 整数和半整数 K 使用相同分块与入口通道归属规则；窗口覆盖全部 K 时恢复同一基组下的 exact CC。适用该接口不代表任意能区均可忽略 Coriolis 耦合，低能和共振附近须与 exact 检查。
+- CPU 及 JAX/GPU 均复用已有 PES 格点和分块收缩；无需为每个窗口重新计算 PES。
 
 参数作用域和互斥关系：
 
 - 普通场自由体系传 `Jtot`；精细结构体系传 `two_J`；两者不能同时传入。
-- `scattering_type` 必填，可传上表字符串或对应的 `ScatteringType` 枚举成员；程序不再根据单体类型猜测计算类型。
+- 程序完全根据 `monomer_X`、`monomer_Y` 的具体基组类型自动选择内部散射实现，用户不传 `scattering_type`。
 - `system_parity` 只能取 `-1` 或 `1`。
 - 电场体系使用 `M` 和 `lmax`，不使用 `Jtot/system_parity`。
 - 非反应体系使用 `potential`，Delves 体系使用 `total_potential`，不能混用。
@@ -969,7 +977,6 @@ build_ScattSystem(
 ```python
 system = ticc.build_ScattSystem(
     monomer, monomer,  # 首版要求复用同一个 DiatomBasis 对象
-    scattering_type="AB+CD",
     Jtot=J, system_parity=P,
     molecule_exchange=+1,
     potential=pes, reduced_mass=collision_mass,
@@ -995,7 +1002,6 @@ $V_\eta=T_\eta^\dagger V T_\eta$，并在该通道基中施加普通散射或 ca
 ```python
 system = ticc.build_ScattSystem(
     fs_monomer, fs_monomer,  # 复用同一个 FSMonomerBasis 对象
-    scattering_type="AB+CD_fine_structure",
     two_J=2 * J, system_parity=P,
     molecule_exchange=+1,
     potential=spin_resolved_pes,
@@ -1191,6 +1197,8 @@ CS 和 NNCC 的结果按 K 分块保存：
 
 `KBlockResult.block.channel_indices` 是该块在完整 `basis` 中包含的全局通道索引；`owned_channel_indices` 表示该重叠窗口负责输出的通道。`Smat_asymptotic[i]` 在该块的渐近基中，`Smat_BF[i]` 则变换回 K 标记的 BF 开放通道顺序。CS/NNCC 的 `CoupledStatesResult` 没有顶层 `Smat` 属性。
 
+精细结构结果保留 `tau` 和单体宇称标签，可用 `report.smatrix(result, block_index=0)` 输出指定块。窗口匹配中的 `L` 来自所保留离心子矩阵的本征值，可能不是整数，不能直接当作 exact SF 分波用于 DCS。统计 NNCC 概率时，只取每块 `owned_channel_indices` 对应的入口列，出口在该窗口内求和，避免重叠窗口重复计数。
+
 ### 9.3 `ReactiveScatteringResult`
 
 常用成员：
@@ -1248,7 +1256,7 @@ ticc.report.smatrix(
 
 ## 11. TOML 输入结构
 
-`ticc.run()` 当前只覆盖四类非反应计算；精细结构、原子–三原子和 Delves 反应散射必须使用 Python 组合式接口。
+`ticc.run()` 覆盖常规四类非反应计算，并支持精细结构原子 + 精细结构双原子；后者的电子势当前须作为 Python 对象传入。原子–三原子和 Delves 反应散射仍使用 Python 组合式接口。
 
 ### 11.1 顶层字段
 
@@ -1263,7 +1271,7 @@ energies_cm = [100.0, 300.0, 500.0]
 
 `energies_cm` 可以是数值数组，也可以是一列波数能量的文本文件路径。TOML 入口会自动从 cm⁻¹ 转换为 Hartree。
 
-- `type` 必填，且大小写敏感。
+- `type` 可省略或写成 `"auto"`；程序由 `atom/diatom`、`diatom_X/diatom_Y`、`[electric]` 和 `[fine_structure]` 自动选择。旧的显式类型字符串继续有效且大小写敏感。
 - 场自由计算需要非负整数 `Jtot` 和 `system_parity = -1/1`。
 - 电场计算用整数 `M` 代替 `Jtot/system_parity`。
 - `atom` 是单个元素符号字符串；`diatom`、`diatom_X`、`diatom_Y` 必须恰有两个元素符号。
@@ -1326,6 +1334,8 @@ print_verbose = false
 | `A+BC_diabatic` | 同上 | `[basis]`，截断可按电子态给数组 | `n_theta` | `E_Y_cut_cm` |
 | `AB+CD` | `diatom_X`、`diatom_Y`、`Jtot`、`system_parity` | `[basis_X]`、`[basis_Y]` | `n_theta_X`、`n_theta_Y`、`n_phi` | `E_X_cut_cm`、`E_Y_cut_cm` |
 | `A+BC_electric` | `atom`、`diatom`、`M` | `[basis]` 和 `[electric]` | `n_theta_r`、`n_theta_R`、`n_delta` | `E_Y_cut_cm` |
+| `A+BC_both_fs` | `atom`、`diatom`、`two_J`、`system_parity` | `[basis]` 和 `[fine_structure]` | `n_theta` | `E_X_cut_cm`、`E_Y_cut_cm` |
+| `AB+CD_fine_structure` | `diatom_X`、`diatom_Y`、`two_J`、`system_parity` | `[basis_X]`、`[basis_Y]` 和 `[fine_structure]` | `n_theta_X`、`n_theta_Y`、`n_phi` | `E_X_cut_cm`、`E_Y_cut_cm` |
 
 普通双原子 `[basis]` 段包含 `r`、`n_dvr`、`n_podvr`、`vmax` 和 `jmax`。场修饰双原子还包含 `lmax`、`n_alpha`，并用 `[electric]` 的 `strength_au` 和 `response_csv` 指定电场与响应数据。
 
@@ -1382,6 +1392,70 @@ E_Y_cut_cm = 2000.0
 
 Electric-SF 不读取 `K_cut`，且只允许 exact CC。`response_csv` 相对于主输入 TOML 解析。
 
+双边精细结构原子–双原子由两个子段的存在自动启用：
+
+```toml
+type = "A+BC" # 可省略；这里仍可只写几何类型
+atom = "O"
+diatom = ["O", "H"]
+two_J = 3
+system_parity = -1
+
+[basis]
+r = [1.2, 4.0]
+n_dvr = 100
+n_podvr = 5
+vmax = 0
+
+[fine_structure.atom]
+two_L = 2
+two_S = 2
+atom_parity = 1
+two_j_levels = [0, 2, 4]
+level_energies = [0.0, 158.265, 226.977]
+energy_unit = "cm-1"
+
+[fine_structure.diatom]
+two_lambda_abs = 2
+two_S = 1
+two_j_values = [1, 3, 5]
+reflection_parity = 1
+constants_csv = "constant_2Pi_OH.csv"
+
+[fine_structure.pes]
+two_total_spins = [1, 3]
+orbital_states = [
+    { two_lambda_atom = -2, two_lambda_Y = -2 },
+    { two_lambda_atom = -2, two_lambda_Y =  2 },
+    { two_lambda_atom =  0, two_lambda_Y = -2 },
+    { two_lambda_atom =  0, two_lambda_Y =  2 },
+    { two_lambda_atom =  2, two_lambda_Y = -2 },
+    { two_lambda_atom =  2, two_lambda_Y =  2 },
+]
+
+[quadrature]
+n_theta = 24
+
+[channels]
+E_X_cut_cm = 1000.0
+E_Y_cut_cm = 3000.0
+K_cut = "none"
+```
+
+也可用 `[fine_structure.diatom.constants]` 提供一套由所有振动态共享的常数，并在其中写 `unit = "cm-1"` 及 `A/B/D/...`。多振动态通常使用 `constants_csv`。`[fine_structure.pes]` 是电子数组顺序的权威定义：`interaction(...)[g,s,i,j]` 中 `s` 对应 `two_total_spins[s]`，`i/j` 对应 `orbital_states[i/j]`。运行时传入的 `SpinResolvedAtomDiatomPES` 只需提供数值回调和孤立双原子势：
+
+```python
+pes = ticc.SpinResolvedAtomDiatomPES(
+    interaction=electronic_interaction,
+    monomer_Y=oh_potential,
+)
+result = ticc.run("input.toml", pes=pes)
+```
+
+2+2 精细结构使用同样的 `[fine_structure.pes]`，但每个轨道标签写成 `{ two_lambda_X = ..., two_lambda_Y = ... }`；两个单体分别由 `[fine_structure.diatom_X]` 和 `[fine_structure.diatom_Y]` 定义。`SpinResolvedDiatomDiatomPES` 只需额外提供 `monomer_X`、`monomer_Y`。完整可运行写法见 `example/H2OH_2Pi/`。
+
+`[electric]` 与 `[fine_structure]` 同时出现会明确报错，因为精细结构 + 外场的联合通道基尚未实现。
+
 ### 11.4 捕获边界
 
 捕获计算不使用新的 `type`，而是在普通几何输入中设置：
@@ -1406,6 +1480,8 @@ mode = "capture"
 - `example/HO2_diabatic/input.toml`
 - `example/ArHF_electric/input.toml`
 - `example/K2Rb2_capture/input.toml`
+- `example/H2B_2P/input.toml`
+- `example/H2OH_2Pi/input.toml`
 
 ## 12. 单位、质量与辅助函数
 
@@ -1425,7 +1501,7 @@ element_masses_au(*symbols: str) -> tuple[float, ...]
 reduced_mass(mass1: float, mass2: float) -> float
 ```
 
-内置元素符号目前包括 `H`、`D`、`He`、`Li`、`C`、`N`、`O`、`F`、`S`、`Cl`、`Ar`、`K` 和 `Rb`。质量以电子质量返回。`H`、`D`、`C` 等采用具体同位素质量；需要其他同位素或更精确的体系质量时，应由调用方直接提供。
+内置元素符号目前包括 `H`、`D`、`He`、`Li`、`B`、`C`、`N`、`O`、`F`、`S`、`Cl`、`Ar`、`K` 和 `Rb`。质量以电子质量返回。`H`、`D`、`B`、`C` 等采用具体同位素质量；需要其他同位素或更精确的体系质量时，应由调用方直接提供。
 
 `reduced_mass(m1, m2)` 计算 $\mu=m_1m_2/(m_1+m_2)$。两个输入应使用相同单位；PyTICC 的散射和单体基接口要求结果为原子单位质量。
 
@@ -1449,13 +1525,13 @@ PyTICC 使用 `loguru` 输出诊断信息。异常消息通常包含出错字段
 
 | 名称 | 签名/用途 |
 | --- | --- |
-| `run` | `run(source, *, pes=None)`：运行四类 TOML 非反应输入 |
-| `build_ScattSystem` | `build_ScattSystem(monomer_X, monomer_Y=None, *, scattering_type, Jtot=None, two_J=None, system_parity=None, M=None, channel=None, jmax=None, lmax=None, approx=Approx.EXACT, K_delta=1, potential=None, total_potential=None, reduced_mass=None, magnetic_dipole_coefficient=0.0)` |
+| `run` | `run(source, *, pes=None)`：运行 TOML 非反应输入，包括双边精细结构 A+BC |
+| `build_ScattSystem` | `build_ScattSystem(monomer_X, monomer_Y=None, *, Jtot=None, two_J=None, system_parity=None, M=None, channel=None, jmax=None, lmax=None, approx=Approx.EXACT, K_delta=1, potential=None, total_potential=None, reduced_mass=None, magnetic_dipole_coefficient=0.0)` |
 | `build_fs_hamiltonian` | `build_fs_hamiltonian(system, *, n_theta=24)` |
 | `prepare_potential` | `prepare_potential(system, boundaries, half_steps, *, processes=1, **quadrature)` |
 | `solve` | `solve(system, Etot, potential_grid, propagation)` |
 | `Approx` | 枚举：`EXACT`、`CS`、`NNCC`；字符串值分别为 `exact/cs/nncc` |
-| `ScatteringType` | 枚举：`A+BC`、`A+BC_electric`、`A+BC_fine_structure`、`A+BC_diabatic`、`A+BC_Delves`、`AB+CD`、`AB+CD_fine_structure`、`A+BCD` |
+| `ScatteringType` | 枚举：`A+BC`、`A+BC_electric`、`A+BC_fine_structure`、`A+BC_both_fs`、`A+BC_diabatic`、`A+BC_Delves`、`AB+CD`、`AB+CD_fine_structure`、`A+BCD` |
 | `ChannelSpec` | 通道筛选 dataclass，详见第 6.1 节 |
 | `Propagation` | 传播模式、内存和设备配置 dataclass，详见第 8.1 节 |
 | `PotentialGrid` | 径向/求积格点和原始 PES 值的不可变容器 |
@@ -1471,7 +1547,7 @@ PyTICC 使用 `loguru` 输出诊断信息。异常消息通常包含出错字段
 | `DiabaticPESWrapper` | `DiabaticPESWrapper(n_state, monomer, interaction, interaction_many=None)` |
 | `LambdaPES` | `LambdaPES(interaction, monomer_Y=None, interaction_many=None)` |
 | `OrbitalState` | 一个有符号 $(2\Lambda_X,2\Lambda_Y)$ 轨道乘积态 |
-| `SpinResolvedDiatomDiatomPES` | `SpinResolvedDiatomDiatomPES(interaction, two_total_spins, orbital_states, interaction_many=None)` |
+| `SpinResolvedDiatomDiatomPES` | Python 组合接口可直接给电子顺序；TOML 入口可只给 `interaction`、`monomer_X/Y`，由 `[fine_structure.pes]` 绑定顺序 |
 | `TotalPES` | `TotalPES(potential)` |
 | `as_lambda_pes` | `as_lambda_pes(pes: PESWrapper) -> LambdaPES` |
 | `as_spin_resolved_diatom_diatom_pes` | 把标量 2+2 PES 提升为所有总自旋面相同、orbital identity 的表示 |

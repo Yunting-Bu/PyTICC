@@ -5,6 +5,8 @@ from numpy.typing import NDArray
 
 from pyticc.basis.angle import lambda_plus
 from pyticc.basis.channel import Channel, ChannelBasis, ChannelBasisElectricSF
+from pyticc.fine_structure.atom_atom import FSAtomAtomBasis
+from pyticc.fine_structure.atom_diatom import FSAtomDiatomBasis
 from pyticc.fine_structure.channel import FSChannelBasis
 from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.system import MolInnerState
@@ -153,40 +155,16 @@ def get_Umat_FS_BF(
     Inputs:
         basis: FSChannelBasis - fixed-(J,P) fine-structure channels
         channel_indices: Sequence[int] | None - selected complete-basis positions
-        coriolis: bool - whether to retain nearest-neighbor K coupling
+        coriolis: bool - retain signed-K Coriolis coupling, including the
+            folded +/-1/2 diagonal term; False gives strict CS
 
     Returns:
         matrix: NDArray[np.float64] - dimensionless centrifugal matrix
     """
-    indices = tuple(range(basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    indices = range(basis.n_channel) if channel_indices is None else channel_indices
     channels = tuple(basis[index] for index in indices)
-    matrix = np.zeros((len(channels), len(channels)), dtype=np.float64)
-    J = basis.two_J / 2.0
-    groups: dict[tuple[int, int], dict[int, int]] = {}
-    for local_index, channel in enumerate(channels):
-        block = basis.monomer.blocks[channel.block]
-        j = block.two_j / 2.0
-        K = channel.two_K / 2.0
-        matrix[local_index, local_index] = J * (J + 1.0) + j * (j + 1.0) - 2.0 * K**2
-        if channel.two_K == 1:
-            exponent = (block.two_j - basis.two_J) // 2
-            parity_phase = basis.system_parity * block.parity * (-1) ** exponent
-            matrix[local_index, local_index] -= parity_phase * (J + 0.5) * (j + 0.5)
-        groups.setdefault((channel.block, channel.tau), {})[channel.two_K] = local_index
-    if not coriolis:
-        return matrix
-    for (block_index, _), K_to_index in groups.items():
-        j = basis.monomer.blocks[block_index].two_j / 2.0
-        for two_K, local_index in K_to_index.items():
-            next_index = K_to_index.get(two_K + 2)
-            if next_index is None:
-                continue
-            K = two_K / 2.0
-            boundary = np.sqrt(2.0) if two_K == 0 else 1.0
-            coupling = -boundary * np.sqrt(J * (J + 1.0) - K * (K + 1.0)) * np.sqrt(j * (j + 1.0) - K * (K + 1.0))
-            matrix[local_index, next_index] = coupling
-            matrix[next_index, local_index] = coupling
-    return matrix
+    rows = [((c.block, c.tau), basis.monomer.blocks[c.block].two_j, c.two_K, basis.monomer.blocks[c.block].parity) for c in channels]
+    return _get_Umat_FS_ladders(basis.two_J, basis.system_parity, rows, coriolis=coriolis)
 
 
 # ----------------------------------------------------------------------------------------
@@ -231,46 +209,158 @@ def get_Umat_FS_DiatomDiatom_BF(
     Inputs:
         basis: FSDiatomDiatomBasis - fixed-(J,P) two-diatom channels
         channel_indices: Sequence[int] | None - selected complete-basis positions
-        coriolis: bool - whether to retain nearest-neighbor K coupling
+        coriolis: bool - retain signed-K Coriolis coupling, including the
+            folded +/-1/2 diagonal term; False gives strict CS
 
     Returns:
         matrix: NDArray[np.float64] - dimensionless BF centrifugal matrix,
             shape ``(n_selected,n_selected)``
     """
-    indices = tuple(range(basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    indices = range(basis.n_channel) if channel_indices is None else channel_indices
     channels = tuple(basis[index] for index in indices)
-    matrix = np.zeros((len(channels), len(channels)), dtype=np.float64)
-    J = basis.two_J / 2.0
-    groups: dict[tuple[int, int, int, int, int], dict[int, int]] = {}
-
-    for local_index, channel in enumerate(channels):
-        block_X = basis.monomer_X.blocks[channel.block_X]
-        block_Y = basis.monomer_Y.blocks[channel.block_Y]
-        j12 = channel.two_j12 / 2.0
-        K = channel.two_K / 2.0
-        matrix[local_index, local_index] = J * (J + 1.0) + j12 * (j12 + 1.0) - 2.0 * K**2
-        if channel.two_K == 1:
-            exponent = (channel.two_j12 - basis.two_J) // 2
-            parity_phase = basis.system_parity * block_X.parity * block_Y.parity * (-1) ** exponent
-            matrix[local_index, local_index] -= parity_phase * (J + 0.5) * (j12 + 0.5)
-        key = (channel.block_X, channel.tau_X, channel.block_Y, channel.tau_Y, channel.two_j12)
-        groups.setdefault(key, {})[channel.two_K] = local_index
-
-    if not coriolis:
-        return matrix
-
-    for key, K_to_index in groups.items():
-        j12 = key[-1] / 2.0
-        for two_K, local_index in K_to_index.items():
-            next_index = K_to_index.get(two_K + 2)
-            if next_index is None:
-                continue
-            K = two_K / 2.0
-            boundary = np.sqrt(2.0) if two_K == 0 else 1.0
-            coupling = -boundary * np.sqrt(J * (J + 1.0) - K * (K + 1.0)) * np.sqrt(j12 * (j12 + 1.0) - K * (K + 1.0))
-            matrix[local_index, next_index] = coupling
-            matrix[next_index, local_index] = coupling
-    return matrix
+    rows = [
+        (
+            (c.block_X, c.tau_X, c.block_Y, c.tau_Y, c.two_j12),
+            c.two_j12,
+            c.two_K,
+            basis.monomer_X.blocks[c.block_X].parity * basis.monomer_Y.blocks[c.block_Y].parity,
+        )
+        for c in channels
+    ]
+    return _get_Umat_FS_ladders(basis.two_J, basis.system_parity, rows, coriolis=coriolis)
 
 
 # ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def get_Umat_FS_AtomDiatom_BF(
+    basis: FSAtomDiatomBasis,
+    channel_indices: Sequence[int] | None = None,
+    *,
+    coriolis: bool = True,
+) -> NDArray[np.float64]:
+    r"""
+    Return the BF centrifugal matrix for a fine-structure atom and diatom.
+
+    Formula:
+        With ``j_12=j_X+j_Y`` and nonnegative parity-adapted helicity K,
+
+        U_KK = J(J+1)+j_12(j_12+1)-2K^2,
+
+        U_(K+1,K) = -b_K
+          sqrt[J(J+1)-K(K+1)]
+          sqrt[j_12(j_12+1)-K(K+1)],
+
+        where ``b_K=sqrt(2)`` at the integer K=0 boundary and one otherwise.
+        For half-integer J and j_12, folding the primitive K=-1/2 channel into
+        the parity-adapted K=+1/2 channel adds
+
+        Delta U_(1/2,1/2)
+          = -s (J+1/2)(j_12+1/2),
+
+        s = P epsilon_X epsilon_Y (-1)^(j_12-J),
+
+        where ``epsilon_X`` is the intrinsic atomic parity. The matrix is
+        dimensionless. Its row and column order follows ``channel_indices`` or
+        the complete basis order. Coriolis coupling is restricted to channels
+        with identical atomic level, molecular eigenlevel, and j_12.
+
+    Inputs:
+        basis: FSAtomDiatomBasis - fixed-(J,P) atom-diatom fine-structure
+            channels
+        channel_indices: Sequence[int] | None - selected complete-basis positions
+        coriolis: bool - retain signed-K Coriolis coupling, including the
+            folded +/-1/2 diagonal term; False gives strict CS
+
+    Returns:
+        matrix: NDArray[np.float64] - dimensionless BF centrifugal matrix,
+            shape ``(n_selected,n_selected)``
+    """
+    indices = range(basis.n_channel) if channel_indices is None else channel_indices
+    channels = tuple(basis[index] for index in indices)
+    rows = [
+        ((c.level_X, c.block_Y, c.tau_Y, c.two_j12), c.two_j12, c.two_K, basis.atom.atom_parity * basis.monomer_Y.blocks[c.block_Y].parity)
+        for c in channels
+    ]
+    return _get_Umat_FS_ladders(basis.two_J, basis.system_parity, rows, coriolis=coriolis)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+def _get_Umat_FS_ladders(
+    two_J: int,
+    system_parity: int,
+    rows: Sequence[tuple[tuple[int, ...], int, int, int]],
+    *,
+    coriolis: bool = True,
+) -> NDArray[np.float64]:
+    r"""Build the shared parity-adapted centrifugal operator.
+
+    Formula:
+        U_KK=J(J+1)+j(j+1)-2K^2; U_(K+1,K)=-b_K
+        sqrt[J(J+1)-K(K+1)] sqrt[j(j+1)-K(K+1)].
+        b_0=sqrt(2), otherwise b_K=1. At K=1/2 add
+        -P epsilon (-1)^(j-J)(J+1/2)(j+1/2) to the diagonal.
+        These are normalized parity-adapted matrix elements. Strict CS
+        omits both adjacent-K and folded half-integer Coriolis terms.
+
+    Inputs:
+        two_J: int - twice total angular momentum
+        system_parity: int - total inversion parity
+        rows: Sequence - (internal ladder key, twice-j, twice-K,
+            internal parity product), in selected channel order
+        coriolis: bool - include Coriolis terms
+
+    Returns:
+        matrix: NDArray[np.float64] - dimensionless operator in row order
+    """
+    matrix = np.zeros((len(rows), len(rows)), dtype=np.float64)
+    J = two_J / 2.0
+    groups: dict[tuple[int, ...], dict[int, int]] = {}
+    for index, (key, two_j, two_K, epsilon) in enumerate(rows):
+        j, K = two_j / 2.0, two_K / 2.0
+        matrix[index, index] = J * (J + 1) + j * (j + 1) - 2 * K**2
+        if coriolis and two_K == 1:
+            phase = system_parity * epsilon * (-1) ** ((two_j - two_J) // 2)
+            matrix[index, index] -= phase * (J + 0.5) * (j + 0.5)
+        groups.setdefault(key, {})[two_K] = index
+    if coriolis:
+        for ladder in groups.values():
+            for two_K, index in ladder.items():
+                adjacent = ladder.get(two_K + 2)
+                if adjacent is None:
+                    continue
+                j, K = rows[index][1] / 2.0, two_K / 2.0
+                boundary = np.sqrt(2.0) if two_K == 0 else 1.0
+                value = -boundary * lambda_plus(J, K) * lambda_plus(j, K)
+                matrix[index, adjacent] = matrix[adjacent, index] = value
+    return matrix
+
+
+def get_Umat_FS_AtomAtom_BF(
+    basis: FSAtomAtomBasis,
+    channel_indices: Sequence[int] | None = None,
+    *,
+    coriolis: bool = True,
+) -> NDArray[np.float64]:
+    r"""Return the two-atom dimensionless BF centrifugal matrix.
+
+    Formula:
+        Use the normalized parity-adapted operator defined in
+        _get_Umat_FS_ladders, with j=j_12, epsilon=epsilon_X epsilon_Y
+        and ladder=(level_X,level_Y,2j_12).
+
+    Inputs:
+        basis: FSAtomAtomBasis - fixed-(J,P) channels
+        channel_indices: Sequence[int] | None - selected channel positions
+        coriolis: bool - include adjacent-K and folded K=1/2 terms
+
+    Returns:
+        matrix: NDArray[np.float64] - dimensionless operator in selected order
+    """
+    indices = range(basis.n_channel) if channel_indices is None else channel_indices
+    epsilon = basis.monomer_X.atom_parity * basis.monomer_Y.atom_parity
+    rows = [(basis[i].ladder, basis[i].two_j12, basis[i].two_K, epsilon) for i in indices]
+    return _get_Umat_FS_ladders(basis.two_J, basis.system_parity, rows, coriolis=coriolis)

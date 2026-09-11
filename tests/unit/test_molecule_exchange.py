@@ -46,7 +46,6 @@ def _system(monomer: ticc.DiatomBasis, eta: int = 0, J: int = 1, parity: int = 1
     return ticc.build_ScattSystem(
         monomer,
         monomer,
-        scattering_type="AB+CD",
         Jtot=J,
         system_parity=parity,
         molecule_exchange=eta,
@@ -265,7 +264,6 @@ def test_zero_exchange_keeps_labeled_channels_and_legacy_matrices() -> None:
     legacy = ticc.build_ScattSystem(
         monomer,
         monomer,
-        scattering_type="AB+CD",
         Jtot=1,
         system_parity=1,
         potential=_pes(),

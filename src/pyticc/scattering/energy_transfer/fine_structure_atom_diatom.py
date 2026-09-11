@@ -15,7 +15,7 @@ from pyticc.fine_structure.channel import FSChannelBasis, FSMonomerBasis
 from pyticc.pes.lambda_pes import LambdaPES, RadialInput, get_lambda_grid_atom_diatom
 from pyticc.scattering.hamiltonian import ScattHamiltonian
 from pyticc.scattering.potential import PotentialGrid, _potential_radial_grid, _require_type
-from pyticc.system import Approx, ScatteringType, ScattSystem
+from pyticc.system import ScatteringType, ScattSystem
 
 _SCATTERING_TYPE = ScatteringType.ATOM_DIATOM_FINE_STRUCTURE
 
@@ -77,7 +77,7 @@ def build_hamiltonian(
     potential_grid: PotentialGrid | None = None,
 ) -> ScattHamiltonian:
     """
-    Build an exact BF atom-diatom Hamiltonian in the FS basis.
+    Build a BF atom-diatom Hamiltonian for exact CC, CS, or NNCC in the FS basis.
 
     Inputs:
         system: ScattSystem - atom plus fine-structure diatom system containing
@@ -86,7 +86,7 @@ def build_hamiltonian(
         potential_grid: PotentialGrid | None - optional precomputed raw PES grid
 
     Returns:
-        hamiltonian: ScattHamiltonian - exact coupled-channel Hamiltonian
+        hamiltonian: ScattHamiltonian - fine-structure coupled-channel Hamiltonian
     """
     if not isinstance(system.monomer_X, AtomSpec) or not isinstance(system.monomer_Y, FSMonomerBasis):
         message = "Fine-structure atom-diatom Hamiltonian requires AtomSpec and FSMonomerBasis monomers"
@@ -98,10 +98,6 @@ def build_hamiltonian(
         raise TypeError(message)
     if system.reduced_mass is None:
         message = "Fine-structure atom-diatom Hamiltonian requires a collision reduced mass"
-        logger.error(message)
-        raise ValueError(message)
-    if system.approx is not Approx.EXACT:
-        message = "Fine-structure atom-diatom Hamiltonian currently requires approx='exact'"
         logger.error(message)
         raise ValueError(message)
     if not isinstance(system.basis, FSChannelBasis):
@@ -131,6 +127,11 @@ def build_hamiltonian(
         """Contract signed-Lambda components into the FS channel basis."""
         return vmat.contract(V_basis, Vgrid(radial_points))
 
+    def V_blocks(radial_points: NDArray[np.float64], channel_blocks: tuple[tuple[int, ...], ...]) -> tuple[NDArray[np.float64], ...]:
+        """Contract only the requested channel windows from one shared PES batch."""
+        values = Vgrid(radial_points)
+        return tuple(vmat.contract(V_basis, values, indices) for indices in channel_blocks)
+
     def V_blocks_device(radial_points: np.ndarray, channel_blocks: tuple[tuple[int, ...], ...], device: JaxDevice) -> tuple[jax.Array, ...]:
         """Contract FS blocks from host or device-resident Lambda PES values."""
         key = (device.platform, device.id)
@@ -147,7 +148,9 @@ def build_hamiltonian(
         basis=basis,
         reduced_mass=system.reduced_mass,
         interaction=Vmat,
-        approx=Approx.EXACT,
+        approx=system.approx,
+        K_delta=system.K_delta,
+        block_interaction=V_blocks,
         device_block_interaction=V_blocks_device,
         potential_grid_size=prod(V_basis.grid_shape),
     )

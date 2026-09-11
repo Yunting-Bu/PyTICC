@@ -34,26 +34,35 @@ from pyticc.constants import (
 )
 from pyticc.electric import ElectricResponseTable, load_electric_response_csv
 from pyticc.fine_structure import (
+    FSAtomBasis,
+    FSAtomDiatomBasis,
+    FSAtomDiatomChannel,
     FSConstants,
     FSConstantsTable,
     FSDiatomDiatomBasis,
     FSDiatomDiatomChannel,
     FSMonomerBasis,
+    build_fs_atom_basis,
+    build_fs_atom_diatom_channels,
     build_fs_channels,
     build_fs_diatom_diatom_channels,
     load_fs_constants_csv,
     prepare_fs_monomer,
 )
+from pyticc.fine_structure.atom_atom import FSAtomAtomBasis, FSAtomAtomChannel, build_fs_atom_atom_channels
 from pyticc.input import run
 from pyticc.pes import (
     DiabaticPESWrapper,
     LambdaPES,
     OrbitalState,
     PESWrapper,
+    SpinResolvedAtomDiatomPES,
     SpinResolvedDiatomDiatomPES,
     TotalPES,
     as_lambda_pes,
+    as_spin_resolved_atom_diatom_pes,
     as_spin_resolved_diatom_diatom_pes,
+    atom_diatom_orbital_states,
     atom_triatom_cartesian,
     load_fortran_diabatic_pes,
     load_fortran_lambda_pes,
@@ -61,17 +70,34 @@ from pyticc.pes import (
     load_fortran_total_pes,
     radau_triatom_cartesian,
 )
+from pyticc.pes.spin_resolved_atom_atom import AtomAtomOrbitalState, SpinResolvedAtomAtomPES, atom_atom_orbital_states
 from pyticc.propagation import Propagation
 from pyticc.result import CoupledStatesResult, ReactiveScatteringResult, ScatteringResult
 from pyticc.scattering import DelvesHamiltonian, PotentialGrid, ScattHamiltonian, build_fs_hamiltonian, prepare_potential, solve
-from pyticc.system import Approx, ChannelSpec, ScatteringType, ScattSystem, build_ScattSystem, element_mass_au, element_masses_au, reduced_mass
+from pyticc.system import (
+    Approx,
+    ChannelSpec,
+    ScatteringType,
+    ScattSystem,
+    build_ScattSystem,
+    element_mass_au,
+    element_masses_au,
+    reduced_mass,
+)
 
 from . import report
 
 __all__ = [
+    "FSAtomAtomBasis",
+    "FSAtomAtomChannel",
+    "build_fs_atom_atom_channels",
+    "AtomAtomOrbitalState",
+    "SpinResolvedAtomAtomPES",
+    "atom_atom_orbital_states",
     "Approx",
     "ANG2AU",
     "AtomSpec",
+    "FSAtomBasis",
     "AU2ANG",
     "AU2CM",
     "AU2GHZ",
@@ -91,6 +117,8 @@ __all__ = [
     "EnergyUnit",
     "FSConstants",
     "FSConstantsTable",
+    "FSAtomDiatomBasis",
+    "FSAtomDiatomChannel",
     "FSDiatomDiatomBasis",
     "FSDiatomDiatomChannel",
     "FSMonomerBasis",
@@ -100,6 +128,7 @@ __all__ = [
     "PESWrapper",
     "LambdaPES",
     "OrbitalState",
+    "SpinResolvedAtomDiatomPES",
     "SpinResolvedDiatomDiatomPES",
     "MHZ2AU",
     "Propagation",
@@ -116,6 +145,8 @@ __all__ = [
     "build_DiabaticDiatomBasis",
     "build_DiatomBasis",
     "build_DiatomElectricBasis",
+    "build_fs_atom_basis",
+    "build_fs_atom_diatom_channels",
     "build_fs_channels",
     "build_fs_diatom_diatom_channels",
     "build_fs_hamiltonian",
@@ -137,7 +168,10 @@ __all__ = [
     "load_fortran_pes",
     "load_fortran_total_pes",
     "as_lambda_pes",
+    "as_spin_resolved_atom_diatom_pes",
     "as_spin_resolved_diatom_diatom_pes",
+    "atom_diatom_orbital_states",
+    "get_spin_resolved_grid_atom_diatom",
     "atom_triatom_cartesian",
     "load_electric_response_csv",
     "load_fs_constants_csv",

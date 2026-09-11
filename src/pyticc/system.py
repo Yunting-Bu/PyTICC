@@ -4,7 +4,7 @@ import math
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 from loguru import logger
@@ -15,6 +15,8 @@ from pyticc.constants import AMU2AU
 from pyticc.pes.adiabatic import PESWrapper
 from pyticc.pes.diabatic import DiabaticPESWrapper
 from pyticc.pes.lambda_pes import LambdaPES
+from pyticc.pes.spin_resolved_atom_atom import SpinResolvedAtomAtomPES
+from pyticc.pes.spin_resolved_atom_diatom import SpinResolvedAtomDiatomPES
 from pyticc.pes.spin_resolved_diatom_diatom import (
     SpinResolvedDiatomDiatomPES,
     allowed_total_spins,
@@ -22,11 +24,15 @@ from pyticc.pes.spin_resolved_diatom_diatom import (
 )
 from pyticc.pes.total import TotalPES
 
+if TYPE_CHECKING:
+    from pyticc.fine_structure.atom import FSAtomBasis
+
 # ----------------------------------------------------------------------------------------
 # Mass
 ELEMENT_MASS_AMU: dict[str, float] = {
     "H": 1.00782503223,
     "D": 2.01410177812,
+    "B": 11.00930536,
     "He": 4.002602,
     "Li": 6.938,
     "N": 14.00307400443,
@@ -131,6 +137,8 @@ class ScatteringType(Enum):
     ATOM_DIATOM = "A+BC"
     ATOM_DIATOM_ELECTRIC = "A+BC_electric"
     ATOM_DIATOM_FINE_STRUCTURE = "A+BC_fine_structure"
+    ATOM_ATOM_FINE_STRUCTURE = "A+B_fine_structure"
+    ATOM_DIATOM_BOTH_FS = "A+BC_both_fs"
     ATOM_DIATOM_DIABATIC = "A+BC_diabatic"
     ATOM_DIATOM_DELVES = "A+BC_Delves"
     DIATOM_DIATOM = "AB+CD"
@@ -222,6 +230,11 @@ class ChannelBasisSpec(Protocol):
         """Return channel thresholds with shape (n_channel,)."""
         ...
 
+    @property
+    def molecule_exchange(self) -> int:
+        """Return the complete-molecule exchange block, or zero if unused."""
+        ...
+
 
 # ----------------------------------------------------------------------------------------
 
@@ -295,12 +308,13 @@ class ScattSystem:
     """Physical definition of one scattering block.
 
     Members:
-        monomer_X: MonomerSpec | FineStructureMonomerSpec | DelvesMonomer - first
-            monomer internal-state model, or physical Delves monomer information
-        monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None -
+        monomer_X: MonomerSpec | FSAtomBasis | FineStructureMonomerSpec |
+            DelvesMonomer - first monomer internal-state model, or physical
+            Delves monomer information
+        monomer_Y: MonomerSpec | FSAtomBasis | ElectricMonomerSpec | FineStructureMonomerSpec | None -
             second monomer internal-state model; None for a Delves calculation
-        scattering_type: ScatteringType | None - explicit scattering geometry
-            and potential representation; None only for low-level construction
+        scattering_type: ScatteringType | None - internally resolved scattering
+            geometry and potential representation; None only for low-level construction
         Jtot: int | None - conserved total angular momentum for a field-free
             closed-shell calculation
         two_J: int | None - twice the conserved total angular momentum for a
@@ -312,8 +326,8 @@ class ScattSystem:
         approx: Approx - exact CC, CS, or NNCC approximation
         K_delta: int - neighboring-K range used by NNCC
         potential: PESWrapper | LambdaPES | DiabaticPESWrapper |
-            SpinResolvedDiatomDiatomPES | None - interaction PES for a
-            nonreactive calculation
+            SpinResolvedDiatomDiatomPES | SpinResolvedAtomDiatomPES | SpinResolvedAtomAtomPES | None -
+            interaction PES for a nonreactive calculation
         total_potential: TotalPES | None - scalar total three-body PES for a
             Delves reactive calculation
         reduced_mass: float | None - collision reduced mass in atomic units
@@ -327,8 +341,8 @@ class ScattSystem:
             or 0 for labeled channels; exact AB+CD with or without fine structure
     """
 
-    monomer_X: MonomerSpec | FineStructureMonomerSpec | DelvesMonomer
-    monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None = None
+    monomer_X: MonomerSpec | FSAtomBasis | FineStructureMonomerSpec | DelvesMonomer
+    monomer_Y: MonomerSpec | FSAtomBasis | ElectricMonomerSpec | FineStructureMonomerSpec | None = None
     scattering_type: ScatteringType | None = None
     Jtot: int | None = None
     two_J: int | None = None
@@ -336,7 +350,9 @@ class ScattSystem:
     M: int | None = None
     approx: Approx = Approx.EXACT
     K_delta: int = 1
-    potential: PESWrapper | LambdaPES | DiabaticPESWrapper | SpinResolvedDiatomDiatomPES | None = None
+    potential: (
+        PESWrapper | LambdaPES | DiabaticPESWrapper | SpinResolvedDiatomDiatomPES | SpinResolvedAtomDiatomPES | SpinResolvedAtomAtomPES | None
+    ) = None
     total_potential: TotalPES | None = None
     reduced_mass: float | None = None
     magnetic_dipole_coefficient: float = 0.0
@@ -402,11 +418,55 @@ class ScattSystem:
 
 
 # ----------------------------------------------------------------------------------------
-def build_ScattSystem(
-    monomer_X: MonomerSpec | FineStructureMonomerSpec | DelvesMonomer,
-    monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None = None,
+def _infer_scattering_type(
+    monomer_X: MonomerSpec | FSAtomBasis | FineStructureMonomerSpec | DelvesMonomer,
+    monomer_Y: MonomerSpec | FSAtomBasis | ElectricMonomerSpec | FineStructureMonomerSpec | None = None,
     *,
-    scattering_type: ScatteringType | str,
+    total_potential: TotalPES | None = None,
+) -> ScatteringType:
+    """Infer the internal scattering implementation from prepared monomers."""
+    from pyticc.basis.monomer import AtomSpec, DiabaticDiatomBasis, DiatomElectricBasis
+    from pyticc.fine_structure.atom import FSAtomBasis
+    from pyticc.fine_structure.channel import FSMonomerBasis
+
+    if isinstance(monomer_X, DelvesMonomer):
+        if monomer_Y is not None or not isinstance(total_potential, TotalPES):
+            message = "A DelvesMonomer can be inferred only with monomer_Y=None and a TotalPES"
+            logger.error(message)
+            raise TypeError(message)
+        return ScatteringType.ATOM_DIATOM_DELVES
+    if isinstance(monomer_X, FSAtomBasis) and isinstance(monomer_Y, FSAtomBasis):
+        return ScatteringType.ATOM_ATOM_FINE_STRUCTURE
+    if isinstance(monomer_X, FSAtomBasis) and isinstance(monomer_Y, FSMonomerBasis):
+        return ScatteringType.ATOM_DIATOM_BOTH_FS
+    if isinstance(monomer_X, AtomSpec) and isinstance(monomer_Y, FSMonomerBasis):
+        return ScatteringType.ATOM_DIATOM_FINE_STRUCTURE
+    if isinstance(monomer_X, FSMonomerBasis) and isinstance(monomer_Y, FSMonomerBasis):
+        return ScatteringType.DIATOM_DIATOM_FINE_STRUCTURE
+    if isinstance(monomer_X, AtomSpec) and isinstance(monomer_Y, DiatomElectricBasis):
+        return ScatteringType.ATOM_DIATOM_ELECTRIC
+    if isinstance(monomer_X, AtomSpec) and isinstance(monomer_Y, DiabaticDiatomBasis):
+        return ScatteringType.ATOM_DIATOM_DIABATIC
+    if isinstance(monomer_X, AtomSpec) and getattr(monomer_Y, "type", None) is MonomerType.DIATOM:
+        return ScatteringType.ATOM_DIATOM
+    if getattr(monomer_X, "type", None) is MonomerType.DIATOM and getattr(monomer_Y, "type", None) is MonomerType.DIATOM:
+        return ScatteringType.DIATOM_DIATOM
+    if isinstance(monomer_X, AtomSpec) and getattr(monomer_Y, "type", None) is MonomerType.TRIATOM:
+        return ScatteringType.ATOM_TRIATOM
+
+    message = f"Unsupported scattering monomer combination: monomer_X={type(monomer_X).__name__}, monomer_Y={type(monomer_Y).__name__}"
+    logger.error(message)
+    raise TypeError(message)
+
+
+# ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def build_ScattSystem(
+    monomer_X: MonomerSpec | FSAtomBasis | FineStructureMonomerSpec | DelvesMonomer,
+    monomer_Y: MonomerSpec | FSAtomBasis | ElectricMonomerSpec | FineStructureMonomerSpec | None = None,
+    *,
     Jtot: int | None = None,
     two_J: int | None = None,
     system_parity: int | None = None,
@@ -416,7 +476,13 @@ def build_ScattSystem(
     lmax: int | None = None,
     approx: Approx = Approx.EXACT,
     K_delta: int = 1,
-    potential: PESWrapper | LambdaPES | DiabaticPESWrapper | SpinResolvedDiatomDiatomPES | None = None,
+    potential: PESWrapper
+    | LambdaPES
+    | DiabaticPESWrapper
+    | SpinResolvedDiatomDiatomPES
+    | SpinResolvedAtomDiatomPES
+    | SpinResolvedAtomAtomPES
+    | None = None,
     total_potential: TotalPES | None = None,
     reduced_mass: float | None = None,
     magnetic_dipole_coefficient: float = 0.0,
@@ -426,12 +492,11 @@ def build_ScattSystem(
     Build a scattering system and its channel basis in one step.
 
     Inputs:
-        monomer_X: MonomerSpec | FineStructureMonomerSpec | DelvesMonomer -
-            prepared first monomer, or physical Delves monomer information
-        monomer_Y: MonomerSpec | ElectricMonomerSpec | FineStructureMonomerSpec | None -
+        monomer_X: MonomerSpec | FSAtomBasis | FineStructureMonomerSpec |
+            DelvesMonomer - prepared first monomer, or physical Delves monomer
+            information
+        monomer_Y: MonomerSpec | FSAtomBasis | ElectricMonomerSpec | FineStructureMonomerSpec | None -
             prepared second monomer; None for a Delves calculation
-        scattering_type: ScatteringType | str - explicit geometry and potential
-            representation, for example ``"A+BC"`` or ``"A+BC_diabatic"``
         Jtot: int | None - conserved total angular momentum for a field-free block
         two_J: int | None - twice conserved total angular momentum for a
             fine-structure block
@@ -446,7 +511,8 @@ def build_ScattSystem(
         approx: Approx - exact CC, CS, or NNCC approximation
         K_delta: int - neighboring-K range used by NNCC
         potential: PESWrapper | LambdaPES | DiabaticPESWrapper |
-            SpinResolvedDiatomDiatomPES | None - interaction PES
+            SpinResolvedDiatomDiatomPES | SpinResolvedAtomDiatomPES | SpinResolvedAtomAtomPES | None -
+            interaction PES
         total_potential: TotalPES | None - Delves scalar total three-body PES
         reduced_mass: float | None - collision reduced mass in atomic units
         magnetic_dipole_coefficient: float - electron-spin magnetic dipole
@@ -463,16 +529,17 @@ def build_ScattSystem(
     """
     from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF, build_ChannelBasis, build_ChannelBasisElectricSF
     from pyticc.basis.monomer import AtomSpec, DiatomElectricBasis
+    from pyticc.fine_structure.atom import FSAtomBasis
+    from pyticc.fine_structure.atom_diatom import FSAtomDiatomBasis, build_fs_atom_diatom_channels
     from pyticc.fine_structure.channel import FSChannelBasis, FSMonomerBasis, build_fs_channels
     from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis, build_fs_diatom_diatom_channels
+    from pyticc.pes.spin_resolved_atom_diatom import SpinResolvedAtomDiatomPES, atom_diatom_orbital_states
 
-    try:
-        selected_type = scattering_type if isinstance(scattering_type, ScatteringType) else ScatteringType(scattering_type)
-    except ValueError as error:
-        supported = ", ".join(value.value for value in ScatteringType)
-        message = f"Unsupported scattering_type {scattering_type!r}; supported: {supported}"
-        logger.error(message)
-        raise ValueError(message) from error
+    selected_type = _infer_scattering_type(
+        monomer_X,
+        monomer_Y,
+        total_potential=total_potential,
+    )
 
     channel_spec = ChannelSpec() if channel is None else channel
     system = ScattSystem(
@@ -592,12 +659,8 @@ def build_ScattSystem(
                 message = "Spin-resolved PES orbital_states do not match the two monomer signed-Lambda manifolds"
                 logger.error(message)
                 raise ValueError(message)
-        if approx is not Approx.EXACT:
-            message = "AB+CD_fine_structure currently supports only exact coupled channels"
-            logger.error(message)
-            raise ValueError(message)
         two_K_cut = None if channel_spec.K_cut is None else 2 * channel_spec.K_cut
-        basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis = build_fs_diatom_diatom_channels(
+        basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSAtomDiatomBasis | FSDiatomDiatomBasis = build_fs_diatom_diatom_channels(
             monomer_X,
             monomer_Y,
             two_J=two_J,
@@ -620,16 +683,69 @@ def build_ScattSystem(
             message = "Fine-structure system construction requires a LambdaPES"
             logger.error(message)
             raise TypeError(message)
-        if approx is not Approx.EXACT:
-            message = "Fine-structure scattering currently supports only exact coupled channels"
-            logger.error(message)
-            raise ValueError(message)
         two_K_cut = None if channel_spec.K_cut is None else 2 * channel_spec.K_cut
         basis = build_fs_channels(
             monomer_Y,
             two_J=two_J,
             system_parity=system_parity,
             E_cut=channel_spec.E_Y_cut,
+            two_K_cut=two_K_cut,
+        )
+    elif selected_type is ScatteringType.ATOM_ATOM_FINE_STRUCTURE:
+        from pyticc.fine_structure.atom_atom import build_fs_atom_atom_channels
+
+        if not isinstance(monomer_X, FSAtomBasis) or not isinstance(monomer_Y, FSAtomBasis):
+            raise TypeError("A+B_fine_structure requires two FSAtomBasis monomers")
+        if two_J is None or system_parity is None:
+            raise ValueError("Atomic scattering requires two_J and system_parity")
+        if not isinstance(potential, SpinResolvedAtomAtomPES):
+            raise TypeError("Atomic scattering requires SpinResolvedAtomAtomPES")
+        if reduced_mass is None or not np.isfinite(reduced_mass) or reduced_mass <= 0:
+            raise ValueError("Atomic scattering requires a positive reduced_mass in atomic units")
+        if molecule_exchange:
+            raise ValueError("Atomic exchange adaptation is not implemented; use labeled atoms")
+        potential.validate_basis(monomer_X.two_L, monomer_X.two_S, monomer_Y.two_L, monomer_Y.two_S)
+        two_K_cut = None if channel_spec.K_cut is None else 2 * channel_spec.K_cut
+        basis = build_fs_atom_atom_channels(
+            monomer_X,
+            monomer_Y,
+            two_J,
+            system_parity,
+            E_X_cut=channel_spec.E_X_cut,
+            E_Y_cut=channel_spec.E_Y_cut,
+            two_K_cut=two_K_cut,
+        )
+    elif selected_type is ScatteringType.ATOM_DIATOM_BOTH_FS:
+        if not isinstance(monomer_X, FSAtomBasis) or not isinstance(monomer_Y, FSMonomerBasis):
+            message = "A+BC_both_fs requires FSAtomBasis and FSMonomerBasis monomers"
+            logger.error(message)
+            raise TypeError(message)
+        if two_J is None or system_parity is None:
+            message = "A+BC_both_fs system construction requires two_J and system_parity"
+            logger.error(message)
+            raise ValueError(message)
+        if not isinstance(potential, SpinResolvedAtomDiatomPES):
+            message = "A+BC_both_fs requires a SpinResolvedAtomDiatomPES"
+            logger.error(message)
+            raise TypeError(message)
+        expected_spins = allowed_total_spins(monomer_X.two_S, monomer_Y.two_S)
+        if set(potential.two_total_spins) != set(expected_spins):
+            message = f"Spin-resolved PES total spins {potential.two_total_spins} do not match required {expected_spins}"
+            logger.error(message)
+            raise ValueError(message)
+        expected_orbitals = atom_diatom_orbital_states(monomer_X.two_L, monomer_Y.two_lambda_abs)
+        if set(potential.orbital_states) != set(expected_orbitals):
+            message = "Spin-resolved PES orbital_states do not match the atomic L manifold and the molecular signed-Lambda manifold"
+            logger.error(message)
+            raise ValueError(message)
+        two_K_cut = None if channel_spec.K_cut is None else 2 * channel_spec.K_cut
+        basis = build_fs_atom_diatom_channels(
+            monomer_X,
+            monomer_Y,
+            two_J=two_J,
+            system_parity=system_parity,
+            E_X_cut=channel_spec.E_X_cut,
+            E_Y_cut=channel_spec.E_Y_cut,
             two_K_cut=two_K_cut,
         )
     elif selected_type is ScatteringType.ATOM_DIATOM_ELECTRIC:

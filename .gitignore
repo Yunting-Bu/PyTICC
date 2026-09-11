@@ -13,3 +13,4 @@ wheels/
 # Local files
 .help
 .ruff_cache
+.DS_Store

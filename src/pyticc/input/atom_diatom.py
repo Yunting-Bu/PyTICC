@@ -22,7 +22,7 @@ from pyticc.pes.adiabatic import PESWrapper
 from pyticc.result import CoupledStatesResult, ScatteringResult
 from pyticc.scattering.potential import prepare_potential
 from pyticc.scattering.solver import solve
-from pyticc.system import Approx, ChannelSpec, ScatteringType, build_ScattSystem, element_masses_au, reduced_mass
+from pyticc.system import Approx, ChannelSpec, build_ScattSystem, element_masses_au, reduced_mass
 
 # ----------------------------------------------------------------------------------------
 
@@ -100,7 +100,6 @@ def run_electric(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringRe
     system = build_ScattSystem(
         AtomSpec(),
         electric_diatom,
-        scattering_type=ScatteringType.ATOM_DIATOM_ELECTRIC,
         M=M,
         lmax=lmax,
         channel=ChannelSpec(E_Y_cut=float(required(channels, "E_Y_cut_cm")) * CM2AU),
@@ -144,7 +143,6 @@ def run(config: TomlTable, base: Path, pes: PESWrapper) -> ScatteringResult | Co
     system = build_ScattSystem(
         AtomSpec(),
         diatom,
-        scattering_type=ScatteringType.ATOM_DIATOM,
         Jtot=int(required(config, "Jtot")),
         system_parity=int(required(config, "system_parity")),
         approx=approx,

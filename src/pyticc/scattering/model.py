@@ -30,13 +30,19 @@ def _models() -> dict[ScatteringType, _ScatteringModel]:
     from pyticc.scattering.energy_transfer import (
         atom_diatom,
         atom_triatom,
+        both_fs_atom_diatom,
         diabatic_atom_diatom,
         diatom_diatom,
+        fine_structure_atom_atom,
         fine_structure_atom_diatom,
         fine_structure_diatom_diatom,
     )
 
     return {
+        ScatteringType.ATOM_ATOM_FINE_STRUCTURE: _ScatteringModel(
+            fine_structure_atom_atom.prepare_potential,
+            fine_structure_atom_atom.build_hamiltonian,
+        ),
         ScatteringType.ATOM_DIATOM: _ScatteringModel(atom_diatom.prepare_potential, atom_diatom.build_hamiltonian),
         ScatteringType.ATOM_DIATOM_ELECTRIC: _ScatteringModel(
             atom_diatom.prepare_potential_electric_sf,
@@ -45,6 +51,10 @@ def _models() -> dict[ScatteringType, _ScatteringModel]:
         ScatteringType.ATOM_DIATOM_FINE_STRUCTURE: _ScatteringModel(
             fine_structure_atom_diatom.prepare_potential,
             fine_structure_atom_diatom.build_hamiltonian,
+        ),
+        ScatteringType.ATOM_DIATOM_BOTH_FS: _ScatteringModel(
+            both_fs_atom_diatom.prepare_potential,
+            both_fs_atom_diatom.build_hamiltonian,
         ),
         ScatteringType.ATOM_DIATOM_DIABATIC: _ScatteringModel(
             diabatic_atom_diatom.prepare_potential,

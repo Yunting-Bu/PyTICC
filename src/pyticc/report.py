@@ -8,6 +8,8 @@ from pyticc.basis.kblock import KBlock
 from pyticc.basis.monomer import DiabaticDiatomBasis, DiatomBasis
 from pyticc.constants import AU2CM
 from pyticc.energy import EnergyInput, get_Etot
+from pyticc.fine_structure.atom_atom import FSAtomAtomBasis
+from pyticc.fine_structure.atom_diatom import FSAtomDiatomBasis
 from pyticc.fine_structure.channel import FSChannelBasis, FSMonomerBasis
 from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.match.delves import DelvesAsymptoticBasis
@@ -16,7 +18,9 @@ from pyticc.system import MolInnerState
 
 QuantumSelection: TypeAlias = int | range | Sequence[int] | None
 EnergySelection: TypeAlias = int | slice | Sequence[int] | None
-ReportBasis: TypeAlias = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis | DelvesAsymptoticBasis
+ReportBasis: TypeAlias = (
+    ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis | FSAtomDiatomBasis | FSAtomAtomBasis | DelvesAsymptoticBasis
+)
 
 
 # ----------------------------------------------------------------------------------------
@@ -211,6 +215,38 @@ def channels(basis: ReportBasis) -> str:
             )
         label = f"molecule_exchange={basis.molecule_exchange:+d}; X/Y label canonical state pairs\n" if basis.molecule_exchange else ""
         return label + _table(("n", "v_X", "j_X", "tau_X", "epsilon_X", "v_Y", "j_Y", "tau_Y", "epsilon_Y", "j_12", "K", "E_int/cm-1"), rows)
+
+    if isinstance(basis, FSAtomAtomBasis):
+        rows = [
+            [
+                str(i),
+                str(basis.monomer_X.two_j_levels[c.level_X] / 2),
+                str(basis.monomer_Y.two_j_levels[c.level_Y] / 2),
+                str(c.two_j12 / 2),
+                str(c.K),
+                f"{c.E_int * AU2CM:.6f}",
+            ]
+            for i, c in enumerate(basis, start=1)
+        ]
+        return _table(("n", "j_X", "j_Y", "j_12", "K", "E_int/cm-1"), rows)
+    if isinstance(basis, FSAtomDiatomBasis):
+        rows = []
+        for index, channel in enumerate(basis, start=1):
+            block_Y = basis.monomer_Y.blocks[channel.block_Y]
+            rows.append(
+                [
+                    str(index),
+                    str(basis.atom.two_j_levels[channel.level_X] / 2),
+                    str(block_Y.v),
+                    str(block_Y.two_j / 2),
+                    str(channel.tau_Y),
+                    str(block_Y.parity),
+                    str(channel.two_j12 / 2),
+                    str(channel.two_K / 2),
+                    f"{channel.E_int * AU2CM:.6f}",
+                ]
+            )
+        return _table(("n", "j_X", "v_Y", "j_Y", "tau_Y", "epsilon_Y", "j_12", "K", "E_int/cm-1"), rows)
 
     exchange_label = f"molecule_exchange={basis.molecule_exchange:+d}; X/Y label canonical state pairs\n" if basis.molecule_exchange else ""
     if basis.n_channel == 0:
@@ -410,13 +446,15 @@ def _matches_electric(
 
 
 # ----------------------------------------------------------------------------------------
-def _smatrix_fine_structure(result: ScatteringResult, energy_indices: EnergySelection) -> str:
+def _smatrix_fine_structure(result: ScatteringResult | CoupledStatesResult, energy_indices: EnergySelection, block_index: int | None = None) -> str:
     """Format an open-shell atom--diatom S matrix in its asymptotic SF basis."""
     basis = cast(FSChannelBasis, result.basis)
+    matrices, open_indices, angular_momenta = _field_free_data(result, block_index)
     rows: list[list[str]] = []
     for energy_index in _energy_indices(energy_indices, result.Etot.size):
-        indices = result.open_channel_indices[energy_index]
-        matrix = result.Smat[energy_index]
+        indices = open_indices[energy_index]
+        matrix = matrices[energy_index]
+        L_values = angular_momenta[energy_index]
         for incoming, incoming_global in enumerate(indices):
             initial_channel = basis[int(incoming_global)]
             initial_block = basis.monomer.blocks[initial_channel.block]
@@ -431,12 +469,12 @@ def _smatrix_fine_structure(result: ScatteringResult, energy_indices: EnergySele
                         str(initial_block.two_j / 2),
                         str(initial_channel.tau),
                         str(initial_block.parity),
-                        f"{result.L[int(incoming_global)]:.8f}",
+                        f"{L_values[incoming]:.8f}",
                         str(final_block.v),
                         str(final_block.two_j / 2),
                         str(final_channel.tau),
                         str(final_block.parity),
-                        f"{result.L[int(outgoing_global)]:.8f}",
+                        f"{L_values[outgoing]:.8f}",
                         f"{value.real:.16E}",
                         f"{value.imag:.16E}",
                     ]
@@ -449,16 +487,20 @@ def _smatrix_fine_structure(result: ScatteringResult, energy_indices: EnergySele
 
 
 # ----------------------------------------------------------------------------------------
-def _smatrix_fine_structure_diatom_diatom(result: ScatteringResult, energy_indices: EnergySelection) -> str:
+def _smatrix_fine_structure_diatom_diatom(
+    result: ScatteringResult | CoupledStatesResult, energy_indices: EnergySelection, block_index: int | None = None
+) -> str:
     """Format a two-fine-structure-diatom S matrix in its asymptotic SF basis."""
     basis = cast(FSDiatomDiatomBasis, result.basis)
     label = f"molecule_exchange={basis.molecule_exchange:+d}; X/Y label canonical state pairs\n" if basis.molecule_exchange else ""
     if basis.molecule_exchange and basis.n_channel == 0:
         return label + "No allowed channels in this molecule-exchange block."
+    matrices, open_indices, angular_momenta = _field_free_data(result, block_index)
     rows: list[list[str]] = []
     for energy_index in _energy_indices(energy_indices, result.Etot.size):
-        indices = result.open_channel_indices[energy_index]
-        matrix = result.Smat[energy_index]
+        indices = open_indices[energy_index]
+        matrix = matrices[energy_index]
+        L_values = angular_momenta[energy_index]
         for incoming, incoming_global in enumerate(indices):
             initial = basis[int(incoming_global)]
             initial_X = basis.monomer_X.blocks[initial.block_X]
@@ -480,7 +522,7 @@ def _smatrix_fine_structure_diatom_diatom(result: ScatteringResult, energy_indic
                         str(initial.tau_Y),
                         str(initial_Y.parity),
                         str(initial.two_j12 / 2),
-                        f"{result.L[int(incoming_global)]:.8f}",
+                        f"{L_values[incoming]:.8f}",
                         str(final_X.v),
                         str(final_X.two_j / 2),
                         str(final.tau_X),
@@ -490,7 +532,7 @@ def _smatrix_fine_structure_diatom_diatom(result: ScatteringResult, energy_indic
                         str(final.tau_Y),
                         str(final_Y.parity),
                         str(final.two_j12 / 2),
-                        f"{result.L[int(outgoing_global)]:.8f}",
+                        f"{L_values[outgoing]:.8f}",
                         f"{value.real:.16E}",
                         f"{value.imag:.16E}",
                     ]
@@ -521,6 +563,68 @@ def _smatrix_fine_structure_diatom_diatom(result: ScatteringResult, energy_indic
         "Im(S)",
     )
     return label + _table(headers, rows)
+
+
+# ----------------------------------------------------------------------------------------
+def _smatrix_fine_structure_atom_diatom(
+    result: ScatteringResult | CoupledStatesResult, energy_indices: EnergySelection, block_index: int | None = None
+) -> str:
+    """Format a fine-structure atom--diatom S matrix in its asymptotic SF basis."""
+    basis = cast(FSAtomDiatomBasis, result.basis)
+    matrices, open_indices, angular_momenta = _field_free_data(result, block_index)
+    rows: list[list[str]] = []
+    for energy_index in _energy_indices(energy_indices, result.Etot.size):
+        indices = open_indices[energy_index]
+        matrix = matrices[energy_index]
+        L_values = angular_momenta[energy_index]
+        for incoming, incoming_global in enumerate(indices):
+            initial = basis[int(incoming_global)]
+            initial_Y = basis.monomer_Y.blocks[initial.block_Y]
+            for outgoing, outgoing_global in enumerate(indices):
+                final = basis[int(outgoing_global)]
+                final_Y = basis.monomer_Y.blocks[final.block_Y]
+                value = matrix[outgoing, incoming]
+                rows.append(
+                    [
+                        f"{result.Etot[energy_index] * AU2CM:.8f}",
+                        str(basis.atom.two_j_levels[initial.level_X] / 2),
+                        str(initial_Y.v),
+                        str(initial_Y.two_j / 2),
+                        str(initial.tau_Y),
+                        str(initial_Y.parity),
+                        str(initial.two_j12 / 2),
+                        f"{L_values[incoming]:.8f}",
+                        str(basis.atom.two_j_levels[final.level_X] / 2),
+                        str(final_Y.v),
+                        str(final_Y.two_j / 2),
+                        str(final.tau_Y),
+                        str(final_Y.parity),
+                        str(final.two_j12 / 2),
+                        f"{L_values[outgoing]:.8f}",
+                        f"{value.real:.16E}",
+                        f"{value.imag:.16E}",
+                    ]
+                )
+    headers = (
+        "Etot/cm-1",
+        "j_X",
+        "v_Y",
+        "j_Y",
+        "tau_Y",
+        "epsilon_Y",
+        "j_12",
+        "L",
+        "j_X'",
+        "v_Y'",
+        "j_Y'",
+        "tau_Y'",
+        "epsilon_Y'",
+        "j_12'",
+        "L'",
+        "Re(S)",
+        "Im(S)",
+    )
+    return _table(headers, rows)
 
 
 # ----------------------------------------------------------------------------------------
@@ -1000,7 +1104,7 @@ def smatrix(
             K_prime=K_prime,
         )
 
-    if isinstance(result, ScatteringResult) and isinstance(result.basis, FSChannelBasis):
+    if isinstance(result.basis, FSChannelBasis):
         _reject_filters(
             "fine-structure",
             (
@@ -1013,12 +1117,11 @@ def smatrix(
                 *diatom_filters,
                 *electric_filters,
                 *delves_filters,
-                ("block_index", block_index),
             ),
         )
-        return _smatrix_fine_structure(result, energy_indices)
+        return _smatrix_fine_structure(result, energy_indices, block_index)
 
-    if isinstance(result, ScatteringResult) and isinstance(result.basis, FSDiatomDiatomBasis):
+    if isinstance(result.basis, FSDiatomDiatomBasis):
         _reject_filters(
             "two-diatom fine-structure",
             (
@@ -1031,10 +1134,42 @@ def smatrix(
                 *diatom_filters,
                 *electric_filters,
                 *delves_filters,
-                ("block_index", block_index),
             ),
         )
-        return _smatrix_fine_structure_diatom_diatom(result, energy_indices)
+        return _smatrix_fine_structure_diatom_diatom(result, energy_indices, block_index)
+
+    if isinstance(result.basis, FSAtomAtomBasis):
+        _reject_filters(
+            "atomic fine-structure",
+            (
+                ("state", state),
+                ("v", v),
+                ("j", j),
+                ("state_prime", state_prime),
+                ("v_prime", v_prime),
+                ("j_prime", j_prime),
+                *diatom_filters,
+                *electric_filters,
+                *delves_filters,
+            ),
+        )
+        return _smatrix_fine_structure_atom_atom(result, energy_indices, block_index)
+    if isinstance(result.basis, FSAtomDiatomBasis):
+        _reject_filters(
+            "fine-structure atom-diatom",
+            (
+                ("state", state),
+                ("v", v),
+                ("j", j),
+                ("state_prime", state_prime),
+                ("v_prime", v_prime),
+                ("j_prime", j_prime),
+                *diatom_filters,
+                *electric_filters,
+                *delves_filters,
+            ),
+        )
+        return _smatrix_fine_structure_atom_diatom(result, energy_indices, block_index)
 
     if isinstance(result, ScatteringResult) and isinstance(result.basis, ChannelBasisElectricSF):
         _reject_filters(
@@ -1111,3 +1246,32 @@ def smatrix(
 
 
 # ----------------------------------------------------------------------------------------
+
+
+def _smatrix_fine_structure_atom_atom(
+    result: ScatteringResult | CoupledStatesResult,
+    energy_indices: EnergySelection,
+    block_index: int | None,
+) -> str:
+    basis = cast(FSAtomAtomBasis, result.basis)
+    matrices, open_indices, angular_momenta = _field_free_data(result, block_index)
+    rows = []
+    for e in _energy_indices(energy_indices, result.Etot.size):
+        indices = open_indices[e]
+        for incoming, initial_index in enumerate(indices):
+            initial = basis[int(initial_index)]
+            for outgoing, final_index in enumerate(indices):
+                final = basis[int(final_index)]
+                value = matrices[e][outgoing, incoming]
+                row = [f"{result.Etot[e] * AU2CM:.8f}"]
+                for channel, position in ((initial, incoming), (final, outgoing)):
+                    row.extend(
+                        [
+                            str(basis.monomer_X.two_j_levels[channel.level_X] / 2),
+                            str(basis.monomer_Y.two_j_levels[channel.level_Y] / 2),
+                            str(channel.two_j12 / 2),
+                            f"{angular_momenta[e][position]:.8f}",
+                        ]
+                    )
+                rows.append(row + [f"{value.real:.16E}", f"{value.imag:.16E}"])
+    return _table(("Etot/cm-1", "j_X", "j_Y", "j_12", "L", "j_X'", "j_Y'", "j_12'", "L'", "Re(S)", "Im(S)"), rows)

@@ -311,6 +311,11 @@ class ChannelBasisElectricSF(Sequence[ChannelElectricSF]):
         return len(self.channels)
 
     @property
+    def molecule_exchange(self) -> int:
+        """Return zero because electric-field channels are not exchange adapted."""
+        return 0
+
+    @property
     def E_int(self) -> NDArray[np.float64]:
         """Return channel internal energies in atomic units, shape (n_channel,)."""
         return np.asarray([channel.E_int for channel in self.channels], dtype=np.float64)

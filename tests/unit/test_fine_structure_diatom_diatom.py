@@ -109,7 +109,6 @@ def test_build_scatt_system_prepares_scalar_fs_diatom_diatom_basis() -> None:
     system = ticc.build_ScattSystem(
         half_integer,
         integer,
-        scattering_type="AB+CD_fine_structure",
         two_J=1,
         system_parity=1,
         potential=scalar_pes,
@@ -128,27 +127,15 @@ def test_build_scatt_system_prepares_scalar_fs_diatom_diatom_basis() -> None:
     np.testing.assert_allclose(hamiltonian.U, get_Umat_FS_DiatomDiatom_BF(system.basis))
 
 
-def test_scalar_system_requires_a_potential_and_rejects_coupled_states() -> None:
+def test_scalar_system_requires_a_potential() -> None:
     monomer = _monomer((0,), two_S=0)
 
     with pytest.raises(TypeError, match="scalar PESWrapper"):
         ticc.build_ScattSystem(
             monomer,
             monomer,
-            scattering_type="AB+CD_fine_structure",
             two_J=0,
             system_parity=1,
-        )
-
-    with pytest.raises(ValueError, match="only exact coupled channels"):
-        ticc.build_ScattSystem(
-            monomer,
-            monomer,
-            scattering_type="AB+CD_fine_structure",
-            two_J=0,
-            system_parity=1,
-            approx=ticc.Approx.CS,
-            potential=ticc.PESWrapper(interaction=lambda R, coordinates: np.zeros(coordinates.shape[1])),
         )
 
 
@@ -172,7 +159,6 @@ def test_closed_shell_limit_matches_existing_diatom_diatom_kernel() -> None:
     closed_shell_system = ticc.build_ScattSystem(
         closed_shell_monomer,
         closed_shell_monomer,
-        scattering_type="AB+CD",
         Jtot=1,
         system_parity=-1,
         potential=scalar_pes,
@@ -180,7 +166,6 @@ def test_closed_shell_limit_matches_existing_diatom_diatom_kernel() -> None:
     fs_system = ticc.build_ScattSystem(
         fs_monomer,
         fs_monomer,
-        scattering_type="AB+CD_fine_structure",
         two_J=2,
         system_parity=-1,
         potential=scalar_pes,
@@ -281,7 +266,6 @@ def test_scalar_fine_structure_diatom_diatom_runs_end_to_end() -> None:
     system = ticc.build_ScattSystem(
         monomer,
         monomer,
-        scattering_type="AB+CD_fine_structure",
         two_J=0,
         system_parity=1,
         potential=scalar_pes,

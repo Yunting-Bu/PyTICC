@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from math import prod, sqrt
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -44,9 +45,13 @@ class SpinResolvedFSDiatomDiatomVBasis:
 # ----------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SpinResolvedFSDiatomDiatomVBasisDevice:
-    """Device-resident total-spin-resolved contraction kernel."""
+    """Host kernel and optional resident copy within the device kernel budget."""
 
-    kernel: jax.Array
+    kernel: NDArray[np.complex128]
+    resident_kernel: jax.Array | None = None
+
+
+_DEVICE_KERNEL_TARGET_BYTES = 256 * 1024**2
 
 
 # ----------------------------------------------------------------------------------------
@@ -434,11 +439,14 @@ def _potential_batches(
     n_grid = prod(V_basis.grid_shape)
     n_electronic = prod(V_basis.electronic_shape)
     if values.shape == expected:
-        return values.reshape(1, n_grid, n_electronic), False
+        return cast(NDArray[np.float64] | NDArray[np.complex128] | jax.Array, values.reshape(1, n_grid, n_electronic)), False
     if values.ndim == len(expected) + 1 and values.shape[1:] == expected:
-        return values.reshape(values.shape[0], n_grid, n_electronic), True
+        return cast(
+            NDArray[np.float64] | NDArray[np.complex128] | jax.Array,
+            values.reshape(values.shape[0], n_grid, n_electronic),
+        ), True
     if values.ndim == 3 and values.shape[1:] == (n_grid, n_electronic):
-        return values, True
+        return cast(NDArray[np.float64] | NDArray[np.complex128] | jax.Array, values), True
     message = f"Spin-resolved FS diatom-diatom PES grid has shape {values.shape}, expected {expected} with optional leading R axis"
     logger.error(message)
     raise ValueError(message)
@@ -458,7 +466,8 @@ def contract(
     host_batches = np.asarray(batches)
     indices = tuple(range(V_basis.n_channel)) if channel_indices is None else tuple(channel_indices)
     pair_rows, pair_columns, packed = _packed_positions(V_basis.n_channel, indices)
-    contracted = np.einsum("bge,gep->bp", host_batches, V_basis.kernel[:, :, packed], optimize=True)
+    kernel = V_basis.kernel if channel_indices is None else V_basis.kernel[:, :, packed]
+    contracted = host_batches.reshape(host_batches.shape[0], -1) @ kernel.reshape(kernel.shape[0] * kernel.shape[1], packed.size)
     selected = np.asarray(indices, dtype=np.int64)
     reversed_pairs = selected[pair_rows] < selected[pair_columns]
     contracted[:, reversed_pairs] = np.conjugate(contracted[:, reversed_pairs])
@@ -479,8 +488,9 @@ def device_basis(
     V_basis: SpinResolvedFSDiatomDiatomVBasis,
     device: JaxDevice,
 ) -> SpinResolvedFSDiatomDiatomVBasisDevice:
-    """Copy the complete spin-resolved kernel to one JAX device."""
-    return SpinResolvedFSDiatomDiatomVBasisDevice(jax.device_put(V_basis.kernel, device))
+    """Cache small kernels on the device; stream kernels exceeding the budget."""
+    resident = jax.device_put(V_basis.kernel, device) if V_basis.kernel.nbytes <= _DEVICE_KERNEL_TARGET_BYTES else None
+    return SpinResolvedFSDiatomDiatomVBasisDevice(V_basis.kernel, resident)
 
 
 # ----------------------------------------------------------------------------------------
@@ -489,7 +499,7 @@ def device_basis(
 # ----------------------------------------------------------------------------------------
 @jax.jit
 def _contract_device(potential: jax.Array, kernel: jax.Array) -> jax.Array:
-    return jnp.einsum("bge,gep->bp", potential, kernel, optimize=True)
+    return potential.reshape(potential.shape[0], -1) @ kernel.reshape(kernel.shape[0] * kernel.shape[1], kernel.shape[-1])
 
 
 # ----------------------------------------------------------------------------------------
@@ -508,7 +518,23 @@ def contract_device(
     indices = tuple(range(V_basis.n_channel)) if channel_indices is None else tuple(channel_indices)
     pair_rows, pair_columns, packed = _packed_positions(V_basis.n_channel, indices)
     potential_device = jax.device_put(batches, device)
-    contracted = _contract_device(potential_device, basis_device.kernel[:, :, packed])
+    bytes_per_pair = basis_device.kernel.shape[0] * basis_device.kernel.shape[1] * basis_device.kernel.dtype.itemsize
+    pairs_per_chunk = max(1, _DEVICE_KERNEL_TARGET_BYTES // bytes_per_pair)
+    contracted_chunks = []
+    for start in range(0, packed.size, pairs_per_chunk):
+        stop = min(start + pairs_per_chunk, packed.size)
+        selection = slice(start, stop) if channel_indices is None else packed[start:stop]
+        kernel = (
+            basis_device.resident_kernel[:, :, selection]
+            if basis_device.resident_kernel is not None
+            else jax.device_put(basis_device.kernel[:, :, selection], device)
+        )
+        chunk = _contract_device(potential_device, kernel)
+        if basis_device.resident_kernel is None:
+            chunk.block_until_ready()
+        contracted_chunks.append(chunk)
+        del kernel
+    contracted = jnp.concatenate(contracted_chunks, axis=1)
     selected = np.asarray(indices, dtype=np.int64)
     reversed_pairs = selected[pair_rows] < selected[pair_columns]
     contracted = jnp.where(reversed_pairs[None, :], jnp.conjugate(contracted), contracted)

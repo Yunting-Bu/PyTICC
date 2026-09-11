@@ -28,7 +28,6 @@ def main() -> None:
         system = ticc.build_ScattSystem(
             diatom_KRb,
             diatom_KRb,
-            scattering_type="AB+CD",
             Jtot=2,
             system_parity=1,
             approx=ticc.Approx.NNCC,

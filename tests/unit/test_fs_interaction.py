@@ -52,6 +52,8 @@ def test_fs_device_contraction_matches_numpy_for_batch_and_channel_selection(dev
 
     expected_full = vmat.contract(V_basis, potential)
     expected = expected_full[:, selected, :][:, :, selected]
+    np.testing.assert_allclose(vmat.contract(V_basis, potential, selected), expected, rtol=2.0e-13, atol=2.0e-13)
+    np.testing.assert_allclose(vmat.contract(V_basis, potential[0], selected), expected[0], rtol=2.0e-13, atol=2.0e-13)
     result = vmat.contract_device(V_basis, vmat.device_basis(V_basis, device), potential, device, selected)
     resident_result = vmat.contract_device(V_basis, vmat.device_basis(V_basis, device), jax.device_put(potential, device), device, selected)
 
@@ -66,7 +68,6 @@ def test_half_integer_fs_channels_propagate_and_match() -> None:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         basis.monomer,
-        scattering_type="A+BC_fine_structure",
         two_J=basis.two_J,
         system_parity=basis.system_parity,
         potential=potential,

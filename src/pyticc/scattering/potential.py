@@ -208,7 +208,7 @@ def prepare_potential(
         raise TypeError(message)
 
     if system.scattering_type is None:
-        message = "prepare_potential requires a system built with an explicit scattering_type"
+        message = "prepare_potential requires a system built by build_ScattSystem"
         logger.error(message)
         raise TypeError(message)
     n_radial_points = 2 * len(build_radial_sectors(boundaries, half_steps)) + 1

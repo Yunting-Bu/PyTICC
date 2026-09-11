@@ -24,7 +24,6 @@ def test_reactive_system_hamiltonian_and_solve_follow_common_flow() -> None:
     )
     system = ticc.build_ScattSystem(
         monomer,
-        scattering_type="A+BC_Delves",
         Jtot=0,
         system_parity=1,
         jmax=0,
@@ -70,7 +69,6 @@ def test_reactive_preparation_validates_energy_zero_and_symmetry() -> None:
     try:
         ticc.build_ScattSystem(
             monomer,
-            scattering_type="A+BC_Delves",
             Jtot=0,
             system_parity=1,
             jmax=0,
@@ -105,7 +103,6 @@ def test_minimum_energy_zero_is_equivalent_to_converted_native_energies() -> Non
     )
     minimum_system = ticc.build_ScattSystem(
         minimum_monomer,
-        scattering_type="A+BC_Delves",
         Jtot=0,
         system_parity=1,
         jmax=0,
@@ -121,7 +118,6 @@ def test_minimum_energy_zero_is_equivalent_to_converted_native_energies() -> Non
     )
     native_system = ticc.build_ScattSystem(
         native_monomer,
-        scattering_type="A+BC_Delves",
         Jtot=0,
         system_parity=1,
         jmax=0,

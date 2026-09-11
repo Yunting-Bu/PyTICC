@@ -1,5 +1,5 @@
 from dataclasses import replace
-from typing import get_type_hints
+from typing import Any, cast, get_type_hints
 
 import jax
 import numpy as np
@@ -53,7 +53,6 @@ def _system(monomer: ticc.FSMonomerBasis, eta: int = 0, *, pes=None, J: int = 1,
     return ticc.build_ScattSystem(
         monomer,
         monomer,
-        scattering_type="AB+CD_fine_structure",
         two_J=2 * J,
         system_parity=parity,
         molecule_exchange=eta,
@@ -82,6 +81,9 @@ def _quadrature() -> tuple[np.ndarray, ...]:
 def test_exchange_types_resolve_without_conditional_imports() -> None:
     assert get_type_hints(ticc.FSDiatomDiatomBasis)["exchange"] == FSExchangeAdaptation | None
     assert get_type_hints(adapt_fs_molecule_exchange)["return"] is ticc.FSDiatomDiatomBasis
+    basis = _system(_monomer()).basis
+    assert basis is not None
+    assert basis.molecule_exchange == 0
 
 
 @pytest.mark.parametrize("J", [0, 1, 2])
@@ -186,6 +188,38 @@ def test_all_interactions_project_and_device_subsets_preserve_complex_order(kind
     np.testing.assert_allclose(Ts[0].T @ dipole @ Ts[1], 0, atol=2e-13)
 
 
+# ----------------------------------------------------------------------------------------
+def test_spin_interaction_common_subspace_is_invariant_to_monomer_basis_extension() -> None:
+    """Ensure newly appended closed monomer levels do not change old matrix elements."""
+    pes = _spin_pes(0, 2, imaginary=False)
+    small = _system(_monomer(0, 2, (0, 2)), 1, pes=pes, J=0)
+    large = _system(_monomer(0, 2, (0, 2, 4)), 1, pes=pes, J=0)
+    small_basis = cast(ticc.FSDiatomDiatomBasis, small.basis)
+    large_basis = cast(ticc.FSDiatomDiatomBasis, large.basis)
+
+    def key(basis: ticc.FSDiatomDiatomBasis, channel: ticc.FSDiatomDiatomChannel) -> tuple[int, ...]:
+        block_X = basis.monomer_X.blocks[channel.block_X]
+        block_Y = basis.monomer_Y.blocks[channel.block_Y]
+        return (
+            block_X.two_j,
+            block_X.parity,
+            channel.tau_X,
+            block_Y.two_j,
+            block_Y.parity,
+            channel.tau_Y,
+            channel.two_j12,
+            channel.two_K,
+        )
+
+    large_positions = {key(large_basis, channel): index for index, channel in enumerate(large_basis)}
+    common = np.asarray([large_positions[key(small_basis, channel)] for channel in small_basis], dtype=np.int64)
+    radii = np.array([3.0, 4.0])
+    small_matrix = build_hamiltonian(small, n_theta_X=5, n_theta_Y=5, n_phi=8).V(radii)
+    large_matrix = build_hamiltonian(large, n_theta_X=5, n_theta_Y=5, n_phi=8).V(radii)
+
+    np.testing.assert_allclose(large_matrix[:, common, :][:, :, common], small_matrix, rtol=0.0, atol=2.0e-13)
+
+
 @pytest.mark.parametrize("mode", ["inelastic", "capture"])
 @pytest.mark.parametrize("spin_resolved", [False, True])
 def test_solver_projects_full_solution_with_matched_boundary_and_mixed_open_closed_channels(mode: str, spin_resolved: bool) -> None:
@@ -233,7 +267,7 @@ def test_invalid_models_cutoffs_and_cached_data_are_rejected() -> None:
     monomer = _monomer()
     for eta in (True, 1.0, 2):
         with pytest.raises(ValueError, match="molecule_exchange must"):
-            ticc.build_fs_diatom_diatom_channels(monomer, monomer, 2, 1, molecule_exchange=eta)
+            ticc.build_fs_diatom_diatom_channels(monomer, monomer, 2, 1, molecule_exchange=cast(Any, eta))
     with pytest.raises(ValueError, match="same FS monomer"):
         ticc.build_fs_diatom_diatom_channels(monomer, _monomer(), 2, 1, molecule_exchange=1)
     with pytest.raises(ValueError, match="same diatomic monomer"):
@@ -241,6 +275,7 @@ def test_invalid_models_cutoffs_and_cached_data_are_rejected() -> None:
     with pytest.raises(ValueError, match="exchange-closed energy cutoffs"):
         _system(monomer, 1, channel=ticc.ChannelSpec(E_X_cut=0.0001))
     system = _system(monomer, 1)
+    assert isinstance(system.basis, ticc.FSDiatomDiatomBasis)
     with pytest.raises(ValueError, match="already molecule-exchange"):
         adapt_fs_molecule_exchange(system.basis, 1)
     with pytest.raises(ValueError, match="exact CC"):

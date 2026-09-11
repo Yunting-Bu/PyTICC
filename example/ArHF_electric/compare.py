@@ -129,7 +129,6 @@ def main() -> None:
     regular_system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
-        scattering_type="A+BC",
         Jtot=0,
         system_parity=1,
         channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),
@@ -139,7 +138,6 @@ def main() -> None:
     electric_system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         electric_basis,
-        scattering_type="A+BC_electric",
         M=0,
         lmax=1,
         channel=ticc.ChannelSpec(E_Y_cut=2000.0 * ticc.CM2AU),

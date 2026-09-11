@@ -20,7 +20,7 @@ from pyticc.pes.diabatic import DiabaticPESWrapper
 from pyticc.result import ScatteringResult
 from pyticc.scattering.potential import prepare_potential
 from pyticc.scattering.solver import solve
-from pyticc.system import Approx, ChannelSpec, ScatteringType, build_ScattSystem, element_masses_au, reduced_mass
+from pyticc.system import Approx, ChannelSpec, build_ScattSystem, element_masses_au, reduced_mass
 
 
 # ----------------------------------------------------------------------------------------
@@ -58,7 +58,6 @@ def run(config: TomlTable, base: Path, pes: DiabaticPESWrapper) -> ScatteringRes
     system = build_ScattSystem(
         AtomSpec(),
         diatom,
-        scattering_type=ScatteringType.ATOM_DIATOM_DIABATIC,
         Jtot=int(required(config, "Jtot")),
         system_parity=int(required(config, "system_parity")),
         channel=ChannelSpec(

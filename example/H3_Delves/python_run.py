@@ -31,7 +31,6 @@ def main() -> None:
 
         system = ticc.build_ScattSystem(
             monomer,
-            scattering_type="A+BC_Delves",
             Jtot=0,
             system_parity=1,
             jmax=0,

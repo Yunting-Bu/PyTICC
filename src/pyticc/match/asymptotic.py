@@ -5,9 +5,11 @@ from loguru import logger
 from numpy.typing import ArrayLike, NDArray
 
 from pyticc.basis.channel import ChannelBasis
+from pyticc.fine_structure.atom_atom import FSAtomAtomBasis
+from pyticc.fine_structure.atom_diatom import FSAtomDiatomBasis
 from pyticc.fine_structure.channel import FSChannelBasis
 from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
-from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_FS_BF, get_Umat_FS_DiatomDiatom_BF
+from pyticc.matrix.centrifugal import get_Umat_BF, get_Umat_FS_AtomAtom_BF, get_Umat_FS_AtomDiatom_BF, get_Umat_FS_BF, get_Umat_FS_DiatomDiatom_BF
 
 
 # ----------------------------------------------------------------------------------------
@@ -112,6 +114,8 @@ def transform_logD_BF_to_SF(Ymat: ArrayLike, Bmat: ArrayLike) -> NDArray[np.floa
 def get_Bmat_FS_BF_to_SF(
     basis: FSChannelBasis,
     channel_indices: Sequence[int] | None = None,
+    *,
+    coriolis: bool = True,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     r"""
     Diagonalize open-shell BF centrifugal ladders into asymptotic orbital L.
@@ -126,6 +130,9 @@ def get_Bmat_FS_BF_to_SF(
     Inputs:
         basis: FSChannelBasis - fine-structure BF channels
         channel_indices: Sequence[int] | None - selected complete-basis positions
+        coriolis: bool - False uses the strict-CS centrifugal matrix, including
+            removal of the folded +/-1/2 term; L is then an effective order,
+            not an exact SF orbital quantum number
 
     Returns:
         Bmat: NDArray[np.float64] - orthogonal BF-to-SF transformation
@@ -135,7 +142,7 @@ def get_Bmat_FS_BF_to_SF(
     if not indices:
         raise ValueError("At least one fine-structure channel is required")
     channels = tuple(basis[index] for index in indices)
-    Umat = get_Umat_FS_BF(basis, indices)
+    Umat = get_Umat_FS_BF(basis, indices, coriolis=coriolis)
     Bmat = np.zeros((len(indices), len(indices)), dtype=np.float64)
     L = np.empty(len(indices), dtype=np.float64)
     groups: dict[tuple[int, int], list[int]] = {}
@@ -158,6 +165,8 @@ def get_Bmat_FS_BF_to_SF(
 def get_Bmat_FS_DiatomDiatom_BF_to_SF(
     basis: FSDiatomDiatomBasis,
     channel_indices: Sequence[int] | None = None,
+    *,
+    coriolis: bool = True,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     r"""
     Transform two-fine-structure-diatom BF channels to asymptotic orbital L.
@@ -182,6 +191,8 @@ def get_Bmat_FS_DiatomDiatom_BF_to_SF(
     Inputs:
         basis: FSDiatomDiatomBasis - complete fine-structure BF channels
         channel_indices: Sequence[int] | None - selected complete-basis positions
+        coriolis: bool - False uses strict CS without the folded +/-1/2 term;
+            L then denotes effective centrifugal orders rather than exact SF L
 
     Returns:
         Bmat: NDArray[np.float64] - BF-to-SF orthogonal transformation,
@@ -196,7 +207,7 @@ def get_Bmat_FS_DiatomDiatom_BF_to_SF(
         raise ValueError(message)
 
     channels = tuple(basis[index] for index in indices)
-    Umat = get_Umat_FS_DiatomDiatom_BF(basis, indices)
+    Umat = get_Umat_FS_DiatomDiatom_BF(basis, indices, coriolis=coriolis)
     Bmat = np.zeros((len(indices), len(indices)), dtype=np.float64)
     L = np.empty(len(indices), dtype=np.float64)
     groups: dict[tuple[int, int, int, int, int], list[int]] = {}
@@ -220,3 +231,115 @@ def get_Bmat_FS_DiatomDiatom_BF_to_SF(
 
 
 # ----------------------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------------------
+def get_Bmat_FS_AtomDiatom_BF_to_SF(
+    basis: FSAtomDiatomBasis,
+    channel_indices: Sequence[int] | None = None,
+    *,
+    coriolis: bool = True,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    r"""
+    Transform fine-structure atom-diatom BF channels to asymptotic orbital L.
+
+    Formula:
+        For every fixed internal ladder
+
+        q = (level_X,block_Y,tau_Y,j_12),
+
+        independently diagonalize the dimensionless end-over-end operator,
+
+        B_q.T U_q B_q = diag[L(L+1)],
+        L = sqrt(lambda+1/4)-1/2.
+
+        Here ``U_q`` contains the parity-adapted integer- or half-integer K
+        ladder returned by ``get_Umat_FS_AtomDiatom_BF``. The atomic levels and
+        monomer eigenstates are orthonormal, and B is real orthogonal. Each
+        eigenvector phase is fixed by making its last K component nonnegative.
+        Row order is BF channel order; column order is increasing centrifugal
+        eigenvalue within each internal ladder.
+
+    Inputs:
+        basis: FSAtomDiatomBasis - complete fine-structure atom-diatom channels
+        channel_indices: Sequence[int] | None - selected complete-basis positions
+        coriolis: bool - False uses strict CS without the folded +/-1/2 term;
+            L then denotes effective centrifugal orders rather than exact SF L
+
+    Returns:
+        Bmat: NDArray[np.float64] - BF-to-SF orthogonal transformation,
+            shape ``(n_selected,n_selected)``
+        L: NDArray[np.float64] - asymptotic end-over-end angular momenta,
+            shape ``(n_selected,)``
+    """
+    indices = tuple(range(basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    if not indices:
+        message = "At least one fine-structure atom-diatom channel is required"
+        logger.error(message)
+        raise ValueError(message)
+
+    channels = tuple(basis[index] for index in indices)
+    Umat = get_Umat_FS_AtomDiatom_BF(basis, indices, coriolis=coriolis)
+    Bmat = np.zeros((len(indices), len(indices)), dtype=np.float64)
+    L = np.empty(len(indices), dtype=np.float64)
+    groups: dict[tuple[int, int, int, int], list[int]] = {}
+    for local_index, channel in enumerate(channels):
+        key = (channel.level_X, channel.block_Y, channel.tau_Y, channel.two_j12)
+        groups.setdefault(key, []).append(local_index)
+
+    for positions_list in groups.values():
+        positions = np.asarray(positions_list, dtype=np.int64)
+        eigenvalues, eigenvectors = np.linalg.eigh(Umat[np.ix_(positions, positions)])
+        if np.min(eigenvalues) < -1.0e-10:
+            message = f"Atom-diatom fine-structure centrifugal matrix has a negative eigenvalue {np.min(eigenvalues)}"
+            logger.error(message)
+            raise ValueError(message)
+        signs = np.where(eigenvectors[-1] < 0.0, -1.0, 1.0)
+        eigenvectors *= signs
+        Bmat[np.ix_(positions, positions)] = eigenvectors
+        L[positions] = np.sqrt(np.maximum(eigenvalues, 0.0) + 0.25) - 0.5
+
+    return Bmat, L
+
+
+# ----------------------------------------------------------------------------------------
+
+
+def get_Bmat_FS_AtomAtom_BF_to_SF(
+    basis: FSAtomAtomBasis,
+    channel_indices: Sequence[int] | None = None,
+    *,
+    coriolis: bool = True,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    r"""Diagonalize the atomic centrifugal operator separately in each ladder.
+
+    Formula:
+        B_q.T U_q B_q=diag[l(l+1)], q=(level_X,level_Y,2j_12).
+        l=sqrt(u+1/4)-1/2. Eigenvectors have nonnegative final component.
+        In truncated-K or CS spaces l is an effective centrifugal order.
+        Never mix distinct internal levels merely because thresholds coincide.
+
+    Inputs:
+        basis: FSAtomAtomBasis - normalized positive-K channels
+        channel_indices: Sequence[int] | None - selected channel positions
+        coriolis: bool - include Coriolis operator (False for strict CS)
+    Returns:
+        B, l: arrays - dimensionless orthogonal matrix and orbital orders;
+            columns occupy their original internal-ladder positions
+    """
+    indices = tuple(range(len(basis))) if channel_indices is None else tuple(channel_indices)
+    if not indices:
+        raise ValueError("At least one atomic channel is required")
+    U = get_Umat_FS_AtomAtom_BF(basis, indices, coriolis=coriolis)
+    B, orders = np.zeros_like(U), np.empty(len(indices))
+    ladders: dict[tuple[int, int, int], list[int]] = {}
+    for local, global_index in enumerate(indices):
+        ladders.setdefault(basis[global_index].ladder, []).append(local)
+    for positions in ladders.values():
+        eigenvalues, eigenvectors = np.linalg.eigh(U[np.ix_(positions, positions)])
+        if np.min(eigenvalues) < -1e-10:
+            raise ValueError("Negative atomic centrifugal eigenvalue")
+        eigenvectors *= np.where(eigenvectors[-1] < 0, -1, 1)
+        B[np.ix_(positions, positions)] = eigenvectors
+        orders[positions] = np.sqrt(np.maximum(eigenvalues, 0) + 0.25) - 0.5
+    return B, orders

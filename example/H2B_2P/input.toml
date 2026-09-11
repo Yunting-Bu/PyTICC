@@ -1,0 +1,58 @@
+atom = "B"
+diatom = ["H", "H"]
+two_J = 1
+system_parity = 1
+energies_cm = [20.0, 40.0]
+
+[approximation]
+method = "exact"
+
+[basis]
+r = [0.8, 3.2]
+n_dvr = 30
+n_podvr = 2
+vmax = 0
+
+[fine_structure.atom]
+two_L = 2
+two_S = 1
+atom_parity = -1
+two_j_levels = [1, 3]
+level_energies = [0.0, 15.3]
+energy_unit = "cm-1"
+
+[fine_structure.diatom]
+two_lambda_abs = 0
+two_S = 0
+two_j_values = [0, 2]
+reflection_parity = 1
+
+[fine_structure.diatom.constants]
+unit = "cm-1"
+B = 60.8
+
+[fine_structure.pes]
+two_total_spins = [1]
+orbital_states = [
+    { two_lambda_atom = -2, two_lambda_Y = 0 },
+    { two_lambda_atom = 0, two_lambda_Y = 0 },
+    { two_lambda_atom = 2, two_lambda_Y = 0 },
+]
+
+[quadrature]
+n_theta = 8
+
+[channels]
+E_X_cut_cm = 100.0
+E_Y_cut_cm = 300.0
+K_cut = "none"
+
+[potential_grid]
+radial_boundaries = [5.0, 6.0]
+radial_half_steps = [0.25]
+processes = 1
+
+[propagation]
+mode = "inelastic"
+memory_limit_mb = 256.0
+device = "cpu"

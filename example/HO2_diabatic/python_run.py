@@ -35,7 +35,6 @@ def main() -> None:
         system = ticc.build_ScattSystem(
             ticc.AtomSpec(),
             diatom_O2,
-            scattering_type="A+BC_diabatic",
             Jtot=0,
             system_parity=1,
             channel=ticc.ChannelSpec(

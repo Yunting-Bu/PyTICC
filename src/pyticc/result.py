@@ -5,13 +5,16 @@ from numpy.typing import NDArray
 
 from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF, OpenClosedChannels
 from pyticc.basis.kblock import KBlock
+from pyticc.fine_structure.atom_atom import FSAtomAtomBasis
+from pyticc.fine_structure.atom_diatom import FSAtomDiatomBasis
 from pyticc.fine_structure.channel import FSChannelBasis
 from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.match.delves import DelvesAsymptoticBasis
 from pyticc.system import Approx
 
 LogDArray = NDArray[np.float64] | NDArray[np.complex128]
-ScatteringBasis = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis
+ScatteringBasis = ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis | FSAtomDiatomBasis | FSAtomAtomBasis
+FieldFreeBasis = ChannelBasis | FSChannelBasis | FSDiatomDiatomBasis | FSAtomDiatomBasis | FSAtomAtomBasis
 
 
 # ----------------------------------------------------------------------------------------
@@ -65,7 +68,7 @@ class ScatteringResult:
     @property
     def molecule_exchange(self) -> int:
         """Return the complete-molecule exchange block, or zero if unused."""
-        return self.basis.molecule_exchange if isinstance(self.basis, ChannelBasis | FSDiatomDiatomBasis) else 0
+        return self.basis.molecule_exchange
 
     @property
     def open_closed(self) -> OpenClosedChannels:
@@ -210,7 +213,7 @@ class CoupledStatesResult:
     they remain separated in ``blocks`` until observables are implemented.
 
     Members:
-        basis: ChannelBasis - complete body-fixed channel basis
+        basis: FieldFreeBasis - complete body-fixed channel basis
         Etot: NDArray[np.float64] - total energies in atomic units, shape
             (n_energy,)
         approx: Approx - CS or NNCC approximation
@@ -218,11 +221,16 @@ class CoupledStatesResult:
         timing: Timing | None - elapsed solver time
     """
 
-    basis: ChannelBasis
+    basis: FieldFreeBasis
     Etot: NDArray[np.float64]
     approx: Approx
     blocks: tuple[KBlockResult, ...]
     timing: Timing | None = None
+
+    @property
+    def molecule_exchange(self) -> int:
+        """Return the complete-molecule exchange block, or zero if unused."""
+        return self.basis.molecule_exchange
 
     @property
     def open_closed(self) -> OpenClosedChannels:

@@ -74,7 +74,6 @@ def main() -> None:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         triatom,
-        scattering_type="A+BCD",
         Jtot=0,
         system_parity=1,
         channel=ticc.ChannelSpec(E_Y_cut=500.0 * ticc.CM2AU),

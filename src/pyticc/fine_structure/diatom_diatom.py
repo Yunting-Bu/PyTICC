@@ -36,6 +36,11 @@ class FSDiatomDiatomChannel:
     two_K: int
     E_int: float
 
+    @property
+    def K(self) -> float:
+        """Return the physical BF projection for shared CS/NNCC blocking."""
+        return self.two_K / 2.0
+
 
 # ----------------------------------------------------------------------------------------
 

@@ -271,8 +271,8 @@ def contract_electric_sf(
 @jax.jit
 def _contract_electric_sf_device(B_cos: jax.Array, B_sin: jax.Array, potential: jax.Array) -> jax.Array:
     """Contract one electric-field SF interaction batch on a JAX device."""
-    Vmat = jnp.einsum("ig,bg,jg->bij", B_cos, potential, B_cos, optimize=True)
-    Vmat += jnp.einsum("ig,bg,jg->bij", B_sin, potential, B_sin, optimize=True)
+    Vmat = (potential[:, None, :] * B_cos[None, :, :]) @ B_cos.T
+    Vmat += (potential[:, None, :] * B_sin[None, :, :]) @ B_sin.T
     return 0.5 * (Vmat + jnp.swapaxes(Vmat, -2, -1))
 
 

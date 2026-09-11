@@ -283,7 +283,7 @@ def _contract_weighted_basis(
 @jax.jit
 def _contract_weighted_basis_device(left: jax.Array, weights: jax.Array, right: jax.Array) -> jax.Array:
     """Contract radial batches on one JAX device."""
-    return jnp.einsum("ig,bg,jg->bij", left, weights, right, optimize=True)
+    return (weights[:, None, :] * left[None, :, :]) @ right.T
 
 
 # ----------------------------------------------------------------------------------------

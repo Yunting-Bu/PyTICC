@@ -93,7 +93,7 @@ def test_spin_resolved_pes_grid_validates_dense_hermitian_contract() -> None:
     np.testing.assert_allclose(complex_grid[0, 0, 0, 0, 0, 0], np.array([[3.0, 0.25 + 0.5j], [0.25 - 0.5j, 6.0]]))
 
 
-def test_projector_completeness_exactly_reproduces_scalar_anisotropic_kernel() -> None:
+def test_projector_completeness_exactly_reproduces_scalar_anisotropic_kernel(monkeypatch: pytest.MonkeyPatch) -> None:
     monomer = _monomer((1,), two_lambda_abs=0, two_S=1)
     basis = ticc.build_fs_diatom_diatom_channels(monomer, monomer, two_J=2, system_parity=1)
     theta_X, weight_X, theta_Y, weight_Y, phi, weight_phi = _quadrature()
@@ -116,6 +116,7 @@ def test_projector_completeness_exactly_reproduces_scalar_anisotropic_kernel() -
     actual = spin_vmat.contract(spin_basis, spin_grid)
     np.testing.assert_allclose(actual, expected, atol=1.0e-14)
 
+    monkeypatch.setattr(spin_vmat, "_DEVICE_KERNEL_TARGET_BYTES", 1)
     device = jax.devices("cpu")[0]
     device_matrix = spin_vmat.contract_device(
         spin_basis,
@@ -206,7 +207,6 @@ def test_magnetic_dipole_coefficient_adds_inverse_cube_hamiltonian_term() -> Non
     system = ticc.build_ScattSystem(
         monomer,
         monomer,
-        scattering_type="AB+CD_fine_structure",
         two_J=2,
         system_parity=1,
         potential=zero_pes,
@@ -387,7 +387,6 @@ def test_spin_resolved_system_runs_through_cached_grid_and_solver() -> None:
     system = ticc.build_ScattSystem(
         monomer,
         monomer,
-        scattering_type="AB+CD_fine_structure",
         two_J=0,
         system_parity=1,
         potential=pes,
@@ -423,7 +422,6 @@ def test_system_rejects_incomplete_spin_or_orbital_metadata() -> None:
         ticc.build_ScattSystem(
             monomer,
             monomer,
-            scattering_type="AB+CD_fine_structure",
             two_J=0,
             system_parity=1,
             potential=incomplete_spin,
@@ -438,7 +436,6 @@ def test_system_rejects_incomplete_spin_or_orbital_metadata() -> None:
         ticc.build_ScattSystem(
             monomer,
             monomer,
-            scattering_type="AB+CD_fine_structure",
             two_J=0,
             system_parity=1,
             potential=wrong_orbital,

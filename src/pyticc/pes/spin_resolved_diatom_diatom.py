@@ -6,7 +6,7 @@ import numpy as np
 from loguru import logger
 from numpy.typing import NDArray
 
-from pyticc.pes.adiabatic import PESWrapper
+from pyticc.pes.adiabatic import MonomerPES, PESWrapper
 
 ElectronicValues: TypeAlias = NDArray[np.float64] | NDArray[np.complex128]
 SpinResolvedInteraction = Callable[[float, NDArray[np.float64]], ElectronicValues]
@@ -65,17 +65,27 @@ class SpinResolvedDiatomDiatomPES:
         interaction_many: SpinResolvedInteractionMany | None - optional radial
             batch callback returning
             ``(n_R,n_grid,n_spin,n_orbital,n_orbital)``
+        monomer_X: MonomerPES | None - isolated first-diatom potential
+        monomer_Y: MonomerPES | None - isolated second-diatom potential
     """
 
     interaction: SpinResolvedInteraction
-    two_total_spins: tuple[int, ...]
-    orbital_states: tuple[OrbitalState, ...]
+    two_total_spins: tuple[int, ...] = ()
+    orbital_states: tuple[OrbitalState, ...] = ()
     interaction_many: SpinResolvedInteractionMany | None = None
+    monomer_X: MonomerPES | None = None
+    monomer_Y: MonomerPES | None = None
     _interaction_many_processes: SpinResolvedInteractionManyProcesses | None = field(default=None, repr=False, compare=False)
     _close: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if not self.two_total_spins or len(set(self.two_total_spins)) != len(self.two_total_spins):
+        if bool(self.two_total_spins) != bool(self.orbital_states):
+            message = "two_total_spins and orbital_states must either both be supplied or both be omitted for later TOML binding"
+            logger.error(message)
+            raise ValueError(message)
+        if not self.two_total_spins:
+            return
+        if len(set(self.two_total_spins)) != len(self.two_total_spins):
             message = "two_total_spins must contain unique values"
             logger.error(message)
             raise ValueError(message)
@@ -197,6 +207,8 @@ def as_spin_resolved_diatom_diatom_pes(
         two_total_spins=spins,
         orbital_states=orbitals,
         interaction_many=interaction_many,
+        monomer_X=pes.monomer_X,
+        monomer_Y=pes.monomer_Y,
         _interaction_many_processes=interaction_many_processes,
         _close=pes.close,
     )
@@ -231,6 +243,10 @@ def _evaluate(
     processes: int,
 ) -> ElectronicValues:
     """Evaluate scalar or radial-batched spin-resolved values."""
+    if not pes.two_total_spins or not pes.orbital_states:
+        message = "Spin-resolved AB+CD PES electronic ordering has not been bound"
+        logger.error(message)
+        raise ValueError(message)
     if not isinstance(processes, int) or isinstance(processes, bool) or processes < 1:
         message = f"processes must be a positive integer, but got {processes!r}"
         logger.error(message)

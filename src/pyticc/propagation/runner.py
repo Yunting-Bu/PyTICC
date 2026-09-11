@@ -15,7 +15,10 @@ from numpy.typing import NDArray
 from pyticc._typing import JaxDevice
 from pyticc.basis.channel import ChannelBasis
 from pyticc.energy import EnergyInput, get_Etot
-from pyticc.matrix.centrifugal import get_Umat_BF
+from pyticc.fine_structure.atom_atom import FSAtomAtomBasis
+from pyticc.fine_structure.atom_diatom import FSAtomDiatomBasis
+from pyticc.fine_structure.channel import FSChannelBasis
+from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.matrix.radial import get_Wmat
 from pyticc.propagation.config import Propagation
 from pyticc.propagation.device import resolve_device
@@ -349,15 +352,15 @@ def propagate_blocks(
         Y_blocks: tuple[jax.Array, ...] - final BF log derivatives, one array
             per block
     """
-    if not isinstance(hamiltonian.basis, ChannelBasis):
-        message = "Block propagation requires a field-free ChannelBasis"
+    if not isinstance(hamiltonian.basis, ChannelBasis | FSChannelBasis | FSDiatomDiatomBasis | FSAtomDiatomBasis | FSAtomAtomBasis):
+        message = "Block propagation requires a field-free BF channel basis"
         logger.error(message)
         raise TypeError(message)
     basis = hamiltonian.basis
     energies = get_Etot(Etot)
     blocks = tuple(tuple(indices) for indices in channel_blocks)
     E_int_blocks = tuple(basis.E_int[np.asarray(indices, dtype=np.int64)] for indices in blocks)
-    Umat_blocks = tuple(get_Umat_BF(basis, indices) for indices in blocks)
+    Umat_blocks = tuple(hamiltonian.centrifugal(indices) for indices in blocks)
     return _propagate_blocks(
         blocks,
         E_int_blocks,

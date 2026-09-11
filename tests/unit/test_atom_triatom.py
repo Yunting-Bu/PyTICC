@@ -149,7 +149,6 @@ def test_solve_atom_triatom_completes_minimal_exact_calculation() -> None:
     system = ticc.build_ScattSystem(
         AtomSpec(),
         triatom,
-        scattering_type="A+BCD",
         Jtot=0,
         system_parity=1,
         channel=ChannelSpec(E_Y_cut=0.005),

@@ -47,7 +47,6 @@ def main() -> None:
     system = ticc.build_ScattSystem(
         diatom_H2,
         diatom_HF,
-        scattering_type="AB+CD",
         Jtot=0,
         system_parity=1,
         channel=ticc.ChannelSpec(

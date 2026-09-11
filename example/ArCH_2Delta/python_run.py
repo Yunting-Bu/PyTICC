@@ -31,7 +31,6 @@ def main() -> None:
         system = ticc.build_ScattSystem(
             ticc.AtomSpec(),
             monomer,
-            scattering_type="A+BC_fine_structure",
             two_J=3,
             system_parity=1,
             potential=pes,

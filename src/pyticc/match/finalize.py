@@ -7,10 +7,14 @@ from pyticc.basis.channel import ChannelBasis, ChannelBasisElectricSF
 from pyticc.basis.delves import DelvesBasis
 from pyticc.basis.kblock import KBlock
 from pyticc.energy import EnergyInput, get_Etot
+from pyticc.fine_structure.atom_atom import FSAtomAtomBasis
+from pyticc.fine_structure.atom_diatom import FSAtomDiatomBasis
 from pyticc.fine_structure.channel import FSChannelBasis
 from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.match.asymptotic import (
     get_Bmat_BF_to_SF,
+    get_Bmat_FS_AtomAtom_BF_to_SF,
+    get_Bmat_FS_AtomDiatom_BF_to_SF,
     get_Bmat_FS_BF_to_SF,
     get_Bmat_FS_DiatomDiatom_BF_to_SF,
     transform_logD_BF_to_SF,
@@ -20,12 +24,13 @@ from pyticc.match.delves_bessel import get_delves_Smat
 from pyticc.match.smatrix import get_Smat
 from pyticc.pes.total import TotalPES
 from pyticc.propagation.delves import DelvesPropagationResult
-from pyticc.result import KBlockResult, LogDArray, ReactiveScatteringResult, ScatteringResult
+from pyticc.result import FieldFreeBasis, KBlockResult, LogDArray, ReactiveScatteringResult, ScatteringResult
+from pyticc.system import Approx
 
 
 # ----------------------------------------------------------------------------------------
 def finalize_scattering(
-    basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis,
+    basis: ChannelBasis | ChannelBasisElectricSF | FSChannelBasis | FSDiatomDiatomBasis | FSAtomDiatomBasis | FSAtomAtomBasis,
     Y_propagated: LogDArray,
     Etot: EnergyInput,
     reduced_mass: float,
@@ -72,6 +77,12 @@ def finalize_scattering(
         Y_asymptotic = transform_logD_BF_to_SF(Y_array, asymptotic_transform)
     elif isinstance(basis, FSDiatomDiatomBasis):
         asymptotic_transform, L = get_Bmat_FS_DiatomDiatom_BF_to_SF(basis)
+        Y_asymptotic = transform_logD_BF_to_SF(Y_array, asymptotic_transform)
+    elif isinstance(basis, FSAtomAtomBasis):
+        asymptotic_transform, L = get_Bmat_FS_AtomAtom_BF_to_SF(basis)
+        Y_asymptotic = transform_logD_BF_to_SF(Y_array, asymptotic_transform)
+    elif isinstance(basis, FSAtomDiatomBasis):
+        asymptotic_transform, L = get_Bmat_FS_AtomDiatom_BF_to_SF(basis)
         Y_asymptotic = transform_logD_BF_to_SF(Y_array, asymptotic_transform)
     else:
         asymptotic_transform, L = get_Bmat_BF_to_SF(basis)
@@ -155,18 +166,20 @@ def finalize_reactive_scattering(
 
 # ----------------------------------------------------------------------------------------
 def finalize_K_block(
-    basis: ChannelBasis,
+    basis: FieldFreeBasis,
     block: KBlock,
     Y_BF: LogDArray,
     Etot: EnergyInput,
     reduced_mass: float,
     Rmatch: float,
+    *,
+    approx: Approx = Approx.NNCC,
 ) -> KBlockResult:
     """
     Transform, asymptotically match, and package one CS or NNCC K block.
 
     Inputs:
-        basis: ChannelBasis - complete body-fixed channel basis
+        basis: FieldFreeBasis - complete body-fixed channel basis
         block: KBlock - propagated channel subset and result ownership
         Y_BF: LogDArray - final block log derivatives, shape
             (n_energy, n_channel_block, n_channel_block)
@@ -174,6 +187,8 @@ def finalize_K_block(
             text file
         reduced_mass: float - collision reduced mass in atomic units
         Rmatch: float - asymptotic matching distance in atomic units
+        approx: Approx - block approximation; CS removes all signed-K Coriolis
+            terms, while NNCC retains them inside the selected window
 
     Returns:
         result: KBlockResult - matched log derivatives and S matrices for this block
@@ -181,7 +196,16 @@ def finalize_K_block(
     energies = get_Etot(Etot)
     indices = np.asarray(block.channel_indices, dtype=np.int64)
     E_int = basis.E_int[indices]
-    Bmat, L = get_Bmat_BF_to_SF(basis, block.channel_indices)
+    if isinstance(basis, FSChannelBasis):
+        Bmat, L = get_Bmat_FS_BF_to_SF(basis, block.channel_indices, coriolis=approx is not Approx.CS)
+    elif isinstance(basis, FSDiatomDiatomBasis):
+        Bmat, L = get_Bmat_FS_DiatomDiatom_BF_to_SF(basis, block.channel_indices, coriolis=approx is not Approx.CS)
+    elif isinstance(basis, FSAtomAtomBasis):
+        Bmat, L = get_Bmat_FS_AtomAtom_BF_to_SF(basis, block.channel_indices, coriolis=approx is not Approx.CS)
+    elif isinstance(basis, FSAtomDiatomBasis):
+        Bmat, L = get_Bmat_FS_AtomDiatom_BF_to_SF(basis, block.channel_indices, coriolis=approx is not Approx.CS)
+    else:
+        Bmat, L = get_Bmat_BF_to_SF(basis, block.channel_indices)
     Y_BF_array = cast(LogDArray, np.asarray(Y_BF))
     Y_asymptotic = transform_logD_BF_to_SF(Y_BF_array, Bmat)
     Smat_asymptotic = get_Smat(Y_asymptotic, Rmatch, energies, reduced_mass, E_int, L)

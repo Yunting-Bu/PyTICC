@@ -46,7 +46,6 @@ def _solve(
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
-        scattering_type="A+BC_diabatic",
         Jtot=0,
         system_parity=1,
         channel=channel,
@@ -111,7 +110,6 @@ def test_build_diabatic_atom_diatom_validates_electronic_state_count() -> None:
         system = ticc.build_ScattSystem(
             ticc.AtomSpec(),
             _diabatic_basis(),
-            scattering_type="A+BC_diabatic",
             Jtot=0,
             system_parity=1,
             potential=_pes(0.0, n_state=1),

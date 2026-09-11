@@ -132,7 +132,11 @@ def prepare(
 
 
 # ----------------------------------------------------------------------------------------
-def contract(V_basis: FSVBasis, potential: NDArray[np.float64]) -> NDArray[np.float64]:
+def contract(
+    V_basis: FSVBasis,
+    potential: NDArray[np.float64],
+    channel_indices: Sequence[int] | None = None,
+) -> NDArray[np.float64]:
     r"""
     Contract V_sum and V_dif grids into fine-structure channel matrices.
 
@@ -144,9 +148,12 @@ def contract(V_basis: FSVBasis, potential: NDArray[np.float64]) -> NDArray[np.fl
         V_basis: FSVBasis - prepared quadrature kernels
         potential: NDArray[np.float64] - shape (*grid_shape,2) or
             (n_R,*grid_shape,2)
+        channel_indices: Sequence[int] | None - unique complete-basis positions
+            in output order; only selected packed-kernel columns are contracted
 
     Returns:
-        matrix: NDArray[np.float64] - channel matrix, optionally batched over R
+        matrix: NDArray[np.float64] - selected channel matrix, shape
+            (n_selected,n_selected), optionally preceded by n_R
     """
     values = np.asarray(potential, dtype=np.float64)
     if values.shape == (*V_basis.grid_shape, 2):
@@ -160,11 +167,29 @@ def contract(V_basis: FSVBasis, potential: NDArray[np.float64]) -> NDArray[np.fl
         logger.error(message)
         raise ValueError(message)
     potential_vectors = batches.reshape(batches.shape[0], -1)
-    contracted = potential_vectors @ V_basis.kernel
-    matrix = np.empty((batches.shape[0], V_basis.n_channel, V_basis.n_channel), dtype=np.float64)
-    matrix[:, V_basis.pair_rows, V_basis.pair_columns] = contracted
-    matrix[:, V_basis.pair_columns, V_basis.pair_rows] = contracted
+    indices = tuple(range(V_basis.n_channel)) if channel_indices is None else tuple(channel_indices)
+    pair_rows, pair_columns, packed = _packed_selection(V_basis.n_channel, indices)
+    kernel = V_basis.kernel if indices == tuple(range(V_basis.n_channel)) else V_basis.kernel[:, packed]
+    contracted = potential_vectors @ kernel
+    matrix = np.empty((batches.shape[0], len(indices), len(indices)), dtype=np.float64)
+    matrix[:, pair_rows, pair_columns] = contracted
+    matrix[:, pair_columns, pair_rows] = contracted
     return matrix if batched else matrix[0]
+
+
+# ----------------------------------------------------------------------------------------
+def _packed_selection(n_channel: int, indices: tuple[int, ...]) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
+    """Map a selected channel triangle to the complete packed kernel."""
+    if len(set(indices)) != len(indices) or any(index < 0 or index >= n_channel for index in indices):
+        raise ValueError("channel_indices must be unique complete-basis positions")
+    pair_rows, pair_columns = np.tril_indices(len(indices))
+    selected = np.asarray(indices, dtype=np.int64)
+    global_rows = selected[pair_rows]
+    global_columns = selected[pair_columns]
+    packed_rows = np.maximum(global_rows, global_columns)
+    packed_columns = np.minimum(global_rows, global_columns)
+    packed = packed_rows * (packed_rows + 1) // 2 + packed_columns
+    return pair_rows, pair_columns, packed
 
 
 # ----------------------------------------------------------------------------------------
@@ -221,10 +246,7 @@ def contract_device(
         matrix: jax.Array - symmetric device matrix, optionally preceded by R
     """
     indices = tuple(range(V_basis.n_channel)) if channel_indices is None else tuple(channel_indices)
-    if len(set(indices)) != len(indices) or any(index < 0 or index >= V_basis.n_channel for index in indices):
-        message = "channel_indices must be unique complete-basis positions"
-        logger.error(message)
-        raise ValueError(message)
+    pair_rows, pair_columns, packed_positions = _packed_selection(V_basis.n_channel, indices)
 
     values = potential if isinstance(potential, jax.Array) else np.asarray(potential, dtype=np.float64)
     if values.shape == (*V_basis.grid_shape, 2):
@@ -237,14 +259,6 @@ def contract_device(
         message = f"FS PES grid has shape {values.shape}, expected {(*V_basis.grid_shape, 2)} with optional leading R axis"
         logger.error(message)
         raise ValueError(message)
-
-    pair_rows, pair_columns = np.tril_indices(len(indices))
-    selected = np.asarray(indices, dtype=np.int64)
-    global_rows = selected[pair_rows]
-    global_columns = selected[pair_columns]
-    packed_rows = np.maximum(global_rows, global_columns)
-    packed_columns = np.minimum(global_rows, global_columns)
-    packed_positions = packed_rows * (packed_rows + 1) // 2 + packed_columns
 
     potential_device = jax.device_put(batches, device)
     complete_basis = indices == tuple(range(V_basis.n_channel))

@@ -40,7 +40,6 @@ def main() -> None:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         electric_HF,
-        scattering_type="A+BC_electric",
         M=M,
         lmax=LMAX,
         channel=ticc.ChannelSpec(E_Y_cut=2000000.0 * ticc.CM2AU),

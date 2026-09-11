@@ -19,10 +19,11 @@ KHZ2AU = 1.0 / AU2KHZ
 MHZ2AU = 1.0 / AU2MHZ
 GHZ2AU = 1.0 / AU2GHZ
 
-EnergyUnit: TypeAlias = Literal["au", "cm-1", "Hz", "kHz", "MHz", "GHz"]
+EnergyUnit: TypeAlias = Literal["au", "cm-1", "eV", "Hz", "kHz", "MHz", "GHz"]
 ENERGY_TO_AU: Final[dict[EnergyUnit, float]] = {
     "au": 1.0,
     "cm-1": CM2AU,
+    "eV": EV2AU,
     "Hz": HZ2AU,
     "kHz": KHZ2AU,
     "MHz": MHZ2AU,

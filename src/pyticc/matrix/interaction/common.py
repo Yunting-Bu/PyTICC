@@ -66,9 +66,9 @@ def _contract_block(
 @jax.jit
 def _contract_block_device(B_real: jax.Array, B_imag: jax.Array | None, potential: jax.Array, normalization: float) -> jax.Array:
     """Contract one exact-K scalar interaction block on a JAX device."""
-    Vmat = jnp.einsum("ig,bg,jg->bij", B_real, potential, B_real, optimize=True)
+    Vmat = (potential[:, None, :] * B_real[None, :, :]) @ B_real.T
     if B_imag is not None:
-        Vmat += jnp.einsum("ig,bg,jg->bij", B_imag, potential, B_imag, optimize=True)
+        Vmat += (potential[:, None, :] * B_imag[None, :, :]) @ B_imag.T
     Vmat *= normalization
     return 0.5 * (Vmat + jnp.swapaxes(Vmat, -2, -1))
 

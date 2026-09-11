@@ -45,7 +45,6 @@ def _run(
     system = ticc.build_ScattSystem(
         diatom_X,
         diatom_Y,
-        scattering_type="AB+CD",
         Jtot=Jtot,
         system_parity=1,
         approx=approx,

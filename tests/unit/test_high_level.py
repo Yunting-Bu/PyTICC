@@ -47,7 +47,6 @@ def _solve_atom(
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
-        scattering_type="A+BC",
         Jtot=Jtot,
         system_parity=1,
         approx=approx,
@@ -87,15 +86,14 @@ def test_common_setup_tools_are_available_from_top_level() -> None:
         assert not hasattr(ticc, legacy_name)
 
 
-def test_build_scatt_system_requires_a_supported_explicit_type() -> None:
-    with np.testing.assert_raises_regex(ValueError, "Unsupported scattering_type"):
-        ticc.build_ScattSystem(
-            ticc.AtomSpec(),
-            _diatom(_rovib()),
-            scattering_type="atom-diatom",
-            Jtot=0,
-            system_parity=1,
-        )
+def test_build_scatt_system_infers_atom_diatom_type() -> None:
+    system = ticc.build_ScattSystem(
+        ticc.AtomSpec(),
+        _diatom(_rovib()),
+        Jtot=0,
+        system_parity=1,
+    )
+    assert system.scattering_type is ticc.ScatteringType.ATOM_DIATOM
 
 
 def test_solve_atom_diatom_returns_complete_scattering_result() -> None:
@@ -122,7 +120,6 @@ def test_prepare_potential_logs_start_and_completion() -> None:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
-        scattering_type="A+BC",
         Jtot=0,
         system_parity=1,
         potential=pes,
@@ -169,7 +166,6 @@ def test_solve_diatom_diatom_returns_complete_scattering_result() -> None:
     system = ticc.build_ScattSystem(
         diatom_X,
         diatom_Y,
-        scattering_type="AB+CD",
         Jtot=0,
         system_parity=1,
         potential=pes,
@@ -198,7 +194,6 @@ def test_solve_rejects_potential_grid_from_another_scattering_type() -> None:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
-        scattering_type="A+BC",
         Jtot=0,
         system_parity=1,
         potential=pes,
@@ -222,7 +217,6 @@ def test_solve_atom_diatom_cs_returns_independent_K_blocks() -> None:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
-        scattering_type="A+BC",
         Jtot=2,
         system_parity=1,
         approx=ticc.Approx.CS,

@@ -90,6 +90,11 @@ class DelvesBasis:
         return len(self.qns)
 
     @property
+    def molecule_exchange(self) -> int:
+        """Return zero because Delves channels use atom exchange, not molecule exchange."""
+        return 0
+
+    @property
     def E_int(self) -> NDArray[np.float64]:
         """Return fixed asymptotic channel thresholds in Hartree."""
         return self.energies

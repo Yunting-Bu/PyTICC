@@ -19,9 +19,9 @@ from pyticc.fine_structure.diatom_diatom import FSDiatomDiatomBasis
 from pyticc.pes.adiabatic import PESWrapper, get_Vgrid_diatom_diatom
 from pyticc.pes.molecule_exchange import validate_exchange_potential, validate_exchange_quadrature
 from pyticc.pes.spin_resolved_diatom_diatom import SpinResolvedDiatomDiatomPES, get_spin_resolved_grid_diatom_diatom
-from pyticc.scattering.hamiltonian import ScattHamiltonian
+from pyticc.scattering.hamiltonian import HamiltonianArray, ScattHamiltonian
 from pyticc.scattering.potential import PotentialGrid, _potential_radial_grid, _require_type
-from pyticc.system import Approx, ScatteringType, ScattSystem
+from pyticc.system import ScatteringType, ScattSystem
 
 _SCATTERING_TYPE = ScatteringType.DIATOM_DIATOM_FINE_STRUCTURE
 
@@ -153,7 +153,7 @@ def prepare_potential(
             processes=processes,
         )
     if system.molecule_exchange and isinstance(system.potential, PESWrapper):
-        validate_exchange_potential(values)
+        validate_exchange_potential(cast(NDArray[np.float64], values))
     return PotentialGrid(
         boundaries=boundaries_value,
         half_steps=half_steps_value,
@@ -185,7 +185,7 @@ def build_hamiltonian(
     n_phi: int = 12,
     potential_grid: PotentialGrid | None = None,
 ) -> ScattHamiltonian:
-    """Build an exact scalar or total-spin-resolved two-FS-diatom Hamiltonian.
+    """Build a scalar or total-spin-resolved two-FS-diatom Hamiltonian.
 
     Inputs:
         system: ScattSystem - prepared channels, two FS monomers, interaction PES,
@@ -196,7 +196,8 @@ def build_hamiltonian(
         potential_grid: PotentialGrid | None - optional precomputed PES grid
 
     Returns:
-        hamiltonian: ScattHamiltonian - exact BF coupled-channel Hamiltonian
+        hamiltonian: ScattHamiltonian - exact, CS, or NNCC BF Hamiltonian;
+            complete-molecule exchange remains restricted to exact CC
     """
     if not isinstance(system.monomer_X, FSMonomerBasis) or not isinstance(system.monomer_Y, FSMonomerBasis):
         message = "Fine-structure diatom-diatom Hamiltonian requires two FSMonomerBasis monomers"
@@ -208,10 +209,6 @@ def build_hamiltonian(
         raise TypeError(message)
     if system.reduced_mass is None:
         message = "Fine-structure diatom-diatom Hamiltonian requires a collision reduced mass"
-        logger.error(message)
-        raise ValueError(message)
-    if system.approx is not Approx.EXACT:
-        message = "Fine-structure diatom-diatom Hamiltonian currently requires approx='exact'"
         logger.error(message)
         raise ValueError(message)
     if not isinstance(system.basis, FSDiatomDiatomBasis):
@@ -248,9 +245,9 @@ def build_hamiltonian(
                 if radial.shape != basis.monomer_X.vib.grids.shape or not np.allclose(radial, basis.monomer_X.vib.grids, rtol=0.0, atol=1.0e-14):
                     raise ValueError("Molecule-exchange cached radial grids must match the shared FS monomer basis")
             if isinstance(potential, PESWrapper):
-                validate_exchange_potential(potential_grid.values)
+                validate_exchange_potential(cast(NDArray[np.float64], potential_grid.values))
             else:
-                values = potential_grid.values
+                values = cast(HamiltonianArray, potential_grid.values)
                 for name, expected in _spin_coordinates(potential):
                     if not np.array_equal(potential_grid.coordinate(name), expected):
                         raise ValueError("Cached spin-resolved PES electronic-axis order does not match the interaction model")
@@ -268,7 +265,7 @@ def build_hamiltonian(
         phi,
         phi_weights,
     )
-    dipole_matrix = _project_exchange(basis, dipole_matrix)
+    dipole_matrix = cast(HamiltonianArray, _project_exchange(basis, dipole_matrix))
     dipole_coefficient = system.magnetic_dipole_coefficient
 
     def add_magnetic_dipole(
@@ -308,9 +305,18 @@ def build_hamiltonian(
                 validate_exchange_potential(values)
             return values
 
-        def scalar_matrix(radial_points: float | Sequence[float] | NDArray[np.float64]) -> NDArray[np.float64]:
+        def scalar_matrix(radial_points: float | Sequence[float] | NDArray[np.float64]) -> HamiltonianArray:
             orbital = scalar_vmat.contract(scalar_basis, scalar_grid(radial_points))
-            return add_magnetic_dipole(_project_exchange(basis, orbital), radial_points)
+            return add_magnetic_dipole(cast(HamiltonianArray, _project_exchange(basis, orbital)), radial_points)
+
+        def scalar_blocks(radial_points: NDArray[np.float64], channel_blocks: tuple[tuple[int, ...], ...]) -> tuple[HamiltonianArray, ...]:
+            """Contract selected labeled-channel windows from one scalar PES batch."""
+            values = scalar_grid(radial_points)
+            return tuple(
+                scalar_vmat.contract(scalar_basis, values, indices)
+                + dipole_coefficient * dipole_matrix[np.ix_(indices, indices)][None, :, :] / radial_points[:, None, None] ** 3
+                for indices in channel_blocks
+            )
 
         def scalar_blocks_device(
             radial_points: NDArray[np.float64],
@@ -345,7 +351,9 @@ def build_hamiltonian(
             basis=basis,
             reduced_mass=system.reduced_mass,
             interaction=scalar_matrix,
-            approx=Approx.EXACT,
+            approx=system.approx,
+            K_delta=system.K_delta,
+            block_interaction=scalar_blocks if basis.exchange is None else None,
             device_block_interaction=scalar_blocks_device,
             potential_grid_size=prod(scalar_basis.grid_shape),
         )
@@ -378,7 +386,18 @@ def build_hamiltonian(
 
     def spin_matrix(radial_points: float | Sequence[float] | NDArray[np.float64]) -> NDArray[np.float64] | NDArray[np.complex128]:
         orbital = spin_vmat.contract(spin_basis, spin_grid(radial_points))
-        return add_magnetic_dipole(_project_exchange(basis, orbital), radial_points)
+        return add_magnetic_dipole(cast(HamiltonianArray, _project_exchange(basis, orbital)), radial_points)
+
+    def spin_blocks(
+        radial_points: NDArray[np.float64], channel_blocks: tuple[tuple[int, ...], ...]
+    ) -> tuple[NDArray[np.float64] | NDArray[np.complex128], ...]:
+        """Contract selected labeled-channel windows from one spin-resolved PES batch."""
+        values = spin_grid(radial_points)
+        return tuple(
+            spin_vmat.contract(spin_basis, values, indices)
+            + dipole_coefficient * dipole_matrix[np.ix_(indices, indices)][None, :, :] / radial_points[:, None, None] ** 3
+            for indices in channel_blocks
+        )
 
     def spin_blocks_device(
         radial_points: NDArray[np.float64],
@@ -388,21 +407,26 @@ def build_hamiltonian(
         key = (device.platform, device.id)
         if key not in spin_device_bases:
             spin_device_bases[key] = spin_vmat.device_basis(spin_basis, device)
+        radial_device = jax.device_put(radial_points, device)
+        if basis.exchange is not None:
+            for indices in channel_blocks:
+                scalar_vmat._packed_positions(basis.n_channel, indices)
+            values = (
+                spin_grid(radial_points)
+                if potential_grid is None
+                else cast(NDArray[np.float64] | NDArray[np.complex128] | jax.Array, potential_grid.take_device(radial_points, device))
+            )
+            orbital = spin_vmat.contract_device(spin_basis, spin_device_bases[key], values, device)
+            projected = cast(jax.Array, _project_exchange(basis, orbital))
+            projected = projected + dipole_coefficient * jax.device_put(dipole_matrix, device)[None, :, :] / radial_device[:, None, None] ** 3
+            return tuple(
+                projected[:, np.asarray(indices, dtype=np.int64)[:, None], np.asarray(indices, dtype=np.int64)] for indices in channel_blocks
+            )
         values = (
             spin_grid(radial_points)
             if potential_grid is None
             else cast(NDArray[np.float64] | NDArray[np.complex128] | jax.Array, potential_grid.take_device(radial_points, device))
         )
-        radial_device = jax.device_put(radial_points, device)
-        if basis.exchange is not None:
-            for indices in channel_blocks:
-                scalar_vmat._packed_positions(basis.n_channel, indices)
-            orbital = spin_vmat.contract_device(spin_basis, spin_device_bases[key], values, device)
-            projected = _project_exchange(basis, orbital)
-            projected = projected + dipole_coefficient * jax.device_put(dipole_matrix, device)[None, :, :] / radial_device[:, None, None] ** 3
-            return tuple(
-                projected[:, np.asarray(indices, dtype=np.int64)[:, None], np.asarray(indices, dtype=np.int64)] for indices in channel_blocks
-            )
         return tuple(
             spin_vmat.contract_device(spin_basis, spin_device_bases[key], values, device, indices)
             + dipole_coefficient * jax.device_put(dipole_matrix[np.ix_(indices, indices)], device)[None, :, :] / radial_device[:, None, None] ** 3
@@ -413,7 +437,9 @@ def build_hamiltonian(
         basis=basis,
         reduced_mass=system.reduced_mass,
         interaction=spin_matrix,
-        approx=Approx.EXACT,
+        approx=system.approx,
+        K_delta=system.K_delta,
+        block_interaction=spin_blocks if basis.exchange is None else None,
         device_block_interaction=spin_blocks_device,
         potential_grid_size=prod(spin_basis.grid_shape) * prod(spin_basis.electronic_shape),
     )

@@ -48,7 +48,6 @@ def _electric_system(pes: ticc.PESWrapper) -> ticc.ScattSystem:
     return ticc.build_ScattSystem(
         ticc.AtomSpec(),
         _electric_monomer(),
-        scattering_type="A+BC_electric",
         M=0,
         lmax=1,
         potential=pes,
@@ -75,7 +74,6 @@ def test_system_build_hamiltonian_solve_flow() -> None:
     system = ticc.build_ScattSystem(
         ticc.AtomSpec(),
         diatom,
-        scattering_type="A+BC",
         Jtot=0,
         system_parity=1,
         potential=potential,
